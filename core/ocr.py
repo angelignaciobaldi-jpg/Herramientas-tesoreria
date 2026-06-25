@@ -98,7 +98,7 @@ def idioma_ocr() -> str:
     return "eng"
 
 
-def _ocr_imagen(img: Image.Image) -> str:
+def _ocr_imagen(img: Image.Image, psm: int | None = None) -> str:
     if not tesseract_disponible():
         raise OCRNoDisponible(
             "Se necesita OCR pero no se encontró Tesseract. Instálalo o "
@@ -106,7 +106,8 @@ def _ocr_imagen(img: Image.Image) -> str:
         )
     if img.mode not in ("L", "RGB"):
         img = img.convert("RGB")
-    return pytesseract.image_to_string(img, lang=idioma_ocr())
+    config = f"--psm {psm}" if psm is not None else ""
+    return pytesseract.image_to_string(img, lang=idioma_ocr(), config=config)
 
 
 def _texto_confiable(texto: str) -> bool:
@@ -117,39 +118,42 @@ def _texto_confiable(texto: str) -> bool:
     return normales / len(texto) >= _UMBRAL_TEXTO_CONFIABLE
 
 
-def _ocr_pagina(pagina: "fitz.Page") -> str:
+def _ocr_pagina(pagina: "fitz.Page", psm: int | None = None) -> str:
     pix = pagina.get_pixmap(dpi=_DPI_OCR)
-    return _ocr_imagen(Image.open(io.BytesIO(pix.tobytes("png"))))
+    return _ocr_imagen(Image.open(io.BytesIO(pix.tobytes("png"))), psm=psm)
 
 
-def _texto_pdf(ruta: str, forzar_ocr: bool = False) -> tuple[str, bool]:
+def _texto_pdf(ruta: str, forzar_ocr: bool = False, psm: int | None = None) -> tuple[str, bool]:
     """Devuelve (texto, se_uso_ocr) para un PDF.
 
     Usa la capa de texto del PDF si es legible; si la página no tiene texto, su
     codificación está rota, o se fuerza, rasteriza y aplica OCR. Forzar OCR es
     útil cuando la capa de texto trae solo "ruido" (p. ej. la impresión de un
-    correo de Outlook) y el estado de cuenta real está como imagen.
+    correo de Outlook) y el estado de cuenta real está como imagen. Con psm se
+    fuerza siempre OCR usando ese modo de segmentación de página.
     """
     partes: list[str] = []
     uso_ocr = False
     with fitz.open(ruta) as doc:
         for pagina in doc:
             texto = pagina.get_text("text") or ""
-            if not forzar_ocr and _texto_confiable(texto):
+            if psm is None and not forzar_ocr and _texto_confiable(texto):
                 partes.append(texto)
             else:
-                partes.append(_ocr_pagina(pagina))
+                partes.append(_ocr_pagina(pagina, psm=psm))
                 uso_ocr = True
     return "\n".join(partes), uso_ocr
 
 
-def extraer_texto(ruta: str, forzar_ocr: bool = False) -> tuple[str, bool]:
+def extraer_texto(ruta: str, forzar_ocr: bool = False, psm: int | None = None) -> tuple[str, bool]:
     """Extrae el texto de un estado de cuenta.
 
     Args:
         ruta: ruta a un archivo .pdf, .png, .jpg, .jpeg, .tif o .tiff.
         forzar_ocr: si es True, ignora la capa de texto del PDF y aplica OCR a
             todas las páginas (útil cuando la capa de texto es solo ruido).
+        psm: modo de segmentación de página de Tesseract. Si se indica, fuerza
+            OCR con ese modo (p. ej. 11 = "texto disperso", útil para tablas).
 
     Returns:
         (texto, se_uso_ocr): el texto plano del documento y si hubo que
@@ -165,8 +169,17 @@ def extraer_texto(ruta: str, forzar_ocr: bool = False) -> tuple[str, bool]:
 
     ext = os.path.splitext(ruta)[1].lower()
     if ext == ".pdf":
-        texto, uso_ocr = _texto_pdf(ruta, forzar_ocr=forzar_ocr)
+        texto, uso_ocr = _texto_pdf(ruta, forzar_ocr=forzar_ocr, psm=psm)
         return _normalizar(texto), uso_ocr
     if ext in (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"):
-        return _normalizar(_ocr_imagen(Image.open(ruta))), True
+        return _normalizar(_ocr_imagen(Image.open(ruta), psm=psm)), True
     raise ValueError(f"Extensión no soportada: {ext}")
+
+
+def texto_disperso(ruta: str) -> str:
+    """OCR en modo 'texto disperso' (PSM 11). Recupera números/CLABE que la
+    segmentación normal de página omite (p. ej. la celda de una tabla en una
+    carta de asignación de cuenta). Pierde el orden de lectura, por eso se usa
+    solo como último recurso cuando no se halló la CLABE de otra forma."""
+    texto, _ = extraer_texto(ruta, forzar_ocr=True, psm=11)
+    return texto

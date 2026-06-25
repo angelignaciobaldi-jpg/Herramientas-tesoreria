@@ -104,19 +104,24 @@ def extraer_clabes(texto: str) -> list[str]:
             digitos = re.sub(r"\D", "", m.group(0))
             for i in range(len(digitos) - 17):
                 sub = digitos[i : i + 18]
-                if validar_clabe(sub) and sub not in fusionadas:
+                # Estas rutas fusionan números vecinos (cuenta + CLABE) y pueden
+                # producir secuencias con dígito de control válido por azar; se
+                # exige además que el código de banco (3 primeros dígitos) exista
+                # para descartar esos falsos positivos.
+                if validar_clabe(sub) and banco_desde_clabe(sub) and sub not in fusionadas:
                     fusionadas.append(sub)
 
     fuzzy: list[str] = []
     if not etiquetadas and not solidas and not fusionadas:
         # Último recurso: el OCR a veces confunde dígitos con letras parecidas
         # (0->O, 1->I/l, 5->S, 8->B...). Se corrigen y se valida con el dígito
-        # de control, que descarta cualquier corrección equivocada.
+        # de control y un código de banco existente, que descartan cualquier
+        # corrección equivocada.
         for m in re.finditer(r"[0-9OoQDIl|SBZGb]{18,}", texto):
             seg = m.group(0)
             for i in range(len(seg) - 17):
                 sub = seg[i : i + 18].translate(_MAPA_OCR_DIGITO)
-                if sub.isdigit() and validar_clabe(sub) and sub not in fuzzy:
+                if sub.isdigit() and validar_clabe(sub) and banco_desde_clabe(sub) and sub not in fuzzy:
                     fuzzy.append(sub)
 
     ordenadas: list[str] = []
@@ -333,6 +338,11 @@ def nombre_desde_archivo(nombre_archivo: str) -> str:
     parece un nombre de persona (convención común: 'NOMBRE APELLIDO APELLIDO.pdf').
     Devuelve '' si el nombre de archivo no parece un nombre (p. ej. 'scan001')."""
     base = re.sub(r"\.[A-Za-z0-9]+$", "", nombre_archivo)  # quita la extensión
+    # Nombres tipo hash/identificador (p. ej. '0BE29A2C2BBA0A19...') no son
+    # nombres de persona; sus letras hexadecimales producían basura ("BE BBA").
+    solo_alnum = re.sub(r"[^A-Za-z0-9]", "", base)
+    if len(solo_alnum) >= 16 and re.fullmatch(r"[0-9A-Fa-f]+", solo_alnum):
+        return ""
     base = re.sub(r"[_\-]+", " ", base)
     base = re.sub(r"\(.*?\)|\d+", " ", base)               # quita "(1)", números
     palabras = [p for p in base.split() if _RE_TOKEN_ALFA.match(p)]

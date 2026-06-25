@@ -28,6 +28,8 @@ Cuentas bancarias/
 # Reporte de cuentas para conciliar (CLABE/nombres/correos reales de proveedores)
 Reporte Cuentas Bancarias.xlsx
 Reporte*.xlsx
+# Documentos de prueba (estados de cuenta / cartas reales con datos sensibles)
+Documentos de pruebas conciliación/
 # Archivos TXT de ejemplo (contienen CLABE/nombres reales)
 Archivos TXT/
 ALTABANREGIO 1.xls

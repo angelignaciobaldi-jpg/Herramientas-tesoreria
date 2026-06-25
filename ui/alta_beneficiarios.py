@@ -13,7 +13,7 @@ import flet as ft
 
 from core import db, exportador, exportador_alta_banregio, ocr, reporte_cuentas
 from core.catalogo_bancos import banco_desde_clabe
-from core.extractores import extraer_datos, nombre_desde_archivo, validar_clabe
+from core.extractores import extraer_clabes, extraer_datos, nombre_desde_archivo, validar_clabe
 from ui.comun import (
     EXTENSIONES, GRIS, NARANJA, ROJO, VERDE,
     W_ACCIONES, W_BANCO, W_CLABE, W_ESTADO, W_MONTO, W_NOMBRE,
@@ -609,6 +609,15 @@ class SeccionAltaBeneficiarios:
                 if not datos.clabe and not datos.beneficiario and not uso_ocr:
                     texto, _ = await asyncio.to_thread(ocr.extraer_texto, archivo.path, True)
                     datos = extraer_datos(texto)
+                # Último recurso para la CLABE: OCR en modo "texto disperso", que
+                # recupera números en tablas/celdas que la segmentación normal
+                # omite (p. ej. la tabla de una carta de asignación de cuenta).
+                if not datos.clabe:
+                    texto_sp = await asyncio.to_thread(ocr.texto_disperso, archivo.path)
+                    clabes_sp = extraer_clabes(texto_sp)
+                    if clabes_sp:
+                        datos.clabe = clabes_sp[0]
+                        datos.banco = banco_desde_clabe(datos.clabe)
                 # El nombre del archivo (si parece nombre de persona) es la
                 # fuente más confiable del beneficiario; tiene prioridad sobre
                 # el OCR. Si no, se usa lo identificado en el documento.
