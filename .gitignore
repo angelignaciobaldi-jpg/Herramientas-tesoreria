@@ -30,6 +30,8 @@ Reporte Cuentas Bancarias.xlsx
 Reporte*.xlsx
 # Documentos de prueba (estados de cuenta / cartas reales con datos sensibles)
 Documentos de pruebas conciliación/
+# Páginas HTML de referencia del portal/reportes (datos reales)
+PAGINAS HTML/
 # Archivos TXT de ejemplo (contienen CLABE/nombres reales)
 Archivos TXT/
 ALTABANREGIO 1.xls

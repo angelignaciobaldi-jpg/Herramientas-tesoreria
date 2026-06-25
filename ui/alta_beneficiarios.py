@@ -8,10 +8,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+from datetime import date
 
 import flet as ft
 
-from core import db, exportador, exportador_alta_banregio, ocr, reporte_cuentas
+from core import (
+    db, exportador, exportador_alta_bancomer, exportador_alta_banregio, ocr,
+    reporte_cuentas,
+)
 from core.catalogo_bancos import banco_desde_clabe
 from core.extractores import extraer_clabes, extraer_datos, nombre_desde_archivo, validar_clabe
 from ui.comun import (
@@ -331,10 +335,11 @@ class SeccionAltaBeneficiarios:
         # Formato/banco de exportación: Bancomer -> TXT (dispersión) ;
         # Banregio -> Excel de alta de cuentas.
         self.dd_formato = ft.Dropdown(
-            label="Exportar para", width=210, value="Bancomer",
+            label="Exportar para", width=300, value="Bancomer",
             options=[
-                ft.dropdown.Option(key="Bancomer", text="Bancomer (TXT)"),
-                ft.dropdown.Option(key="Banregio", text="Banregio (Excel)"),
+                ft.dropdown.Option(key="Bancomer", text="Bancomer · Dispersión (TXT)"),
+                ft.dropdown.Option(key="BancomerAlta", text="Bancomer · Alta de cuentas (carpeta)"),
+                ft.dropdown.Option(key="Banregio", text="Banregio · Alta (Excel)"),
             ],
             on_select=self._cambio_formato_export,
         )
@@ -555,6 +560,9 @@ class SeccionAltaBeneficiarios:
         if self.dd_formato.value == "Banregio":
             self.btn_export.content = "Exportar Excel (Banregio)"
             self.btn_export.icon = ft.Icons.TABLE_VIEW
+        elif self.dd_formato.value == "BancomerAlta":
+            self.btn_export.content = "Generar carpeta de alta (Bancomer)"
+            self.btn_export.icon = ft.Icons.CREATE_NEW_FOLDER
         else:
             self.btn_export.content = "Exportar TXT (Bancomer)"
             self.btn_export.icon = ft.Icons.DOWNLOAD
@@ -562,10 +570,15 @@ class SeccionAltaBeneficiarios:
 
     def _refrescar_candado_export(self) -> None:
         """Bloquea la exportación si falta un monto. El candado SOLO aplica al
-        formato Bancomer (TXT de dispersión); el alta Banregio no usa montos."""
-        if self.dd_formato.value == "Banregio":
+        formato Bancomer de dispersión (que usa montos); ni el alta Banregio ni
+        el alta de cuentas Bancomer usan montos."""
+        if self.dd_formato.value != "Bancomer":
             self.btn_export.disabled = False
-            self.btn_export.tooltip = "Genera el archivo Excel de alta para Banregio"
+            self.btn_export.tooltip = (
+                "Genera el archivo Excel de alta para Banregio"
+                if self.dd_formato.value == "Banregio"
+                else "Genera la carpeta con los TXT de alta de cuentas Bancomer"
+            )
             self.page.update()
             return
         sin_monto = sum(1 for b in db.listar() if b.monto is None)
@@ -775,8 +788,58 @@ class SeccionAltaBeneficiarios:
 
         if self.dd_formato.value == "Banregio":
             await self._exportar_alta_banregio(guardados)
+        elif self.dd_formato.value == "BancomerAlta":
+            await self._exportar_alta_bancomer(guardados)
         else:
             await self._exportar_dispersion_bancomer(guardados)
+
+    async def _exportar_alta_bancomer(self, guardados) -> None:
+        """Genera la carpeta 'CUENTAS PARA ALTA BANCOMER - dd-mm-aaaa' con los
+        TXT de alta de cuentas para el portal Bancomer, separando los registros
+        que tienen correo de los que no (estos requieren capturar el correo)."""
+        validos = [b for b in guardados if validar_clabe(b.clabe)]
+        if not validos:
+            self.avisar("No hay registros con CLABE válida para exportar.", ROJO)
+            return
+        con_correo = [
+            (b.clabe, b.beneficiario, b.email or "")
+            for b in validos if (b.email or "").strip()
+        ]
+        sin_correo = [
+            (b.clabe, b.beneficiario, "")
+            for b in validos if not (b.email or "").strip()
+        ]
+
+        destino = await self.picker.get_directory_path(
+            dialog_title="Elige dónde crear la carpeta de alta de cuentas Bancomer",
+        )
+        if not destino:
+            return
+        # El nombre lleva la fecha; en Windows una carpeta no admite '/', así que
+        # se usa dd-mm-aaaa en lugar de dd/mm/aaaa.
+        fecha = date.today().strftime("%d-%m-%Y")
+        carpeta = os.path.join(destino, f"CUENTAS PARA ALTA BANCOMER - {fecha}")
+        try:
+            os.makedirs(carpeta, exist_ok=True)
+            resumen: list[str] = []
+            if con_correo:
+                with open(os.path.join(carpeta, "Cuentas con correo.txt"),
+                          "w", encoding="latin-1", newline="") as fh:
+                    fh.write(exportador_alta_bancomer.generar_txt(con_correo))
+                resumen.append(f"{len(con_correo)} con correo")
+            if sin_correo:
+                with open(os.path.join(carpeta, "Cuentas sin correo.txt"),
+                          "w", encoding="latin-1", newline="") as fh:
+                    fh.write(exportador_alta_bancomer.generar_txt(sin_correo))
+                resumen.append(f"{len(sin_correo)} sin correo")
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self.avisar(f"No se pudo generar la carpeta: {exc}", ROJO)
+            return
+        try:
+            os.startfile(carpeta)  # abre la carpeta generada en el explorador
+        except Exception:  # noqa: BLE001 — abrir es opcional
+            pass
+        self.avisar("Carpeta de alta generada (" + ", ".join(resumen) + ").", VERDE)
 
     async def _exportar_dispersion_bancomer(self, guardados) -> None:
         # Candado: no se exporta si algún registro guardado no tiene monto.
