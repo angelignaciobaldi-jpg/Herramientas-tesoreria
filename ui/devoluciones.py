@@ -173,13 +173,18 @@ class SeccionDevoluciones:
         )
         return ft.Column([config, tabla], spacing=14, scroll=ft.ScrollMode.AUTO, expand=True)
 
-    def _limitar_fecha(self, _e) -> None:
-        """Mantiene la fecha en máximo 8 dígitos (DDMMAAAA) sin usar max_length,
-        para no mostrar el contador de caracteres que desalineaba la fila."""
+    def _limitar_fecha(self, _e=None) -> None:
+        """Mantiene la fecha en máximo 8 dígitos (DDMMAAAA) sin usar max_length
+        (para no mostrar el contador que desalineaba la fila) y muestra una
+        leyenda si no cumple la regla de 8 dígitos."""
         limpio = solo_digitos(self.tf_fecha.value)[:8]
         if limpio != (self.tf_fecha.value or ""):
             self.tf_fecha.value = limpio
-            self.page.update()
+        self.tf_fecha.error = (
+            None if len(limpio) == 8
+            else ft.Text("La fecha debe tener 8 dígitos (DDMMAAAA).", color=ROJO, size=11)
+        )
+        self.page.update()
 
     def _cambio_banco(self, _e) -> None:
         es_banregio = self.dd_banco.value == "Banregio"
