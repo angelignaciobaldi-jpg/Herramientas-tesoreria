@@ -51,13 +51,19 @@ class FilaDevolucion:
             ]
         )
 
-    def _limitar_clabe(self, _e) -> None:
+    def _limitar_clabe(self, _e=None) -> None:
         """Limita la CLABE a 18 dígitos sin usar max_length (para no mostrar el
-        contador de caracteres que desalineaba la fila)."""
+        contador que desalineaba la fila) y muestra una leyenda si no cumple la
+        regla de 18 dígitos exactos."""
         limpio = solo_digitos(self.tf_clabe.value)[:18]
         if limpio != (self.tf_clabe.value or ""):
             self.tf_clabe.value = limpio
-            self.seccion.page.update()
+        # Sin error si está vacía (fila aún sin capturar) o si ya tiene 18.
+        self.tf_clabe.error = (
+            None if len(limpio) in (0, 18)
+            else ft.Text("Debe tener 18 dígitos exactos.", color=ROJO, size=11)
+        )
+        self.seccion.page.update()
 
     def valores(self) -> tuple[str, str, str, str]:
         return (
@@ -152,7 +158,9 @@ class SeccionDevoluciones:
             heading_row_color=ft.Colors.SURFACE_CONTAINER_HIGHEST,
             heading_row_height=46,
             data_row_min_height=48,
-            data_row_max_height=48,
+            # Permite que una fila crezca para mostrar la leyenda de la CLABE
+            # cuando no tiene 18 dígitos (las filas válidas se quedan en 48).
+            data_row_max_height=78,
             divider_thickness=1,
             border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
             border_radius=10,
