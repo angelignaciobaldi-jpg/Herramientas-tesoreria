@@ -5,9 +5,14 @@ echo ============================================================
 echo   Herramienta Integral de Tesoreria
 echo ============================================================
 echo.
-echo [1/3] Buscando actualizaciones (git pull)...
-git pull
-if errorlevel 1 echo   * No se pudo actualizar; se abrira la version local.
+echo [1/4] Buscando actualizaciones (rama main)...
+git checkout main
+if errorlevel 1 (
+  echo   * No se pudo cambiar a la rama main; se abrira la version local.
+) else (
+  git pull origin main
+  if errorlevel 1 echo   * No se pudo actualizar; se abrira la version local.
+)
 echo.
 echo [2/4] Verificando que Python este instalado...
 set "PYEXE="
