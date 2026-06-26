@@ -565,14 +565,20 @@ class SeccionAltaBeneficiarios:
         self._refrescar_candado_export()
 
     def _refrescar_candado_export(self) -> None:
-        """Ajusta el tooltip del botón de exportar. Ya no hay candado por monto:
-        las exportaciones restantes (alta de cuentas Bancomer y alta Banregio)
-        no usan montos."""
-        self.btn_export.disabled = False
+        """Bloquea la exportación si falta un monto. El candado aplica al alta de
+        cuentas Bancomer (el monto va dentro del TXT); el alta Banregio no usa
+        montos."""
+        if self.dd_formato.value == "Banregio":
+            self.btn_export.disabled = False
+            self.btn_export.tooltip = "Genera el archivo Excel de alta para Banregio"
+            self.page.update()
+            return
+        sin_monto = sum(1 for b in db.listar() if b.monto is None)
+        self.btn_export.disabled = sin_monto > 0
         self.btn_export.tooltip = (
-            "Genera el archivo Excel de alta para Banregio"
-            if self.dd_formato.value == "Banregio"
-            else "Genera la carpeta con los TXT de alta de cuentas Bancomer"
+            f"Hay {sin_monto} registro(s) guardado(s) sin monto. Captura el monto "
+            "y guarda para poder exportar."
+            if sin_monto else "Genera la carpeta con los TXT de alta de cuentas Bancomer"
         )
         self.page.update()
 
@@ -787,6 +793,15 @@ class SeccionAltaBeneficiarios:
         if not validos:
             self.avisar("No hay registros con CLABE válida para exportar.", ROJO)
             return
+        # El monto va dentro del TXT: no se exporta si algún registro no lo tiene.
+        sin_monto = sum(1 for b in validos if b.monto is None)
+        if sin_monto:
+            self.avisar(
+                f"No se puede exportar: {sin_monto} registro(s) sin monto. "
+                "Captura el monto y guárdalo.",
+                ROJO,
+            )
+            return
 
         def es_bancomer(b) -> bool:
             return b.clabe[:3] == "012"
@@ -820,7 +835,7 @@ class SeccionAltaBeneficiarios:
             resumen: list[str] = []
             for nombre_archivo, filtro, etiqueta in grupos:
                 sub = [
-                    (b.clabe, b.beneficiario, b.email or "")
+                    (b.clabe, b.monto, b.beneficiario, b.email or "")
                     for b in validos if filtro(b)
                 ]
                 if not sub:
