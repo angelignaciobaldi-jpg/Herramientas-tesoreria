@@ -45,7 +45,7 @@ def generar(ruta: str, contexto: dict, registros: list[tuple]) -> None:
     #     maestro) ---
     fila = 3
     encabezados = ["#", "Empresa que paga", "Banco origen", "Cuenta origen (CLABE)",
-                   "Número de cuenta", "CLABE", "Monto", "Beneficiario",
+                   "Número de cuenta", "CLABE Beneficiario", "Monto", "Beneficiario",
                    "Concepto / Referencia", "Fecha de devolución"]
     for col, titulo in enumerate(encabezados, start=1):
         c = ws.cell(row=fila, column=col, value=titulo)

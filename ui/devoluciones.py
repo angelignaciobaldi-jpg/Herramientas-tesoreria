@@ -147,7 +147,7 @@ class SeccionDevoluciones:
 
         self.tabla = ft.DataTable(
             columns=[
-                ft.DataColumn(label=encabezado_col("CLABE", W_CLABE)),
+                ft.DataColumn(label=encabezado_col("CLABE Beneficiario", W_CLABE)),
                 ft.DataColumn(label=encabezado_col("Monto", W_MONTO), numeric=True),
                 ft.DataColumn(label=encabezado_col("Beneficiario", W_NOMBRE)),
                 ft.DataColumn(label=encabezado_col("Concepto / Referencia", W_NOMBRE)),
