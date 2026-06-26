@@ -105,14 +105,13 @@ class SeccionDevoluciones:
         self.tf_num_cuenta = ft.TextField(
             label="Número de cuenta", width=220, read_only=True,
         )
-        # Config Banregio (solo fecha) / Bancomer (solo folio).
+        # Config Banregio (solo fecha) / Bancomer (solo folio). Van en la misma
+        # fila que la cuenta origen; se muestra uno u otro según el banco.
         self.tf_fecha = ft.TextField(
             label="Fecha (DDMMAAAA)", width=170, max_length=8,
             value=date.today().strftime("%d%m%Y"),
         )
-        self.cfg_banregio = ft.Row([self.tf_fecha])
-        self.tf_folio = ft.TextField(label="Folio", width=150, value="0023626H")
-        self.cfg_bancomer = ft.Row([self.tf_folio], visible=False)
+        self.tf_folio = ft.TextField(label="Folio", width=150, value="0023626H", visible=False)
 
         nota = ""
         if not self.catalogo.disponible():
@@ -125,7 +124,7 @@ class SeccionDevoluciones:
                 [
                     ft.Row([self.dd_banco, self.dd_empresa],
                            wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=16),
-                    ft.Row([self.dd_origen, self.tf_num_cuenta, self.cfg_banregio, self.cfg_bancomer],
+                    ft.Row([self.dd_origen, self.tf_num_cuenta, self.tf_fecha, self.tf_folio],
                            wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=16),
                     ft.Text(nota, color=ROJO, size=12, visible=bool(nota)),
                 ],
@@ -173,8 +172,8 @@ class SeccionDevoluciones:
 
     def _cambio_banco(self, _e) -> None:
         es_banregio = self.dd_banco.value == "Banregio"
-        self.cfg_banregio.visible = es_banregio
-        self.cfg_bancomer.visible = not es_banregio
+        self.tf_fecha.visible = es_banregio
+        self.tf_folio.visible = not es_banregio
         self._actualizar_cuentas()
 
     def _actualizar_cuentas(self, _e=None) -> None:
