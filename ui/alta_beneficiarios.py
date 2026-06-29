@@ -13,8 +13,8 @@ from datetime import date
 import flet as ft
 
 from core import (
-    db, exportador_alta_bancomer, exportador_alta_banregio, ocr,
-    reporte_cuentas,
+    db, exportador_alta_bancomer, exportador_alta_banregio, exportador_alta_spei,
+    ocr, reporte_cuentas,
 )
 from core.catalogo_bancos import banco_desde_clabe
 from core.extractores import extraer_clabes, extraer_datos, nombre_desde_archivo, validar_clabe
@@ -956,16 +956,19 @@ class SeccionAltaBeneficiarios:
         def tiene_correo(b) -> bool:
             return bool((b.email or "").strip())
 
-        # (nombre de archivo, filtro, etiqueta para el resumen)
+        # Bancomer (012) usa su formato; otros bancos usan el formato SPEI.
+        gen_bancomer = exportador_alta_bancomer.generar_txt
+        gen_spei = exportador_alta_spei.generar_txt
+        # (nombre de archivo, filtro, etiqueta, generador del TXT)
         grupos = [
             ("Cuentas Bancomer con correo.txt",
-             lambda b: es_bancomer(b) and tiene_correo(b), "Bancomer con correo"),
+             lambda b: es_bancomer(b) and tiene_correo(b), "Bancomer con correo", gen_bancomer),
             ("Cuentas Bancomer sin correo.txt",
-             lambda b: es_bancomer(b) and not tiene_correo(b), "Bancomer sin correo"),
+             lambda b: es_bancomer(b) and not tiene_correo(b), "Bancomer sin correo", gen_bancomer),
             ("Cuentas otros bancos con correo.txt",
-             lambda b: not es_bancomer(b) and tiene_correo(b), "otros bancos con correo"),
+             lambda b: not es_bancomer(b) and tiene_correo(b), "otros bancos con correo", gen_spei),
             ("Cuentas otros bancos sin correo.txt",
-             lambda b: not es_bancomer(b) and not tiene_correo(b), "otros bancos sin correo"),
+             lambda b: not es_bancomer(b) and not tiene_correo(b), "otros bancos sin correo", gen_spei),
         ]
 
         destino = await self.picker.get_directory_path(
@@ -980,7 +983,7 @@ class SeccionAltaBeneficiarios:
         try:
             os.makedirs(carpeta, exist_ok=True)
             resumen: list[str] = []
-            for nombre_archivo, filtro, etiqueta in grupos:
+            for nombre_archivo, filtro, etiqueta, generador in grupos:
                 sub = [
                     (b.clabe, b.monto, b.beneficiario, b.email or "")
                     for b in validos if filtro(b)
@@ -989,7 +992,7 @@ class SeccionAltaBeneficiarios:
                     continue
                 with open(os.path.join(carpeta, nombre_archivo),
                           "w", encoding="latin-1", newline="") as fh:
-                    fh.write(exportador_alta_bancomer.generar_txt(sub))
+                    fh.write(generador(sub))
                 resumen.append(f"{len(sub)} {etiqueta}")
         except PermissionError:
             self.avisar(
