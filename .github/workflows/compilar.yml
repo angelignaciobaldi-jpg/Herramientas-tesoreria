@@ -1,0 +1,43 @@
+name: Pipeline de Compilación y Empaquetado Automático
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout del código
+      uses: actions/checkout@v4
+
+    - name: Configurar Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Instalar dependencias
+      run: |
+        python -m pip install --upgrade pip
+        pip install pyinstaller requests
+        if (Test-Path requirements.txt) { pip install -r requirements.txt }
+
+    # 1. Compilación del código fuente con PyInstaller
+    - name: Compilar con PyInstaller
+      run: |
+        pyinstaller --onedir --noconsole main.py
+ 
+    # 2. Empaquetado en instalador Windows con Inno Setup
+    - name: Compilar Instalador con Inno Setup
+      uses: amanin/innosetup-action@v3
+      with:
+        filepath: instalador.iss
+
+    # 3. Publicación directa del instalador en el Release de GitHub
+    - name: Subir Instalador al Release de GitHub
+      uses: softprops/action-gh-release@v2
+      with:
+        files: Output/Instalador_Quetzaltic.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

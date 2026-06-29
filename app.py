@@ -13,6 +13,8 @@ El shell expone a cada pantalla: page, picker (diálogos de archivo) y avisar().
 
 from __future__ import annotations
 
+import sys
+
 import flet as ft
 
 from core import db, ocr, rutas
@@ -115,7 +117,29 @@ class AppTesoreria:
         self.page.update()
 
 
+def _buscar_actualizaciones() -> None:
+    """Solo en la app empaquetada: busca una versión más nueva en GitHub y, si la
+    hay, descarga el instalador y lo aplica en silencio (cierra la app). Cualquier
+    fallo (sin red, sin PAT, etc.) se ignora para no impedir el arranque."""
+    if not getattr(sys, "frozen", False):
+        return  # en desarrollo no se autoactualiza
+    try:
+        from core import entorno
+        from core.auto_updater import AutoUpdater, ErrorActualizacion
+
+        if not entorno.github_pat(requerido=False):
+            return  # sin PAT configurado: se omite el chequeo
+        AutoUpdater().buscar_y_actualizar()  # si hay nueva: descarga, aplica y cierra
+    except ErrorActualizacion:
+        pass  # problema controlado (red/asset/etc.): seguir con la versión actual
+    except Exception:  # noqa: BLE001 — el updater nunca debe tumbar el arranque
+        pass
+
+
 def main(page: ft.Page) -> None:
+    # Antes de construir la UI: chequeo de actualización (solo empaquetada).
+    _buscar_actualizaciones()
+
     page.title = "Herramienta Integral de Tesorería"
     page.padding = 18
     page.theme_mode = ft.ThemeMode.LIGHT

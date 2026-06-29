@@ -27,7 +27,9 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import os
 import re
+import sys
 import threading
 
 from playwright.async_api import (
@@ -39,6 +41,68 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
     async_playwright,
 )
+
+import glob
+
+from core import rutas
+
+
+def _ruta_navegadores() -> str:
+    """Carpeta (escribible) donde vive Chromium en la app empaquetada."""
+    return os.path.join(rutas.DATOS, "ms-playwright")
+
+
+def _hay_chromium(base: str) -> bool:
+    """True si ya hay un Chromium instalado en `base`."""
+    return bool(glob.glob(os.path.join(base, "chromium-*", "**", "chrome.exe"), recursive=True))
+
+
+def necesita_navegador() -> bool:
+    """True si la app está empaquetada y aún falta descargar Chromium (primera
+    vez). Permite a la interfaz mostrar un aviso antes de la descarga."""
+    if not getattr(sys, "frozen", False):
+        return False
+    return not _hay_chromium(_ruta_navegadores())
+
+
+async def asegurar_navegador() -> None:
+    """En la app empaquetada (sys.frozen): fija PLAYWRIGHT_BROWSERS_PATH a una
+    carpeta escribible del usuario y, si Chromium no está, lo descarga (la primera
+    vez, requiere internet). En desarrollo no hace nada (usa la instalación normal
+    de Playwright).
+
+    El driver (node) viene empaquetado (--collect-all playwright); con él se
+    invoca la descarga, igual que haría 'playwright install'."""
+    if not getattr(sys, "frozen", False):
+        return
+    destino = _ruta_navegadores()
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = destino  # antes de usar Playwright
+    if _hay_chromium(destino):
+        return
+    os.makedirs(destino, exist_ok=True)
+    # Descarga Chromium (sin headless shell) con el driver node empaquetado.
+    from playwright._impl._driver import compute_driver_executable, get_driver_env
+
+    node, cli = compute_driver_executable()
+    entorno_driver = {**os.environ, **get_driver_env()}
+    entorno_driver["PLAYWRIGHT_BROWSERS_PATH"] = destino
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            node, cli, "install", "chromium", "--no-shell",
+            env=entorno_driver,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+        await proc.communicate()
+    except Exception as exc:  # noqa: BLE001 — se reporta como ErrorSipp
+        raise ErrorSipp(
+            "No se pudo descargar el navegador (Chromium): %s" % exc
+        ) from exc
+    if not _hay_chromium(destino):
+        raise ErrorSipp(
+            "No se pudo preparar el navegador (Chromium). Revisa la conexión a "
+            "internet e inténtalo de nuevo."
+        )
 
 
 class ErrorSipp(Exception):
@@ -71,6 +135,7 @@ class SesionSipp:
     # ------------------------------------------------------ ciclo de vida
     async def iniciar(self) -> "SesionSipp":
         """Arranca Playwright, el navegador y una pestaña limpia."""
+        await asegurar_navegador()
         self._pw = await async_playwright().start()
         self.browser = await self._pw.chromium.launch(
             headless=self.headless, slow_mo=self.slow_mo,
