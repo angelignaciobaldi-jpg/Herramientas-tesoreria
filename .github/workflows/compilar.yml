@@ -28,7 +28,7 @@ jobs:
         shell: pwsh
         run: |
           python -m pip install --upgrade pip
-          pip install flet
+          pip install flet pyinstaller
           if (Test-Path requirements.txt) { pip install -r requirements.txt }
 
       # 1. Compilar la app con flet pack (onedir). Incluye el driver de Playwright
@@ -42,7 +42,7 @@ jobs:
           --add-data "Imagenes:Imagenes"
           --hidden-import openpyxl
           --hidden-import xlwt
-          --pyinstaller-build-args="--collect-all=playwright"
+          --pyinstaller-build-args=--collect-all=playwright
           -y
 
       # 2. Instalar Inno Setup y compilar el instalador (instalador.iss).
