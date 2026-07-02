@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
-import os
+import json
 import os
 import re
 import sys
@@ -117,6 +117,25 @@ async def asegurar_navegador() -> None:
         )
 
 
+def _higienizar_nombre(texto: str) -> str:
+    """Limpia un texto para usarlo como parte de un nombre de archivo en Windows
+    (quita caracteres no permitidos y espacios sobrantes)."""
+    limpio = re.sub(r'[<>:"/\\|?*]', "", texto).strip()
+    return re.sub(r"\s+", " ", limpio)
+
+
+def _ruta_unica(ruta: str) -> str:
+    """Si `ruta` ya existe, agrega ' (n)' antes de la extensión hasta hallar un
+    nombre libre. Evita sobrescribir reportes al descargar varias combinaciones."""
+    if not os.path.exists(ruta):
+        return ruta
+    base, ext = os.path.splitext(ruta)
+    n = 2
+    while os.path.exists(f"{base} ({n}){ext}"):
+        n += 1
+    return f"{base} ({n}){ext}"
+
+
 class ErrorSipp(Exception):
     """Falla esperada del RPA del SIPP (login fallido, elemento ausente, etc.)."""
 
@@ -158,6 +177,23 @@ _JS_ELEGIR_OPCION = r"""(args) => {
     }
     return {ok: true, elegido: opt.textContent.trim(), widget: widget};
 }"""
+
+
+@dataclass
+class FiltrosSolicitudPago:
+    """Filtros del modal 'Agregar Facturas/Solicitudes de Pago'.
+
+    Todos los campos son opcionales: si vienen vacíos/None, ese filtro NO se toca
+    (se deja como está en pantalla). Pensado para que la UI los rellene con lo que
+    el usuario capture y deje en blanco lo que no quiera filtrar."""
+
+    empresa: str | None = None
+    proveedor: str | None = None
+    cuenta_bancaria: str | None = None
+    fecha_inicio: str | None = None
+    fecha_fin: str | None = None
+    folio_solicitud: str | None = None
+    tipo_solicitud: str | None = None
 
 
 class SesionSipp:
@@ -1028,6 +1064,221 @@ class SesionSipp:
         return SesionSipp._sanear_nombre(
             f"Estados de cuenta proveedores - {fmt(fecha_inicio)} a {fmt(fecha_fin)}"
         )
+
+    # ------------------------------------------ modal Agregar Solicitudes
+    # ng-model de cada control del modal (verificados contra el DOM real).
+    _NG_EMPRESA = "filtroSPP_D.id_Empresa"
+    _NG_PROVEEDOR = "filtroSPP_D.id_Proveedor"
+    _NG_CUENTA = "filtroSPP_D.id_CuentaBancaria"
+    _NG_FECHA_INI = "dt_fh_Inicio"
+    _NG_FECHA_FIN = "dt_fh_Fin"
+    _NG_FOLIO = "filtroSPP_D.fl_FolioSolicitud"
+    _NG_TIPO = "filtroSPP_D.id_TipoSolicitudPago"
+    # ng-click de los botones de acción del modal (verificados contra el DOM).
+    _NG_BUSCAR = "getSolicitudesPagoProveedores_Dispersion()"
+    _NG_REPORTE = "generarReporteSolicitudesPagoProveedores_Dispersion()"
+    # Nombre de la función del backend que atiende la búsqueda; aparece en la URL
+    # del XHR (cfproxy.cfc?_=<func>...). Sirve para esperar la respuesta real.
+    _FUNC_BUSCAR = "getSolicitudesPagoProveedores_Dispersion"
+
+    async def abrir_modal_agregar_solicitudes(self) -> None:
+        """Pulsa 'Agregar Facturas/Solicitudes de Pago' y espera el modal."""
+        page = self._exigir_pagina()
+        boton = page.get_by_text("Agregar Facturas/Solicitudes de Pago")
+        try:
+            await boton.first.click(timeout=self.TIMEOUT_ELEMENTO)
+        except PlaywrightTimeoutError as exc:
+            raise ErrorSipp(
+                "No se encontró el botón 'Agregar Facturas/Solicitudes de Pago'."
+            ) from exc
+        # El modal está listo cuando aparece el primer filtro (la empresa).
+        try:
+            await page.locator(f'[ng-model="{self._NG_EMPRESA}"]').first.wait_for(
+                state="attached", timeout=self.TIMEOUT_ELEMENTO,
+            )
+        except PlaywrightTimeoutError as exc:
+            raise ErrorSipp("No abrió el modal de Agregar Facturas/Solicitudes de Pago.") from exc
+
+    async def aplicar_filtros_solicitudes(self, filtros: "FiltrosSolicitudPago") -> None:
+        """Abre el modal y aplica los filtros capturados. Atajo para el caso de
+        una sola pasada; si vas a iterar varias combinaciones reutilizando el
+        mismo modal, usa abrir_modal_agregar_solicitudes() + fijar_filtros()."""
+        await self.abrir_modal_agregar_solicitudes()
+        await self.fijar_filtros(filtros)
+
+    async def fijar_filtros(self, filtros: "FiltrosSolicitudPago") -> None:
+        """Aplica solo los filtros que el usuario haya capturado sobre el modal YA
+        abierto; los campos vacíos se dejan tal cual (no se tocan). Reutilizable
+        para fijar distintas combinaciones sin reabrir el modal."""
+        if filtros.empresa:
+            await self._set_combo(self._NG_EMPRESA, filtros.empresa)
+        if filtros.proveedor:
+            await self._set_combo(self._NG_PROVEEDOR, filtros.proveedor)
+        if filtros.cuenta_bancaria:
+            await self._set_combo(self._NG_CUENTA, filtros.cuenta_bancaria)
+        if filtros.fecha_inicio:
+            await self._set_fecha(self._NG_FECHA_INI, filtros.fecha_inicio)
+        if filtros.fecha_fin:
+            await self._set_fecha(self._NG_FECHA_FIN, filtros.fecha_fin)
+        if filtros.folio_solicitud:
+            await self._set_input(self._NG_FOLIO, filtros.folio_solicitud)
+        if filtros.tipo_solicitud:
+            await self._set_combo(self._NG_TIPO, filtros.tipo_solicitud)
+
+    async def _set_combo(self, ng_model: str, texto: str) -> None:
+        """Elige `texto` en un combo del modal. Los combos son <select> con el
+        plugin 'chosen' (el <select> queda oculto y se opera la UI de chosen)."""
+        page = self._exigir_pagina()
+        select = page.locator(f'[ng-model="{ng_model}"]').first
+        # 'chosen' inserta su contenedor como hermano inmediato del <select>.
+        chosen = select.locator(
+            "xpath=following-sibling::*[contains(@class,'chosen-container')][1]"
+        )
+        if await chosen.count():
+            await self._seleccionar_chosen(chosen.first, texto)
+        else:
+            await select.select_option(label=texto)
+
+    async def _set_input(self, ng_model: str, valor: str) -> None:
+        """Escribe `valor` en un input de texto simple del modal.
+
+        Se filtra por ':visible' porque el modal repite varios ng-model en
+        paneles ocultos (ng-hide); hay que tomar la instancia visible."""
+        page = self._exigir_pagina()
+        campo = page.locator(f'[ng-model="{ng_model}"]:visible').first
+        try:
+            await campo.fill(valor, timeout=3_000)
+        except Exception:  # noqa: BLE001 — fallback: setear por JS y avisar a Angular
+            await campo.evaluate(
+                "(el, v) => { el.value = v;"
+                " el.dispatchEvent(new Event('input', {bubbles:true}));"
+                " el.dispatchEvent(new Event('change', {bubbles:true})); }",
+                valor,
+            )
+
+    async def _set_fecha(self, ng_model: str, valor: str) -> None:
+        """Escribe una fecha (DD/MM/AAAA) en el input con máscara (ui-mask).
+
+        Se usa fill, que enfoca el campo SIN dar un clic real: así nunca se abre
+        el selector de calendario (un clic normal sí lo abre) y, a la vez, dispara
+        el evento 'input' con el que Angular registra el valor (verificado: el
+        modelo ng-model queda actualizado).
+
+        Se filtra por ':visible' porque el modal repite el ng-model de fecha en un
+        panel oculto (0×0); hay que tomar el input visible, no el primero del DOM."""
+        page = self._exigir_pagina()
+        campo = page.locator(f'[ng-model="{ng_model}"]:visible').first
+        await campo.fill(valor)
+
+    # --------------------------------------------- buscar / descargar reporte
+    async def buscar_solicitudes(self) -> int:
+        """Pulsa 'Buscar' y espera la RESPUESTA del servidor (no 'networkidle',
+        que en esta SPA tardaba ~10 s por el polling de fondo). Devuelve cuántos
+        resultados trajo la búsqueda (0 = tabla vacía / sin resultados).
+
+        El conteo se lee del propio payload del XHR (JSON con QUERY.DATA), lo que
+        es inmediato y fiable: no depende del DOM ni de filas de una búsqueda
+        anterior."""
+        page = self._exigir_pagina()
+        boton = page.locator(f'[ng-click="{self._NG_BUSCAR}"]:visible').first
+        try:
+            async with page.expect_response(
+                lambda r: self._FUNC_BUSCAR in r.url, timeout=self.TIMEOUT_NAV,
+            ) as info:
+                await boton.click(timeout=self.TIMEOUT_ELEMENTO)
+            resp = await info.value
+        except PlaywrightTimeoutError as exc:
+            raise ErrorSipp(
+                "No respondió la búsqueda de solicitudes (Buscar)."
+            ) from exc
+        try:
+            datos = json.loads(await resp.text())
+            return len(datos.get("QUERY", {}).get("DATA", []))
+        except Exception:  # noqa: BLE001 — si no se pudo leer, cae al DOM
+            return await self._contar_filas_dom()
+
+    async def _contar_filas_dom(self) -> int:
+        """Respaldo: cuenta filas de datos de la tabla de resultados del modal
+        (la tabla visible cuyo encabezado incluye 'Folio Factura')."""
+        page = self._exigir_pagina()
+        return await page.evaluate(
+            r"""() => {
+              const t = [...document.querySelectorAll('table')].find(
+                t => t.offsetParent &&
+                     /Folio\s*Factura/i.test((t.querySelector('thead')||{}).textContent||''));
+              if (!t) return 0;
+              return [...t.querySelectorAll('tbody tr')].filter(
+                tr => tr.offsetParent && tr.querySelector('input[type=checkbox]')).length;
+            }"""
+        )
+
+    async def descargar_reporte_excel(
+        self, ruta_destino: str | None = None, prefijo: str | None = None,
+    ) -> str:
+        """Pulsa 'Generar XLS', confirma el aviso y guarda el Excel descargado.
+
+        El botón 'Generar XLS' no descarga directamente: abre un modal de
+        confirmación (HTML) con un botón 'Aceptar'; la descarga arranca al
+        aceptarlo. Devuelve la ruta del archivo guardado. Si `ruta_destino` es
+        None, lo guarda en una carpeta escribible (DATOS/descargas) con el nombre
+        sugerido por el servidor (con `prefijo` opcional delante) y, si ya existe,
+        agrega un sufijo numérico para no sobrescribir. Solo se descarga: NO se
+        procesa el contenido (eso queda para más adelante)."""
+        page = self._exigir_pagina()
+        boton = page.locator(f'[ng-click="{self._NG_REPORTE}"]:visible').first
+        try:
+            await boton.click(timeout=self.TIMEOUT_ELEMENTO)
+        except PlaywrightTimeoutError as exc:
+            raise ErrorSipp("No se encontró el botón 'Generar XLS'.") from exc
+
+        # Confirmar el aviso (modal HTML): el 'Aceptar' dispara la descarga.
+        try:
+            async with page.expect_download(timeout=self.TIMEOUT_NAV) as info:
+                await self.confirmar_aviso()
+            descarga = await info.value
+        except PlaywrightTimeoutError as exc:
+            raise ErrorSipp(
+                "No se generó/descargó el reporte de solicitudes (Excel)."
+            ) from exc
+        if ruta_destino is None:
+            carpeta = os.path.join(rutas.DATOS, "descargas")
+            os.makedirs(carpeta, exist_ok=True)
+            nombre = descarga.suggested_filename
+            if prefijo:
+                nombre = f"{_higienizar_nombre(prefijo)} - {nombre}"
+            ruta_destino = _ruta_unica(os.path.join(carpeta, nombre))
+        else:
+            carpeta = os.path.dirname(ruta_destino)
+            if carpeta:
+                os.makedirs(carpeta, exist_ok=True)
+        await descarga.save_as(ruta_destino)
+        return ruta_destino
+
+    async def generar_reporte_solicitudes(
+        self, ruta_destino: str | None = None, prefijo: str | None = None,
+    ) -> str | None:
+        """Atajo: pulsa 'Buscar' y, SOLO si hay resultados, descarga el Excel.
+
+        Si la búsqueda no trae resultados (tabla vacía), NO genera el XLS (se
+        evita el aviso 'No se Encontraron Registros') y devuelve None. Si sí hay,
+        devuelve la ruta del archivo descargado."""
+        if await self.buscar_solicitudes() == 0:
+            return None
+        return await self.descargar_reporte_excel(ruta_destino, prefijo=prefijo)
+
+    async def confirmar_aviso(self) -> None:
+        """Pulsa 'Aceptar' en el modal de confirmación (HTML, no nativo) que el
+        portal muestra antes de ciertas acciones. Reutilizable para cualquier
+        aviso con un botón 'Aceptar'."""
+        page = self._exigir_pagina()
+        aceptar = await self._primer_visible(
+            [
+                page.get_by_role("button", name=re.compile(r"^\s*aceptar\s*$", re.I)),
+                page.locator("button.btn-primary:has-text('Aceptar')"),
+            ],
+            "botón 'Aceptar' del aviso de confirmación",
+        )
+        await aceptar.click(timeout=self.TIMEOUT_ELEMENTO)
 
     # --------------------------------------------------------- utilidades
     async def _primer_visible(
