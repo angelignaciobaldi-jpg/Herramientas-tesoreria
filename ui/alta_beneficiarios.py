@@ -11,6 +11,7 @@ import os
 from datetime import date
 
 import flet as ft
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from core import (
     db, exportador_alta_bancomer, exportador_alta_banregio, exportador_alta_spei,
@@ -441,6 +442,9 @@ class SeccionAltaBeneficiarios:
             on_click=self._iniciar_rpa_anexos,
         )
         self.anillo_rpa = ft.ProgressRing(width=18, height=18, stroke_width=2, visible=False)
+        # Barra de avance de la descarga de anexos (determinada: hechos/total).
+        # Oculta hasta que empieza la descarga y se conoce el total de registros.
+        self.pb_rpa = ft.ProgressBar(width=360, value=0, visible=False)
         self.txt_rpa = ft.Text("", color=GRIS, size=12)
         return tarjeta(
             "Descargar anexos del SIPP",
@@ -457,6 +461,7 @@ class SeccionAltaBeneficiarios:
                         "Proveedores por el rango de fechas y descarga los anexos.",
                         color=GRIS, size=12, italic=True,
                     ),
+                    self.pb_rpa,
                     self.txt_rpa,
                 ],
                 spacing=8,
@@ -493,35 +498,75 @@ class SeccionAltaBeneficiarios:
         self.txt_rpa.value = "RPA: iniciando sesión en el SIPP…"
         self.page.update()
         try:
-            n = await self._correr_rpa_anexos(usuario, contrasena, fi, ff, carpeta)
+            descargados, danados = await self._correr_rpa_anexos(
+                usuario, contrasena, fi, ff, carpeta,
+            )
         except ErrorSipp as exc:
             await self._cerrar_sesion_rpa()
             self._fin_rpa(f"RPA: {exc}", ROJO)
+            return
+        except PlaywrightTimeoutError:
+            # Timeout de navegación de Playwright: casi siempre es la conexión o
+            # que el portal del SIPP tardó/no respondió, no un fallo del RPA.
+            await self._cerrar_sesion_rpa()
+            self._fin_rpa(
+                "RPA: la página del SIPP tardó demasiado en responder. Suele ser "
+                "por una conexión a internet lenta o inestable (o el portal está "
+                "caído/muy lento). Revisa tu conexión e inténtalo de nuevo.",
+                ROJO,
+            )
             return
         except Exception as exc:  # noqa: BLE001 — se reporta al usuario
             await self._cerrar_sesion_rpa()
             self._fin_rpa(f"RPA: error inesperado: {exc}", ROJO)
             return
-        self._fin_rpa(
-            f"RPA: {n} anexo(s) descargado(s) en la carpeta elegida.",
-            VERDE if n else NARANJA,
-        )
+        if descargados == 0 and danados == 0:
+            self._fin_rpa("RPA: no se encontraron anexos para el rango elegido.", NARANJA)
+            return
+        mensaje = f"RPA: {descargados} anexo(s) descargado(s) en la carpeta elegida."
+        color = VERDE
+        if danados:
+            mensaje += (
+                f" {danados} llegaron dañados y se apartaron en la subcarpeta "
+                "'_no_validos' (revísalos manualmente)."
+            )
+            color = NARANJA
+        self._fin_rpa(mensaje, color)
 
-    async def _correr_rpa_anexos(self, usuario, contrasena, fi, ff, carpeta) -> int:
+    async def _correr_rpa_anexos(self, usuario, contrasena, fi, ff, carpeta) -> tuple[int, int]:
         """Ejecuta todo el flujo del RPA en el bucle del hilo dedicado (Playwright
-        requiere que todo corra en el mismo loop)."""
+        requiere que todo corra en el mismo loop). Devuelve (descargados, dañados)."""
         if self.bucle_rpa is None:
             self.bucle_rpa = BucleRpa()
         self.sesion_rpa = SesionSipp(headless=False)
         sesion = self.sesion_rpa
 
-        async def flujo() -> int:
+        async def flujo() -> tuple[int, int]:
             await sesion.iniciar()
             await sesion.login(usuario, contrasena)
             await sesion.seleccionar_empresa_sucursal(self.RPA_EMPRESA, self.RPA_SUCURSAL)
-            return await sesion.descargar_anexos_proveedores(fi, ff, carpeta)
+            return await sesion.descargar_anexos_proveedores(
+                fi, ff, carpeta, progreso=self._progreso_rpa,
+            )
 
         return await asyncio.wrap_future(self.bucle_rpa.enviar(flujo()))
+
+    def _progreso_rpa(self, hechos: int, total: int) -> None:
+        """Callback que el RPA (en su hilo aparte) llama para reportar avance.
+        Agenda la actualización de la barra en el hilo/loop de la interfaz con
+        page.run_task (seguro entre hilos)."""
+        self.page.run_task(self._aplicar_progreso_rpa, hechos, total)
+
+    async def _aplicar_progreso_rpa(self, hechos: int, total: int) -> None:
+        """Refleja el avance de la descarga en la barra de progreso del RPA."""
+        if total <= 0:
+            self.pb_rpa.visible = False
+            self.txt_rpa.value = "RPA: no se encontraron anexos para el rango elegido."
+        else:
+            self.pb_rpa.visible = True
+            self.pb_rpa.value = hechos / total
+            self.txt_rpa.value = f"RPA: descargando anexos… {hechos} de {total}"
+        self.page.update()
 
     async def _cerrar_sesion_rpa(self) -> None:
         """Cierra el navegador del RPA si quedó abierto (best-effort)."""
@@ -539,6 +584,8 @@ class SeccionAltaBeneficiarios:
         """Restablece los controles del RPA y muestra el resultado."""
         self.btn_rpa.disabled = False
         self.anillo_rpa.visible = False
+        self.pb_rpa.visible = False
+        self.pb_rpa.value = 0
         self.txt_rpa.value = mensaje
         self.page.update()
         self.avisar(mensaje, color)
@@ -783,7 +830,7 @@ class SeccionAltaBeneficiarios:
         self.btn_cargar.disabled = True
         self.anillo.visible = True
         identificados = 0
-        errores: list[str] = []
+        errores: list[tuple[str, str]] = []  # (nombre_archivo, motivo)
 
         for i, archivo in enumerate(archivos, start=1):
             nombre = os.path.basename(archivo.path)
@@ -819,18 +866,56 @@ class SeccionAltaBeneficiarios:
                 identificados += 1
                 self._redibujar_tabla()
             except Exception as exc:  # noqa: BLE001 — se reporta al usuario
-                errores.append(f"{nombre}: {exc}")
+                errores.append((nombre, self._motivo_error(exc)))
 
         self.btn_cargar.disabled = False
         self.anillo.visible = False
-        resumen = f"{identificados} de {len(archivos)} archivo(s) identificado(s) y agregado(s) a la tabla."
+        resumen = f"{identificados} de {len(archivos)} archivo(s) cargado(s) en la tabla."
         if errores:
-            resumen += " Con error: " + "; ".join(errores)
+            resumen += " " + self._resumen_errores(errores)
         self.txt_estado.value = resumen
+        self.txt_estado.color = NARANJA if errores else GRIS
+        if errores:
+            self.avisar(
+                f"{len(errores)} archivo(s) no se pudieron leer (ver el detalle abajo).",
+                NARANJA,
+            )
         # Si ya hay un reporte importado, concilia los nuevos registros.
         self._conciliar()
         self._actualizar_resumen()
         self.page.update()
+
+    @staticmethod
+    def _motivo_error(exc: Exception) -> str:
+        """Traduce la excepción al cargar un archivo a un motivo breve y claro."""
+        s = str(exc).lower()
+        tipo = type(exc).__name__.lower()
+        if "cannot identify image" in s or "unidentifiedimage" in tipo:
+            return "imagen no válida o dañada/incompleta"
+        if isinstance(exc, FileNotFoundError):
+            return "no se encontró el archivo"
+        if isinstance(exc, ValueError) and "extens" in s:
+            return "tipo de archivo no admitido"
+        if "tesseract" in s or "ocr" in tipo:
+            return "se necesita OCR y no está disponible"
+        if isinstance(exc, PermissionError):
+            return "archivo en uso o sin permisos"
+        return "no se pudo procesar"
+
+    @staticmethod
+    def _resumen_errores(errores: list[tuple[str, str]], max_nombres: int = 8) -> str:
+        """Arma un texto conciso de los archivos con error, agrupados por motivo y
+        mostrando solo los nombres (sin rutas ni volcados técnicos)."""
+        por_motivo: dict[str, list[str]] = {}
+        for nombre, motivo in errores:
+            por_motivo.setdefault(motivo, []).append(nombre)
+        partes = []
+        for motivo, nombres in por_motivo.items():
+            visibles = ", ".join(nombres[:max_nombres])
+            if len(nombres) > max_nombres:
+                visibles += f" y {len(nombres) - max_nombres} más"
+            partes.append(f"{len(nombres)} con {motivo} ({visibles})")
+        return "No se pudieron leer: " + " · ".join(partes) + "."
 
     # =========================================================== acciones
     def _seleccionar_todos(self, _e) -> None:

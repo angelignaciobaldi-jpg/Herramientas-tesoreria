@@ -16,6 +16,8 @@ Tesoreria-paquete/
 tesoreria.db
 *.db
 _cuentas_cache.json
+# Diagnósticos del RPA (capturas + HTML del portal real; datos sensibles)
+_diagnostico_rpa/
 
 # ===== Modelos de OCR (pesados; se obtienen aparte) =====
 tessdata/
