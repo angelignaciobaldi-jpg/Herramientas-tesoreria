@@ -7,7 +7,11 @@ AppName=Herramientas Tesoreria
 ; Mantener en sync con core/version.py (__version__).
 AppVersion=0.5.5
 AppPublisher=Quetzaltic Solutions
-DefaultDirName={commonpf}\Quetzaltic Solutions\Herramientas Tesoreria
+; Instalacion POR USUARIO (en %LOCALAPPDATA%\Programs), NO en Archivos de
+; Programa. Al ser una carpeta escribible por el usuario, la actualizacion
+; silenciosa la sobrescribe SIN pedir permisos de administrador (sin UAC).
+; {autopf} con PrivilegesRequired=lowest resuelve a {localappdata}\Programs.
+DefaultDirName={autopf}\Quetzaltic Solutions\Herramientas Tesoreria
 DefaultGroupName=Quetzaltic Solutions
 OutputDir=.\Output
 ; Debe coincidir con el asset que busca el AutoUpdater (NOMBRE_ASSET):
@@ -15,8 +19,8 @@ OutputDir=.\Output
 OutputBaseFilename=Instalador_Quetzaltic
 Compression=lzma2/ultra64
 SolidCompression=yes
-; Escribir en Archivos de Programa y la actualizacion silenciosa requieren admin.
-PrivilegesRequired=admin
+; 'lowest' = no solicita elevacion (sin UAC). Requisito para actualizar sin admin.
+PrivilegesRequired=lowest
 
 [Files]
 ; Carpeta de salida de flet pack/PyInstaller (onedir). El nombre 'Tesoreria'
@@ -29,7 +33,8 @@ Source: ".\dist\Tesoreria\*"; DestDir: "{app}"; Flags: ignoreversion recursesubd
 ; se empaqueta completa). El .exe ya lleva el icono embebido, pero declararlo
 ; aqui garantiza que los accesos directos lo usen explicitamente.
 Name: "{group}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; IconFilename: "{app}\Imagenes\icon.ico"
-Name: "{commondesktop}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; IconFilename: "{app}\Imagenes\icon.ico"
+; {autodesktop} = escritorio del usuario (no el comun, que requeriria admin).
+Name: "{autodesktop}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; IconFilename: "{app}\Imagenes\icon.ico"
 
 [Run]
 ; Ejecuta la app al terminar la instalacion (no en modo silencioso/actualizacion).

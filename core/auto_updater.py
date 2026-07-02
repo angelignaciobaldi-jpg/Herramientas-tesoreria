@@ -37,7 +37,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from core import entorno
+from core import entorno, rutas
 from core.version import __version__ as VERSION_ACTUAL
 
 # --- Configuración del repositorio (privado) ---
@@ -223,6 +223,12 @@ class AutoUpdater:
         tag = release.get("tag_name", "")
         if not self.hay_version_mas_nueva(tag):
             return False
+        # Anti-bucle: si esta MISMA release ya se intentó aplicar y aun así la
+        # versión local no avanzó (p. ej. el instalador de la release trae una
+        # versión más vieja que su propio tag), no reintentar: se caería en un
+        # bucle infinito de "actualizar" en cada arranque.
+        if self._tag_ya_aplicado(tag):
+            return False
         asset_id = self._id_asset(release)
         if asset_id is None:
             raise ErrorActualizacion(
@@ -231,8 +237,36 @@ class AutoUpdater:
         if al_iniciar_descarga is not None:
             al_iniciar_descarga(tag)
         ruta = self.descargar_asset(asset_id)
+        # Marca la release ANTES de aplicar (aplicar_y_salir no retorna). Si el
+        # instalador de esa release trae una versión más vieja que su tag, en el
+        # siguiente arranque la versión seguirá sin avanzar; el guard de arriba
+        # detectará que este tag ya se intentó y NO volverá a aplicarlo (evita el
+        # bucle infinito de actualización).
+        self._marcar_tag_aplicado(tag)
         self.aplicar_y_salir(ruta)  # no retorna: cierra la app y la reinicia
         return True
+
+    # -------------------------------------------------- estado anti-bucle
+    @staticmethod
+    def _ruta_estado() -> str:
+        """Archivo (en datos del usuario, que el instalador NO sobrescribe) donde
+        se recuerda el último tag que se intentó aplicar."""
+        return os.path.join(rutas.DATOS, "actualizador_estado.json")
+
+    def _tag_ya_aplicado(self, tag: str) -> bool:
+        try:
+            with open(self._ruta_estado(), encoding="utf-8") as fh:
+                return json.load(fh).get("ultimo_tag_aplicado") == tag
+        except (OSError, json.JSONDecodeError):
+            return False
+
+    def _marcar_tag_aplicado(self, tag: str) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._ruta_estado()), exist_ok=True)
+            with open(self._ruta_estado(), "w", encoding="utf-8") as fh:
+                json.dump({"ultimo_tag_aplicado": tag}, fh)
+        except OSError:
+            pass  # si no se puede escribir, el peor caso es reintentar una vez
 
     # ------------------------------------------------------- utilidades
     @staticmethod

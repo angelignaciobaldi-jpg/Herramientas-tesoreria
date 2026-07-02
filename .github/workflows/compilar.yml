@@ -19,6 +19,26 @@ jobs:
       - name: Checkout del código
         uses: actions/checkout@v4
 
+      # Sincroniza la versión de la app con el TAG del Release, de forma que el
+      # instalador SIEMPRE reporte exactamente su propio tag. Esto evita el bucle
+      # de actualización: si version.py quedara por debajo del tag, la app se
+      # actualizaría en cada arranque sin avanzar nunca. Con esto ya no hay que
+      # acordarse de bumpear version.py a mano antes de publicar.
+      - name: Sincronizar versión con el tag del Release
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          $ver = $tag -replace '^v', ''
+          Write-Host "Tag del release: $tag  ->  version: $ver"
+          (Get-Content core/version.py) `
+            -replace '^\s*__version__\s*=.*', "__version__ = `"$ver`"" `
+            | Set-Content core/version.py -Encoding utf8
+          (Get-Content instalador.iss) `
+            -replace '^AppVersion=.*', "AppVersion=$ver" `
+            | Set-Content instalador.iss -Encoding utf8
+          Write-Host "--- version.py ---"; Get-Content core/version.py | Select-String '__version__'
+          Write-Host "--- instalador.iss ---"; Get-Content instalador.iss | Select-String '^AppVersion='
+
       - name: Configurar Python
         uses: actions/setup-python@v5
         with:
