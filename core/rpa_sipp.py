@@ -204,6 +204,7 @@ class SesionSipp:
     # --- URLs ---
     # Sistema productivo: nuestras actividades (consultar/descargar anexos) no
     # alteran registros reales, así que se opera directo sobre producción.
+    # BASE_URL = "https://dev.sipp.petroil.dev"
     BASE_URL = "https://sipp.petroil.com.mx"
     URL_LOGIN = BASE_URL + "/login.html"
     URL_CONFIG_SESION = BASE_URL + "/index.cfm#/configuracionsession"
