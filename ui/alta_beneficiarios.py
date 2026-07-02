@@ -19,7 +19,9 @@ from core import (
 )
 from core.catalogo_bancos import banco_desde_clabe
 from core.extractores import extraer_clabes, extraer_datos, nombre_desde_archivo, validar_clabe
-from core.rpa_sipp import BucleRpa, ErrorSipp, SesionSipp
+from core.rpa_sipp import (
+    BucleRpa, ErrorSipp, SesionSipp, asegurar_navegador, necesita_navegador,
+)
 from ui.comun import (
     EXTENSIONES, GRIS, NARANJA, ROJO, VERDE,
     W_ACCIONES, W_BANCO, W_CLABE, W_ESTADO, W_MONTO, W_NOMBRE,
@@ -493,6 +495,25 @@ class SeccionAltaBeneficiarios:
             return
 
         await self._cerrar_sesion_rpa()  # cierra una corrida previa si la hubiera
+
+        # Primera vez (app empaquetada): descarga Chromium mostrando aviso, igual
+        # que en la pantalla de Dispersión (No Pemex), para que no parezca colgada.
+        if necesita_navegador():
+            if self.bucle_rpa is None:
+                self.bucle_rpa = BucleRpa()
+            self.btn_rpa.disabled = True
+            self.pb_rpa.value = None  # indeterminada
+            self.pb_rpa.visible = True
+            self.txt_rpa.value = "Instalando componentes extra, espere un momento…"
+            self.page.update()
+            try:
+                await asyncio.wrap_future(self.bucle_rpa.enviar(asegurar_navegador()))
+            except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+                self._fin_rpa(f"RPA: no se pudo preparar el navegador: {exc}", ROJO)
+                return
+            self.pb_rpa.visible = False
+            self.pb_rpa.value = 0
+
         self.btn_rpa.disabled = True
         self.anillo_rpa.visible = True
         self.txt_rpa.value = "RPA: iniciando sesión en el SIPP…"

@@ -185,29 +185,64 @@ class AppTesoreria:
         self.page.update()
 
 
-def _buscar_actualizaciones() -> None:
+def _pantalla_actualizando(page: ft.Page, mensaje: str) -> None:
+    """Muestra una pantalla centrada de 'actualizando' (con spinner) para que el
+    usuario no vea una ventana en blanco mientras se busca/descarga/instala."""
+    page.controls.clear()
+    page.add(
+        ft.Container(
+            content=ft.Column(
+                [
+                    ft.ProgressRing(width=46, height=46, stroke_width=4),
+                    ft.Text("Actualizando Herramientas Tesorería",
+                            size=20, weight=ft.FontWeight.BOLD,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.Text(mensaje, size=14, text_align=ft.TextAlign.CENTER,
+                            color=ft.Colors.ON_SURFACE_VARIANT),
+                ],
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+                alignment=ft.MainAxisAlignment.CENTER,
+                spacing=18,
+            ),
+            alignment=ft.Alignment(0, 0),
+            expand=True,
+        )
+    )
+    page.update()
+
+
+def _buscar_actualizaciones(page: ft.Page) -> bool:
     """Solo en la app empaquetada: busca una versión más nueva en GitHub y, si la
-    hay, descarga el instalador y lo aplica en silencio (cierra la app). Cualquier
-    fallo (sin red, sin PAT, etc.) se ignora para no impedir el arranque."""
+    hay, la descarga y la instala mostrando una pantalla clara; la app se cierra y
+    se reinicia sola al terminar. Devuelve True si va a actualizar. Cualquier fallo
+    (sin red, sin PAT, etc.) se ignora para no impedir el arranque."""
     if not getattr(sys, "frozen", False):
-        return  # en desarrollo no se autoactualiza
+        return False  # en desarrollo no se autoactualiza
     try:
         from core import entorno
-        from core.auto_updater import AutoUpdater, ErrorActualizacion
+        from core.auto_updater import AutoUpdater
 
         if not entorno.github_pat(requerido=False):
-            return  # sin PAT configurado: se omite el chequeo
-        AutoUpdater().buscar_y_actualizar()  # si hay nueva: descarga, aplica y cierra
-    except ErrorActualizacion:
-        pass  # problema controlado (red/asset/etc.): seguir con la versión actual
+            return False  # sin PAT configurado: se omite el chequeo
+        _pantalla_actualizando(page, "Buscando actualizaciones…")
+        actualizo = AutoUpdater().buscar_y_actualizar(
+            al_iniciar_descarga=lambda tag: _pantalla_actualizando(
+                page,
+                f"Descargando e instalando la versión {tag}.\n"
+                "La aplicación se reiniciará automáticamente al terminar.",
+            )
+        )
+        if not actualizo:
+            page.controls.clear()  # ya está al día: limpia el splash y sigue
+            page.update()
+        return actualizo
     except Exception:  # noqa: BLE001 — el updater nunca debe tumbar el arranque
-        pass
+        page.controls.clear()
+        page.update()
+        return False
 
 
 def main(page: ft.Page) -> None:
-    # Antes de construir la UI: chequeo de actualización (solo empaquetada).
-    _buscar_actualizaciones()
-
     page.title = "Herramienta Integral de Tesorería"
     # Icono de la ventana / barra de tareas (mismo que el del escritorio).
     # Ruta relativa al assets_dir (rutas.BUNDLE), igual que el logo del encabezado.
@@ -223,6 +258,12 @@ def main(page: ft.Page) -> None:
     page.dark_theme = ft.Theme(scrollbar_theme=_barra)
     page.window.width = 1180
     page.window.height = 800
+
+    # Chequeo de actualización con feedback visible (solo empaquetada). Si hay
+    # una nueva versión, la app se cierra/reinicia y no se sigue construyendo.
+    if _buscar_actualizaciones(page):
+        return
+
     db.inicializar()
 
     if not ocr.tesseract_disponible():
