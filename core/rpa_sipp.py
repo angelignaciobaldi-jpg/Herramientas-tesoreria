@@ -36,6 +36,7 @@ import os
 import re
 import sys
 import threading
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable
 from urllib.parse import unquote
