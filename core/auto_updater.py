@@ -170,16 +170,24 @@ class AutoUpdater:
     def aplicar_y_salir(self, ruta_instalador: str) -> None:
         """Escribe el .bat, lo lanza desacoplado y cierra la app (sys.exit()).
 
-        El .bat espera ~3 s, corre el instalador en silencio y se autolimpia."""
+        El .bat espera ~3 s, corre el instalador mostrando su barra de progreso
+        (/SILENT), REINICIA la app ya actualizada y se autolimpia."""
         ruta_instalador = os.path.abspath(ruta_instalador)
         ruta_bat = os.path.join(self._dir_temporal(), NOMBRE_BAT)
-        # 'ping -n 4' da ~3 s de espera de forma fiable en un proceso sin consola
-        # (a diferencia de 'timeout', que falla sin entrada estándar).
+        # Ruta de la app a reiniciar tras instalar (el mismo .exe en ejecución;
+        # la actualización lo sobrescribe en el sitio).
+        exe = os.path.abspath(sys.executable)
+        dir_exe = os.path.dirname(exe)
+        # /SILENT (no /VERYSILENT) para que Inno muestre su ventana de progreso y
+        # el usuario vea que se está instalando. 'ping -n 4' da ~3 s de espera de
+        # forma fiable en un proceso sin consola (a diferencia de 'timeout').
         contenido = (
             "@echo off\r\n"
             "rem Espera ~3 s a que la aplicacion termine de cerrarse.\r\n"
             "ping 127.0.0.1 -n 4 >nul\r\n"
-            f'"{ruta_instalador}" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n'
+            f'"{ruta_instalador}" /SILENT /SUPPRESSMSGBOXES /NORESTART\r\n'
+            "rem Reinicia la app ya actualizada.\r\n"
+            f'start "" /D "{dir_exe}" "{exe}"\r\n'
             f'del "{ruta_instalador}"\r\n'
             'del "%~f0"\r\n'
         )
@@ -203,9 +211,12 @@ class AutoUpdater:
         sys.exit(0)
 
     # ---------------------------------------------------- orquestación
-    def buscar_y_actualizar(self) -> bool:
+    def buscar_y_actualizar(self, al_iniciar_descarga=None) -> bool:
         """Comprueba, y si hay versión nueva descarga y aplica (no retorna: la
-        app se cierra). Devuelve False si ya está actualizada.
+        app se cierra y se reinicia sola). Devuelve False si ya está actualizada.
+
+        `al_iniciar_descarga(tag)`: callback opcional que se invoca justo antes de
+        descargar (para avisar en la UI que se está instalando la actualización).
 
         Lanza ErrorActualizacion ante cualquier problema (red, asset ausente…)."""
         release = self.obtener_release_latest()
@@ -217,8 +228,10 @@ class AutoUpdater:
             raise ErrorActualizacion(
                 f"La release {tag} no incluye el asset '{self.nombre_asset}'."
             )
+        if al_iniciar_descarga is not None:
+            al_iniciar_descarga(tag)
         ruta = self.descargar_asset(asset_id)
-        self.aplicar_y_salir(ruta)  # no retorna: cierra la app
+        self.aplicar_y_salir(ruta)  # no retorna: cierra la app y la reinicia
         return True
 
     # ------------------------------------------------------- utilidades

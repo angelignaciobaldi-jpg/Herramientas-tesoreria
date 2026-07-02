@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 
 try:
     import openpyxl
@@ -32,6 +33,57 @@ BANCO_UI_A_EXCEL = {
     "Banregio": "BANREGIO",
     "Bancomer": "BBVA BANCOMER",
 }
+
+
+def hay_excel() -> bool:
+    """True si ya hay un Excel de cuentas colocado para su consulta."""
+    return os.path.exists(RUTA_EXCEL)
+
+
+class ExcelCuentasInvalido(ValueError):
+    """El Excel adjuntado no tiene el formato esperado de cuentas bancarias."""
+
+
+def instalar_excel(ruta_origen: str) -> int:
+    """Instala el Excel elegido en RUTA_EXCEL de forma TRANSACCIONAL y devuelve
+    cuántas empresas quedaron cargadas.
+
+    Pasos: respalda el actual (si hay), copia el nuevo, y lo LEE para validarlo.
+    Si no se puede leer como catálogo de cuentas (formato inesperado), hace
+    ROLLBACK al anterior (o elimina el nuevo si no había) y lanza
+    ExcelCuentasInvalido. Si es válido, invalida el caché para que la próxima
+    consulta use el archivo nuevo."""
+    os.makedirs(os.path.dirname(RUTA_EXCEL), exist_ok=True)
+    # Respaldo del actual (si existe) para poder revertir.
+    respaldo = None
+    if os.path.exists(RUTA_EXCEL):
+        respaldo = RUTA_EXCEL + ".bak"
+        shutil.copyfile(RUTA_EXCEL, respaldo)
+    try:
+        shutil.copyfile(ruta_origen, RUTA_EXCEL)
+        catalogo = _leer_excel(RUTA_EXCEL)
+        if not catalogo:  # no se reconocieron cuentas -> no es el Excel esperado
+            raise ExcelCuentasInvalido(
+                "El archivo no tiene el formato esperado de cuentas bancarias "
+                "(no se encontraron cuentas válidas)."
+            )
+    except Exception:
+        # Rollback: restaura el anterior, o borra el nuevo si no había.
+        if respaldo is not None:
+            shutil.copyfile(respaldo, RUTA_EXCEL)
+        elif os.path.exists(RUTA_EXCEL):
+            os.remove(RUTA_EXCEL)
+        raise
+    finally:
+        if respaldo is not None and os.path.exists(respaldo):
+            os.remove(respaldo)
+    # Éxito: invalida el caché para forzar la relectura del archivo nuevo.
+    try:
+        if os.path.exists(_RUTA_CACHE):
+            os.remove(_RUTA_CACHE)
+    except OSError:
+        pass  # si no se puede borrar, se sobreescribirá en la próxima lectura
+    return len(catalogo)
 
 
 def _limpiar_clabe(valor) -> str:
