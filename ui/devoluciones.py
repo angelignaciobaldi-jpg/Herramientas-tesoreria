@@ -89,6 +89,25 @@ class SeccionDevoluciones:
         # Sin page.update() aquí: la página aún no se ha construido.
         self.tabla.rows = [f.fila for f in self.filas]
 
+    def recargar_catalogo(self) -> None:
+        """Relee el Excel de cuentas y refresca el combo de empresas. Se llama
+        tras adjuntar un Excel nuevo en Configuración, para reflejarlo al momento."""
+        self.catalogo = cuentas_bancarias.CatalogoCuentas()
+        empresas = self.catalogo.empresas()
+        self.dd_empresa.options = [ft.dropdown.Option(key=e, text=e) for e in empresas]
+        # Oculta/mostra el aviso de catálogo no disponible según el nuevo estado.
+        self.txt_sin_catalogo.visible = not self.catalogo.disponible()
+        # Si la empresa elegida ya no existe, limpia ella y sus dependientes.
+        if self.dd_empresa.value not in empresas:
+            self.dd_empresa.value = None
+            self.dd_origen.options = []
+            self.dd_origen.value = None
+            self.tf_num_cuenta.value = ""
+        try:
+            self.page.update()
+        except (RuntimeError, AssertionError):
+            pass  # aún no montada la página
+
     # ------------------------------------------------------------ UI
     def _construir(self) -> ft.Control:
         self.dd_banco = ft.Dropdown(
@@ -126,11 +145,13 @@ class SeccionDevoluciones:
         )
         self.tf_folio = ft.TextField(label="Folio", width=150, value="0023626H", visible=False)
 
-        nota = ""
-        if not self.catalogo.disponible():
-            nota = ("⚠ No se pudo leer el Excel de cuentas bancarias. Si lo tienes "
-                    "abierto en Excel, ciérralo y reabre la aplicación (después se "
-                    "usará la última versión leída aunque esté abierto).")
+        # Aviso de catálogo no disponible. Se guarda la referencia para poder
+        # ocultarlo al recargar el catálogo (p. ej. tras adjuntar el Excel).
+        self.txt_sin_catalogo = ft.Text(
+            "⚠ No se pudo leer el Excel de cuentas bancarias. Adjúntalo en "
+            "Configuración (⚙) o, si lo tienes abierto en Excel, ciérralo.",
+            color=ROJO, size=12, visible=not self.catalogo.disponible(),
+        )
         config = tarjeta(
             "1. Banco y datos del archivo",
             ft.Column(
@@ -139,7 +160,7 @@ class SeccionDevoluciones:
                            wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=16),
                     ft.Row([self.dd_origen, self.tf_num_cuenta, self.tf_fecha, self.tf_folio],
                            wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=16),
-                    ft.Text(nota, color=ROJO, size=12, visible=bool(nota)),
+                    self.txt_sin_catalogo,
                 ],
                 spacing=12,
             ),
