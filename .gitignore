@@ -14,6 +14,11 @@ _browsers/
 # Salida del instalador de Inno Setup
 Output/
 # Paquete generado para compartir (preparar_paquete.bat) [obsoleto]
+# Chromium de Playwright descargado por construir.bat (pesado; se baja al build)
+_browsers/
+# Salida del instalador de Inno Setup
+Output/
+# Paquete generado para compartir (preparar_paquete.bat) [obsoleto]
 Tesoreria-paquete/
 
 # ===== Datos en runtime (se generan/actualizan; no van al repo) =====

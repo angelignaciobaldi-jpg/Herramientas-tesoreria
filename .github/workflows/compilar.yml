@@ -1,0 +1,64 @@
+name: Pipeline de Compilación y Empaquetado Automático
+
+# Se dispara al PUBLICAR un Release en GitHub (no en push/merge a main).
+# El AutoUpdater de la app lee releases/latest, así que el flujo natural es:
+#   subir __version__ y AppVersion -> crear el Release con su tag -> publicar.
+on:
+  release:
+    types: [published]
+
+# Permite que el GITHUB_TOKEN automático suba el instalador al Release.
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout del código
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Instalar dependencias
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install flet pyinstaller
+          if (Test-Path requirements.txt) { pip install -r requirements.txt }
+
+      # 1. Compilar la app con flet pack (onedir). Incluye el driver de Playwright
+      #    via --collect-all. NO empaqueta Chromium: se descarga en la 1ra
+      #    ejecución del RPA en la PC del usuario. tessdata no va (no está en el
+      #    repo); Imagenes sí (está versionada).
+      - name: Compilar con flet pack
+        shell: pwsh
+        run: >
+          flet pack app.py -n "Tesoreria" -D
+          --add-data "Imagenes:Imagenes"
+          --hidden-import openpyxl
+          --hidden-import xlwt
+          --pyinstaller-build-args=--collect-all=playwright
+          -y
+
+      # 2. Instalar Inno Setup y compilar el instalador (instalador.iss).
+      - name: Instalar Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Compilar Instalador con Inno Setup
+        shell: pwsh
+        run: '& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" instalador.iss'
+
+      # 3. Publicar el instalador como asset del Release (nombre exacto que busca
+      #    el AutoUpdater: Instalador_Quetzaltic.exe).
+      - name: Subir Instalador al Release de GitHub
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Output/Instalador_Quetzaltic.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

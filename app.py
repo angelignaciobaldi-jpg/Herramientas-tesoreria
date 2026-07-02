@@ -13,6 +13,8 @@ El shell expone a cada pantalla: page, picker (diálogos de archivo) y avisar().
 
 from __future__ import annotations
 
+import sys
+
 import flet as ft
 
 from core import db, ocr, rutas
@@ -44,29 +46,19 @@ class AppTesoreria:
         self.devoluciones = SeccionDevoluciones(self)
         self.dispersion_no_pemex = SeccionDispersionNoPemex(self)
 
-        tabs = ft.Tabs(
-            length=3,
-            expand=True,
-            content=ft.Column(
-                [
-                    ft.TabBar(
-                        tabs=[
-                            ft.Tab(label="Alta de beneficiarios", icon=ft.Icons.ACCOUNT_BALANCE),
-                            ft.Tab(label="Generar dispersión devoluciones",
-                                   icon=ft.Icons.CURRENCY_EXCHANGE),
-                            ft.Tab(label="Dispersión (No Pemex)", icon=ft.Icons.PAYMENTS),
-                        ]
-                    ),
-                    ft.TabBarView(
-                        controls=[self.alta.contenido, self.devoluciones.contenido, self.dispersion_no_pemex.contenido],
-                        expand=True,
-                    ),
-                ],
-                expand=True,
-            ),
-        )
+        # Área de contenido: las tres pantallas viven aquí; solo se muestra la
+        # activa (se alterna 'visible'), en vez de un TabBarView de Material.
+        self._secciones = [
+            self.alta.contenido,
+            self.devoluciones.contenido,
+            self.dispersion_no_pemex.contenido,
+        ]
+        for i, seccion in enumerate(self._secciones):
+            seccion.visible = i == 0
+        self._area = ft.Column(self._secciones, expand=True)
 
-        # Encabezado: logo (izquierda) y botón de modo claro/oscuro (derecha).
+        # Encabezado: logo (izq), navegación (centro, scroll horizontal) y
+        # botones de configuración/tema (der).
         self.logo = ft.Image(
             src="Imagenes/Quetzaltic Texto negro.png",
             height=58, fit=ft.BoxFit.CONTAIN,
@@ -79,9 +71,13 @@ class AppTesoreria:
             icon=ft.Icons.DARK_MODE, tooltip="Modo oscuro", on_click=self._alternar_tema,
         )
         encabezado = ft.Row(
-            [self.logo, ft.Row([self.btn_config, self.btn_tema])],
-            alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            [
+                self.logo,
+                self._construir_nav(),
+                ft.Row([self.btn_config, self.btn_tema], tight=True),
+            ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            spacing=12,
         )
 
         # Pie de página: crédito fijo abajo, centrado y discreto.
@@ -96,11 +92,85 @@ class AppTesoreria:
             padding=6,
         )
 
-        self.page.add(encabezado, tabs, pie)
+        self.page.add(encabezado, self._area, pie)
         # El redimensionado afecta la tabla de la pantalla de alta.
         self.page.on_resize = self.alta._on_resize
         # Ya con la página construida, se cargan los registros guardados.
         self.alta.cargar_desde_db()
+
+    # ------------------------------------------------------ navegación
+    def _construir_nav(self) -> ft.Control:
+        """Barra de navegación propia dentro del encabezado. Va en un contenedor
+        que se expande al centro y hace scroll horizontal si no caben todas las
+        opciones (la app es solo para PC, pero la ventana puede achicarse)."""
+        self._nav_activa = 0
+        self._nav_items: list[dict] = []
+        definiciones = [
+            ("Alta de beneficiarios", ft.Icons.ACCOUNT_BALANCE),
+            ("Generar dispersión devoluciones", ft.Icons.CURRENCY_EXCHANGE),
+            ("Dispersión (No Pemex)", ft.Icons.PAYMENTS),
+        ]
+        controles = []
+        for idx, (texto, icono) in enumerate(definiciones):
+            ico = ft.Icon(icono, size=18)
+            txt = ft.Text(texto, size=13, no_wrap=True)
+            cont = ft.Container(
+                content=ft.Row(
+                    [ico, txt], spacing=8, tight=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                ),
+                padding=ft.Padding.symmetric(horizontal=16, vertical=12),
+                border_radius=8,
+                on_click=lambda _e, i=idx: self._seleccionar_nav(i),
+                on_hover=lambda e, i=idx: self._hover_nav(i, e.data == "true"),
+                animate=ft.Animation(160, ft.AnimationCurve.EASE_OUT),
+            )
+            self._nav_items.append(
+                {"container": cont, "icono": ico, "texto": txt, "hover": False})
+            self._estilo_nav(idx)
+            controles.append(cont)
+        fila = ft.Row(
+            controles, scroll=ft.ScrollMode.AUTO, spacing=6,
+            alignment=ft.MainAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
+        # El contenedor se expande para ocupar el hueco entre logo y botones.
+        return ft.Container(content=fila, expand=True)
+
+    def _estilo_nav(self, idx: int) -> None:
+        """Aplica el estilo del ítem según si está activo o con hover: el activo
+        o el que recibe hover se resaltan con color de acento y un subrayado
+        inferior. El borde siempre mide 3px (transparente cuando no se resalta)
+        para que no salte el layout."""
+        item = self._nav_items[idx]
+        activo = idx == self._nav_activa
+        resaltar = activo or item["hover"]
+        color = ft.Colors.PRIMARY if resaltar else ft.Colors.ON_SURFACE_VARIANT
+        item["icono"].color = color
+        item["texto"].color = color
+        item["texto"].weight = ft.FontWeight.BOLD if activo else ft.FontWeight.W_500
+        item["container"].border = ft.Border(
+            bottom=ft.BorderSide(
+                3, ft.Colors.PRIMARY if resaltar else ft.Colors.TRANSPARENT))
+
+    def _hover_nav(self, idx: int, dentro: bool) -> None:
+        self._nav_items[idx]["hover"] = dentro
+        self._estilo_nav(idx)
+        self._nav_items[idx]["container"].update()
+
+    def _seleccionar_nav(self, idx: int) -> None:
+        if idx == self._nav_activa:
+            return
+        anterior = self._nav_activa
+        self._nav_activa = idx
+        self._estilo_nav(anterior)
+        self._estilo_nav(idx)
+        # Muestra solo la pantalla elegida.
+        for i, seccion in enumerate(self._secciones):
+            seccion.visible = i == idx
+        self._nav_items[anterior]["container"].update()
+        self._nav_items[idx]["container"].update()
+        self._area.update()
 
     def _alternar_tema(self, _e) -> None:
         """Cambia entre modo claro y oscuro (y ajusta el logo y el ícono)."""
@@ -115,10 +185,42 @@ class AppTesoreria:
         self.page.update()
 
 
+def _buscar_actualizaciones() -> None:
+    """Solo en la app empaquetada: busca una versión más nueva en GitHub y, si la
+    hay, descarga el instalador y lo aplica en silencio (cierra la app). Cualquier
+    fallo (sin red, sin PAT, etc.) se ignora para no impedir el arranque."""
+    if not getattr(sys, "frozen", False):
+        return  # en desarrollo no se autoactualiza
+    try:
+        from core import entorno
+        from core.auto_updater import AutoUpdater, ErrorActualizacion
+
+        if not entorno.github_pat(requerido=False):
+            return  # sin PAT configurado: se omite el chequeo
+        AutoUpdater().buscar_y_actualizar()  # si hay nueva: descarga, aplica y cierra
+    except ErrorActualizacion:
+        pass  # problema controlado (red/asset/etc.): seguir con la versión actual
+    except Exception:  # noqa: BLE001 — el updater nunca debe tumbar el arranque
+        pass
+
+
 def main(page: ft.Page) -> None:
+    # Antes de construir la UI: chequeo de actualización (solo empaquetada).
+    _buscar_actualizaciones()
+
     page.title = "Herramienta Integral de Tesorería"
+    # Icono de la ventana / barra de tareas (mismo que el del escritorio).
+    # Ruta relativa al assets_dir (rutas.BUNDLE), igual que el logo del encabezado.
+    page.window.icon = "Imagenes/icon.ico"
     page.padding = 18
     page.theme_mode = ft.ThemeMode.LIGHT
+    # Barras de scroll siempre visibles e interactivas (no solo al hacer hover),
+    # para que el usuario pueda desplazarse en tablas anchas sin adivinar.
+    _barra = ft.ScrollbarTheme(
+        thumb_visibility=True, track_visibility=True, thickness=12, interactive=True,
+    )
+    page.theme = ft.Theme(scrollbar_theme=_barra)
+    page.dark_theme = ft.Theme(scrollbar_theme=_barra)
     page.window.width = 1180
     page.window.height = 800
     db.inicializar()

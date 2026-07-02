@@ -21,7 +21,13 @@ import asyncio
 import flet as ft
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
-from core.rpa_sipp import BucleRpa, ErrorSipp, SesionSipp
+from core.rpa_sipp import (
+    BucleRpa,
+    ErrorSipp,
+    SesionSipp,
+    asegurar_navegador,
+    necesita_navegador,
+)
 from ui.comun import GRIS, ROJO, VERDE, tarjeta
 
 
@@ -54,12 +60,20 @@ class SeccionDispersionNoPemex:
             disabled=True,
         )
         self.txt_estado = ft.Text("Estado: Detenido", size=13, color=GRIS)
+        # Aviso + barra (indeterminada) para la descarga del navegador la 1ra vez.
+        self.txt_install = ft.Text(
+            "Instalando componentes extra, espere un momento…",
+            size=13, color=GRIS, visible=False,
+        )
+        self.barra_install = ft.ProgressBar(width=320, visible=False)
         control_card = tarjeta(
             "Control de ejecución",
             ft.Column(
                 [
                     ft.Row([self.btn_iniciar, self.btn_detener], spacing=10, wrap=True),
                     self.txt_estado,
+                    self.txt_install,
+                    self.barra_install,
                 ],
                 spacing=12,
             ),
@@ -84,6 +98,15 @@ class SeccionDispersionNoPemex:
             self.txt_estado.value = "Estado: Iniciando sesión en el SIPP…"
             self.page.update()
             try:
+                # Primera vez: descarga el navegador mostrando aviso + barra.
+                if necesita_navegador():
+                    self._mostrar_instalacion(True)
+                    self.page.update()
+                    try:
+                        await self._correr(asegurar_navegador())
+                    finally:
+                        self._mostrar_instalacion(False)
+                        self.page.update()
                 await self._arrancar_rpa(usuario, contrasena)
             except ErrorSipp as exc:
                 await self._abortar_por_error(f"No se pudo iniciar el RPA: {exc}")
@@ -118,8 +141,14 @@ class SeccionDispersionNoPemex:
         self.app.avisar("RPA detenido.", ROJO)
         self._refrescar_controles()
 
+    def _mostrar_instalacion(self, visible: bool) -> None:
+        """Muestra/oculta el aviso y la barra de descarga del navegador."""
+        self.txt_install.visible = visible
+        self.barra_install.visible = visible
+
     async def _abortar_por_error(self, mensaje: str) -> None:
         """Cierra la sesión a medias, vuelve a 'detenido' y reporta el error."""
+        self._mostrar_instalacion(False)
         await self._detener_rpa()
         self.estado = "detenido"
         self.btn_iniciar.disabled = False
