@@ -27,6 +27,7 @@ CATALOGO_BANCOS = {
     "110": "JP Morgan",
     "112": "Banco Monex",
     "113": "Ve por Más",
+    "124": "Banco Citi México",
     "127": "Banco Azteca",
     "128": "Autofin",
     "129": "Barclays",

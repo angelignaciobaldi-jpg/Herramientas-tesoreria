@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 
 import flet as ft
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from core.rpa_sipp import (
     BucleRpa,
@@ -109,6 +110,15 @@ class SeccionDispersionNoPemex:
                 await self._arrancar_rpa(usuario, contrasena)
             except ErrorSipp as exc:
                 await self._abortar_por_error(f"No se pudo iniciar el RPA: {exc}")
+                return
+            except PlaywrightTimeoutError:
+                # Timeout de navegación: casi siempre es la conexión o que el
+                # portal del SIPP tardó/no respondió, no un fallo del RPA.
+                await self._abortar_por_error(
+                    "La página del SIPP tardó demasiado en responder. Suele ser por "
+                    "una conexión a internet lenta o inestable (o el portal está "
+                    "caído/muy lento). Revisa tu conexión e inténtalo de nuevo."
+                )
                 return
             except Exception as exc:  # noqa: BLE001 — se reporta al usuario
                 await self._abortar_por_error(f"Error inesperado al iniciar el RPA: {exc}")

@@ -11,13 +11,15 @@ import os
 from datetime import date
 
 import flet as ft
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from core import (
-    db, exportador_alta_bancomer, exportador_alta_banregio, ocr,
-    reporte_cuentas,
+    db, exportador_alta_bancomer, exportador_alta_banregio, exportador_alta_spei,
+    ocr, reporte_cuentas,
 )
 from core.catalogo_bancos import banco_desde_clabe
 from core.extractores import extraer_clabes, extraer_datos, nombre_desde_archivo, validar_clabe
+from core.rpa_sipp import BucleRpa, ErrorSipp, SesionSipp
 from ui.comun import (
     EXTENSIONES, GRIS, NARANJA, ROJO, VERDE,
     W_ACCIONES, W_BANCO, W_CLABE, W_ESTADO, W_MONTO, W_NOMBRE,
@@ -241,6 +243,10 @@ class SeccionAltaBeneficiarios:
     """Pantalla de alta de beneficiarios. Recibe el 'shell' de la app (que
     expone page, picker y avisar)."""
 
+    # Empresa y sucursal del SIPP donde el RPA descarga los anexos.
+    RPA_EMPRESA = "ASKE"
+    RPA_SUCURSAL = "Corporativo"
+
     def __init__(self, app):
         self.app = app
         self.page = app.page
@@ -249,6 +255,9 @@ class SeccionAltaBeneficiarios:
         # Reporte de cuentas importado (para conciliar). Vacío = no se subió.
         self.catalogo_reporte: dict[str, reporte_cuentas.CuentaReporte] = {}
         self.nombre_reporte = ""
+        # RPA del SIPP (descarga de anexos). Se crean al primer uso.
+        self.sesion_rpa: SesionSipp | None = None
+        self.bucle_rpa: BucleRpa | None = None
         self.contenido = self._construir()
 
     def avisar(self, mensaje: str, color: str | None = None) -> None:
@@ -309,6 +318,8 @@ class SeccionAltaBeneficiarios:
                 spacing=8,
             ),
         )
+
+        seccion_rpa = self._construir_rpa()
 
         # --- Sección 2: tabla editable con todos los registros ---
         self.enc_benef = encabezado_col("Beneficiario", W_NOMBRE)
@@ -396,11 +407,188 @@ class SeccionAltaBeneficiarios:
         )
 
         return ft.Column(
-            [seccion_carga, seccion_tabla],
+            [seccion_carga, seccion_rpa, seccion_tabla],
             spacing=14,
             scroll=ft.ScrollMode.AUTO,
             expand=True,
         )
+
+    def _construir_rpa(self) -> ft.Control:
+        """Tarjeta del RPA: descarga los anexos del SIPP por rango de fechas."""
+        # Selectores de fecha tipo calendario (DatePicker). El campo es de solo
+        # lectura y abre el calendario al hacer clic; el RPA lee su texto.
+        self.dp_ini = ft.DatePicker(
+            first_date=date(2020, 1, 1), last_date=date(2035, 12, 31),
+            help_text="Fecha inicio de la consulta",
+            on_change=lambda e: self._fecha_elegida(self.tf_rpa_ini, self.dp_ini),
+        )
+        self.dp_fin = ft.DatePicker(
+            first_date=date(2020, 1, 1), last_date=date(2035, 12, 31),
+            help_text="Fecha fin de la consulta",
+            on_change=lambda e: self._fecha_elegida(self.tf_rpa_fin, self.dp_fin),
+        )
+        self.tf_rpa_ini = ft.TextField(
+            label="Fecha inicio consulta", hint_text="DD/MM/AAAA", width=210,
+            read_only=True, suffix_icon=ft.Icons.CALENDAR_MONTH,
+            on_click=lambda e: self.page.show_dialog(self.dp_ini),
+        )
+        self.tf_rpa_fin = ft.TextField(
+            label="Fecha fin consulta", hint_text="DD/MM/AAAA", width=210,
+            read_only=True, suffix_icon=ft.Icons.CALENDAR_MONTH,
+            on_click=lambda e: self.page.show_dialog(self.dp_fin),
+        )
+        self.btn_rpa = ft.FilledButton(
+            content="Iniciar descarga", icon=ft.Icons.SMART_TOY_OUTLINED,
+            on_click=self._iniciar_rpa_anexos,
+        )
+        self.anillo_rpa = ft.ProgressRing(width=18, height=18, stroke_width=2, visible=False)
+        # Barra de avance de la descarga de anexos (determinada: hechos/total).
+        # Oculta hasta que empieza la descarga y se conoce el total de registros.
+        self.pb_rpa = ft.ProgressBar(width=360, value=0, visible=False)
+        self.txt_rpa = ft.Text("", color=GRIS, size=12)
+        return tarjeta(
+            "Descargar anexos del SIPP",
+            ft.Column(
+                [
+                    ft.Row(
+                        [self.tf_rpa_ini, self.tf_rpa_fin, self.btn_rpa, self.anillo_rpa],
+                        spacing=12, wrap=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    ),
+                    ft.Text(
+                        f"Entra al SIPP con las credenciales de Configuración, empresa "
+                        f"{self.RPA_EMPRESA} / sucursal {self.RPA_SUCURSAL}, filtra "
+                        "Proveedores por el rango de fechas y descarga los anexos.",
+                        color=GRIS, size=12, italic=True,
+                    ),
+                    self.pb_rpa,
+                    self.txt_rpa,
+                ],
+                spacing=8,
+            ),
+        )
+
+    def _fecha_elegida(self, campo: ft.TextField, dp: ft.DatePicker) -> None:
+        """Vuelca la fecha elegida en el calendario al campo, como DD/MM/AAAA."""
+        if dp.value:
+            campo.value = dp.value.strftime("%d/%m/%Y")
+            self.page.update()
+
+    async def _iniciar_rpa_anexos(self, _e) -> None:
+        """Lanza el RPA: login en el SIPP, filtra Proveedores por el rango de
+        fechas y descarga los anexos en la carpeta que elija el usuario."""
+        usuario, contrasena = self.app.config.credenciales()
+        if not usuario or not contrasena:
+            self.avisar("Captura usuario y contraseña en Configuración (ícono ⚙).", ROJO)
+            return
+        fi = solo_digitos(self.tf_rpa_ini.value)
+        ff = solo_digitos(self.tf_rpa_fin.value)
+        if len(fi) != 8 or len(ff) != 8:
+            self.avisar("Captura fecha inicio y fecha fin (DD/MM/AAAA).", ROJO)
+            return
+        carpeta = await self.picker.get_directory_path(
+            dialog_title="Carpeta donde guardar los anexos descargados",
+        )
+        if not carpeta:
+            return
+
+        await self._cerrar_sesion_rpa()  # cierra una corrida previa si la hubiera
+        self.btn_rpa.disabled = True
+        self.anillo_rpa.visible = True
+        self.txt_rpa.value = "RPA: iniciando sesión en el SIPP…"
+        self.page.update()
+        try:
+            descargados, danados = await self._correr_rpa_anexos(
+                usuario, contrasena, fi, ff, carpeta,
+            )
+        except ErrorSipp as exc:
+            await self._cerrar_sesion_rpa()
+            self._fin_rpa(f"RPA: {exc}", ROJO)
+            return
+        except PlaywrightTimeoutError:
+            # Timeout de navegación de Playwright: casi siempre es la conexión o
+            # que el portal del SIPP tardó/no respondió, no un fallo del RPA.
+            await self._cerrar_sesion_rpa()
+            self._fin_rpa(
+                "RPA: la página del SIPP tardó demasiado en responder. Suele ser "
+                "por una conexión a internet lenta o inestable (o el portal está "
+                "caído/muy lento). Revisa tu conexión e inténtalo de nuevo.",
+                ROJO,
+            )
+            return
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            await self._cerrar_sesion_rpa()
+            self._fin_rpa(f"RPA: error inesperado: {exc}", ROJO)
+            return
+        if descargados == 0 and danados == 0:
+            self._fin_rpa("RPA: no se encontraron anexos para el rango elegido.", NARANJA)
+            return
+        mensaje = f"RPA: {descargados} anexo(s) descargado(s) en la carpeta elegida."
+        color = VERDE
+        if danados:
+            mensaje += (
+                f" {danados} llegaron dañados y se apartaron en la subcarpeta "
+                "'_no_validos' (revísalos manualmente)."
+            )
+            color = NARANJA
+        self._fin_rpa(mensaje, color)
+
+    async def _correr_rpa_anexos(self, usuario, contrasena, fi, ff, carpeta) -> tuple[int, int]:
+        """Ejecuta todo el flujo del RPA en el bucle del hilo dedicado (Playwright
+        requiere que todo corra en el mismo loop). Devuelve (descargados, dañados)."""
+        if self.bucle_rpa is None:
+            self.bucle_rpa = BucleRpa()
+        self.sesion_rpa = SesionSipp(headless=False)
+        sesion = self.sesion_rpa
+
+        async def flujo() -> tuple[int, int]:
+            await sesion.iniciar()
+            await sesion.login(usuario, contrasena)
+            await sesion.seleccionar_empresa_sucursal(self.RPA_EMPRESA, self.RPA_SUCURSAL)
+            return await sesion.descargar_anexos_proveedores(
+                fi, ff, carpeta, progreso=self._progreso_rpa,
+            )
+
+        return await asyncio.wrap_future(self.bucle_rpa.enviar(flujo()))
+
+    def _progreso_rpa(self, hechos: int, total: int) -> None:
+        """Callback que el RPA (en su hilo aparte) llama para reportar avance.
+        Agenda la actualización de la barra en el hilo/loop de la interfaz con
+        page.run_task (seguro entre hilos)."""
+        self.page.run_task(self._aplicar_progreso_rpa, hechos, total)
+
+    async def _aplicar_progreso_rpa(self, hechos: int, total: int) -> None:
+        """Refleja el avance de la descarga en la barra de progreso del RPA."""
+        if total <= 0:
+            self.pb_rpa.visible = False
+            self.txt_rpa.value = "RPA: no se encontraron anexos para el rango elegido."
+        else:
+            self.pb_rpa.visible = True
+            self.pb_rpa.value = hechos / total
+            self.txt_rpa.value = f"RPA: descargando anexos… {hechos} de {total}"
+        self.page.update()
+
+    async def _cerrar_sesion_rpa(self) -> None:
+        """Cierra el navegador del RPA si quedó abierto (best-effort)."""
+        if self.sesion_rpa is None:
+            return
+        sesion = self.sesion_rpa
+        self.sesion_rpa = None
+        try:
+            if self.bucle_rpa is not None:
+                await asyncio.wrap_future(self.bucle_rpa.enviar(sesion.cerrar()))
+        except Exception:  # noqa: BLE001 — el cierre no debe propagar errores
+            pass
+
+    def _fin_rpa(self, mensaje: str, color: str) -> None:
+        """Restablece los controles del RPA y muestra el resultado."""
+        self.btn_rpa.disabled = False
+        self.anillo_rpa.visible = False
+        self.pb_rpa.visible = False
+        self.pb_rpa.value = 0
+        self.txt_rpa.value = mensaje
+        self.page.update()
+        self.avisar(mensaje, color)
 
     def _leyenda(self) -> ft.Control:
         """Leyenda de los íconos de la columna Estado (mismos íconos/colores
@@ -642,7 +830,7 @@ class SeccionAltaBeneficiarios:
         self.btn_cargar.disabled = True
         self.anillo.visible = True
         identificados = 0
-        errores: list[str] = []
+        errores: list[tuple[str, str]] = []  # (nombre_archivo, motivo)
 
         for i, archivo in enumerate(archivos, start=1):
             nombre = os.path.basename(archivo.path)
@@ -678,18 +866,56 @@ class SeccionAltaBeneficiarios:
                 identificados += 1
                 self._redibujar_tabla()
             except Exception as exc:  # noqa: BLE001 — se reporta al usuario
-                errores.append(f"{nombre}: {exc}")
+                errores.append((nombre, self._motivo_error(exc)))
 
         self.btn_cargar.disabled = False
         self.anillo.visible = False
-        resumen = f"{identificados} de {len(archivos)} archivo(s) identificado(s) y agregado(s) a la tabla."
+        resumen = f"{identificados} de {len(archivos)} archivo(s) cargado(s) en la tabla."
         if errores:
-            resumen += " Con error: " + "; ".join(errores)
+            resumen += " " + self._resumen_errores(errores)
         self.txt_estado.value = resumen
+        self.txt_estado.color = NARANJA if errores else GRIS
+        if errores:
+            self.avisar(
+                f"{len(errores)} archivo(s) no se pudieron leer (ver el detalle abajo).",
+                NARANJA,
+            )
         # Si ya hay un reporte importado, concilia los nuevos registros.
         self._conciliar()
         self._actualizar_resumen()
         self.page.update()
+
+    @staticmethod
+    def _motivo_error(exc: Exception) -> str:
+        """Traduce la excepción al cargar un archivo a un motivo breve y claro."""
+        s = str(exc).lower()
+        tipo = type(exc).__name__.lower()
+        if "cannot identify image" in s or "unidentifiedimage" in tipo:
+            return "imagen no válida o dañada/incompleta"
+        if isinstance(exc, FileNotFoundError):
+            return "no se encontró el archivo"
+        if isinstance(exc, ValueError) and "extens" in s:
+            return "tipo de archivo no admitido"
+        if "tesseract" in s or "ocr" in tipo:
+            return "se necesita OCR y no está disponible"
+        if isinstance(exc, PermissionError):
+            return "archivo en uso o sin permisos"
+        return "no se pudo procesar"
+
+    @staticmethod
+    def _resumen_errores(errores: list[tuple[str, str]], max_nombres: int = 8) -> str:
+        """Arma un texto conciso de los archivos con error, agrupados por motivo y
+        mostrando solo los nombres (sin rutas ni volcados técnicos)."""
+        por_motivo: dict[str, list[str]] = {}
+        for nombre, motivo in errores:
+            por_motivo.setdefault(motivo, []).append(nombre)
+        partes = []
+        for motivo, nombres in por_motivo.items():
+            visibles = ", ".join(nombres[:max_nombres])
+            if len(nombres) > max_nombres:
+                visibles += f" y {len(nombres) - max_nombres} más"
+            partes.append(f"{len(nombres)} con {motivo} ({visibles})")
+        return "No se pudieron leer: " + " · ".join(partes) + "."
 
     # =========================================================== acciones
     def _seleccionar_todos(self, _e) -> None:
@@ -815,16 +1041,19 @@ class SeccionAltaBeneficiarios:
         def tiene_correo(b) -> bool:
             return bool((b.email or "").strip())
 
-        # (nombre de archivo, filtro, etiqueta para el resumen)
+        # Bancomer (012) usa su formato; otros bancos usan el formato SPEI.
+        gen_bancomer = exportador_alta_bancomer.generar_txt
+        gen_spei = exportador_alta_spei.generar_txt
+        # (nombre de archivo, filtro, etiqueta, generador del TXT)
         grupos = [
             ("Cuentas Bancomer con correo.txt",
-             lambda b: es_bancomer(b) and tiene_correo(b), "Bancomer con correo"),
+             lambda b: es_bancomer(b) and tiene_correo(b), "Bancomer con correo", gen_bancomer),
             ("Cuentas Bancomer sin correo.txt",
-             lambda b: es_bancomer(b) and not tiene_correo(b), "Bancomer sin correo"),
+             lambda b: es_bancomer(b) and not tiene_correo(b), "Bancomer sin correo", gen_bancomer),
             ("Cuentas otros bancos con correo.txt",
-             lambda b: not es_bancomer(b) and tiene_correo(b), "otros bancos con correo"),
+             lambda b: not es_bancomer(b) and tiene_correo(b), "otros bancos con correo", gen_spei),
             ("Cuentas otros bancos sin correo.txt",
-             lambda b: not es_bancomer(b) and not tiene_correo(b), "otros bancos sin correo"),
+             lambda b: not es_bancomer(b) and not tiene_correo(b), "otros bancos sin correo", gen_spei),
         ]
 
         destino = await self.picker.get_directory_path(
@@ -839,7 +1068,7 @@ class SeccionAltaBeneficiarios:
         try:
             os.makedirs(carpeta, exist_ok=True)
             resumen: list[str] = []
-            for nombre_archivo, filtro, etiqueta in grupos:
+            for nombre_archivo, filtro, etiqueta, generador in grupos:
                 sub = [
                     (b.clabe, b.monto, b.beneficiario, b.email or "")
                     for b in validos if filtro(b)
@@ -848,7 +1077,7 @@ class SeccionAltaBeneficiarios:
                     continue
                 with open(os.path.join(carpeta, nombre_archivo),
                           "w", encoding="latin-1", newline="") as fh:
-                    fh.write(exportador_alta_bancomer.generar_txt(sub))
+                    fh.write(generador(sub))
                 resumen.append(f"{len(sub)} {etiqueta}")
         except PermissionError:
             self.avisar(
