@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 500">
+  <defs>
+    <linearGradient gradientUnits="userSpaceOnUse" x1="367.491" y1="-233.828" x2="367.491" y2="-117.638" id="gradient-1" gradientTransform="matrix(0.91992, -0.392106, 0.119816, 0.281101, -17.09899, 406.958872)">
+      <stop offset="0" style="stop-color: rgb(255, 255, 255);"/>
+      <stop offset="1" style="stop-color: rgb(168, 196, 217);"/>
+    </linearGradient>
+    <linearGradient gradientUnits="userSpaceOnUse" x1="361.989" y1="-29.657" x2="361.989" y2="159.167" id="gradient-0" gradientTransform="matrix(0.911623, -0.411027, 0.229688, 0.50943, -11.13039, 358.8892)">
+      <stop offset="0" style="stop-color: rgb(230, 180, 65);"/>
+      <stop offset="1" style="stop-color: rgb(193, 140, 36);"/>
+    </linearGradient>
+    <mask id="arrow-cutout" maskUnits="userSpaceOnUse" x="0" y="0" width="500" height="500">
+      <rect x="0" width="500" height="500" fill="white" y="0"/>
+      <path fill="black" stroke="black" stroke-width="15" stroke-linejoin="miter" stroke-linecap="round" d="M 155.626 303.151 L 223.092 231.937 L 242.367 252.819 L 286.809 206.771 L 278.777 198.74 L 314.652 187.496 L 308.762 226.047 L 298.589 218.551 L 242.903 276.379 L 220.95 254.961 L 175.437 303.686 C 175.437 303.686 154.555 303.151 155.626 303.151 Z"/>
+    </mask>
+  </defs>
+  <g style="" transform="matrix(2.310016, 0, 0, 2.296092, -289.497131, -268.724762)">
+    <path mask="url(#arrow-cutout)" style="fill: url(&quot;#gradient-0&quot;); stroke: none; stroke-width: 0px;" d="M 229.352 133.961 C 229.352 133.961 218.108 166.088 192.942 199.821 C 167.776 233.554 164.564 247.475 165.099 265.68 C 165.634 283.885 184.91 317.618 227.21 322.437 C 269.51 327.256 293.605 279.601 293.069 263.538 C 292.533 247.475 286.109 220.703 261.478 192.86 C 236.847 165.017 229.352 133.426 229.352 133.961 Z"/>
+    <path style="fill: url(&quot;#gradient-1&quot;); stroke: none; stroke-width: 0px; stroke-linecap: round;" d="M 155.626 303.151 L 223.092 231.937 L 242.367 252.819 L 286.809 206.771 L 278.777 198.74 L 314.652 187.496 L 308.762 226.047 L 298.589 218.551 L 242.903 276.379 L 220.95 254.961 L 175.437 303.686 C 175.437 303.686 154.555 303.151 155.626 303.151 Z"/>
+  </g>
+</svg>

@@ -22,6 +22,7 @@ if exist "Imagenes\" set DATAARGS=%DATAARGS% --add-data "Imagenes:Imagenes"
 if exist "tessdata\" set DATAARGS=%DATAARGS% --add-data "tessdata:tessdata"
 
 flet pack app.py -n "Tesoreria" -D ^
+  --icon "Imagenes\icon.ico" ^
   %DATAARGS% ^
   --hidden-import openpyxl ^
   --hidden-import xlwt ^

@@ -5,7 +5,7 @@
 AppId={{7E9F2A14-3C5B-4D88-9E21-6B0F4A2C1D33}
 AppName=Herramientas Tesoreria
 ; Mantener en sync con core/version.py (__version__).
-AppVersion=0.5.2
+AppVersion=0.5.3
 AppPublisher=Quetzaltic Solutions
 DefaultDirName={commonpf}\Quetzaltic Solutions\Herramientas Tesoreria
 DefaultGroupName=Quetzaltic Solutions
@@ -25,8 +25,11 @@ PrivilegesRequired=admin
 Source: ".\dist\Tesoreria\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"
-Name: "{commondesktop}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"
+; IconFilename apunta al icono incluido en {app}\Imagenes (la carpeta Imagenes
+; se empaqueta completa). El .exe ya lleva el icono embebido, pero declararlo
+; aqui garantiza que los accesos directos lo usen explicitamente.
+Name: "{group}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; IconFilename: "{app}\Imagenes\icon.ico"
+Name: "{commondesktop}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; IconFilename: "{app}\Imagenes\icon.ico"
 
 [Run]
 ; Ejecuta la app al terminar la instalacion (no en modo silencioso/actualizacion).
