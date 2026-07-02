@@ -5,7 +5,7 @@
 AppId={{7E9F2A14-3C5B-4D88-9E21-6B0F4A2C1D33}
 AppName=Herramientas Tesoreria
 ; Mantener en sync con core/version.py (__version__).
-AppVersion=0.5.4
+AppVersion=0.5.5
 AppPublisher=Quetzaltic Solutions
 DefaultDirName={commonpf}\Quetzaltic Solutions\Herramientas Tesoreria
 DefaultGroupName=Quetzaltic Solutions
