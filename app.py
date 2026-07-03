@@ -326,6 +326,10 @@ def main(page: ft.Page) -> None:
     )
     page.theme = ft.Theme(scrollbar_theme=_barra)
     page.dark_theme = ft.Theme(scrollbar_theme=_barra)
+    # Identidad en la barra de tareas: la ventana la crea un flet.exe genérico
+    # (Flet abre el cliente en un proceso aparte); se etiqueta con el icono y el
+    # comando de re-lanzamiento correctos para que anclarla funcione bien.
+    _configurar_taskbar(page)
     # Restaura el estado de la ventana de la última sesión (o maximizada la 1ra
     # vez) y empieza a recordarlo. Best-effort: nunca debe impedir arrancar.
     try:
@@ -348,6 +352,29 @@ def main(page: ft.Page) -> None:
         _arrancar_app(page)
     except Exception as exc:  # noqa: BLE001 — se reporta en pantalla, no se propaga
         _pantalla_error_arranque(page, exc)
+
+
+def _configurar_taskbar(page: ft.Page) -> None:
+    """Etiqueta la ventana (creada por el flet.exe cliente) con la identidad de la
+    app: AppUserModelID + comando/icono de re-lanzamiento. Así, al anclarla a la
+    barra de tareas, Windows crea el pin apuntando a Tesoreria.exe con el icono
+    correcto (y no al flet.exe genérico con argumentos de sesión). Solo aplica en
+    la app empaquetada en Windows; best-effort, nunca impide arrancar."""
+    if sys.platform != "win32" or not getattr(sys, "frozen", False):
+        return
+    try:
+        from core import win_taskbar
+
+        exe = os.path.join(rutas.INSTALL, "Tesoreria.exe")
+        icono = os.path.join(rutas.INSTALL, "icon.ico")
+        win_taskbar.configurar_identidad(
+            titulo=page.title,
+            relaunch_cmd=f'"{exe}"',
+            icon_path=icono if os.path.exists(icono) else None,
+            display="Herramientas Tesorería",
+        )
+    except Exception:  # noqa: BLE001 — la identidad de la barra no es crítica
+        pass
 
 
 def _arrancar_app(page: ft.Page) -> None:
