@@ -20,6 +20,8 @@ import fitz  # PyMuPDF
 import pytesseract
 from PIL import Image
 
+from . import rutas
+
 # Caracteres "normales" esperables en un documento en español. Si la capa de
 # texto de un PDF trae muy pocos de estos (codificación de fuente rota, p. ej.
 # texto que sale como "ÕÖÔÉÕÁ@ÆÓÅç..."), se considera ilegible y se usa OCR.
@@ -43,8 +45,11 @@ def _normalizar(texto: str) -> str:
     return texto
 
 # --- Localización del binario de Tesseract -------------------------------
-# Tesseract está instalado pero fuera del PATH; lo apuntamos explícitamente.
+# 1º el Tesseract EMPAQUETADO junto a la app ({app}\Tesseract-OCR): asi funciona
+# en una maquina limpia sin instalarlo aparte. Luego, ubicaciones habituales de
+# una instalacion del sistema (util en desarrollo). Fuera del PATH -> se apunta.
 _RUTAS_TESSERACT = [
+    os.path.join(rutas.INSTALL, "Tesseract-OCR", "tesseract.exe"),
     r"C:\Program Files\Tesseract-OCR\tesseract.exe",
     r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
     os.path.join(os.environ.get("LOCALAPPDATA", ""), r"Programs\Tesseract-OCR\tesseract.exe"),
@@ -54,13 +59,15 @@ for _ruta in _RUTAS_TESSERACT:
         pytesseract.pytesseract.tesseract_cmd = _ruta
         break
 
-# Carpeta de modelos de idioma incluida con el proyecto (no requiere permisos
-# de administrador). Contiene spa+eng+osd; se prioriza sobre la de Tesseract
-# para que el OCR pueda usar español sin tocar 'C:\Program Files'.
-from . import rutas
-_TESSDATA_PROYECTO = os.path.join(rutas.BUNDLE, "tessdata")
-if os.path.isdir(_TESSDATA_PROYECTO):
-    os.environ["TESSDATA_PREFIX"] = _TESSDATA_PROYECTO
+# Carpeta de modelos de idioma (spa+eng+osd). Se prioriza la del proyecto y, si
+# no, la del Tesseract empaquetado; asi el OCR usa español sin tocar el sistema.
+for _tessdata in (
+    os.path.join(rutas.BUNDLE, "tessdata"),
+    os.path.join(rutas.INSTALL, "Tesseract-OCR", "tessdata"),
+):
+    if os.path.isdir(_tessdata):
+        os.environ["TESSDATA_PREFIX"] = _tessdata
+        break
 
 # Umbral: si una página de PDF trae menos de estos caracteres, se considera
 # "sin texto real" y se manda a OCR.

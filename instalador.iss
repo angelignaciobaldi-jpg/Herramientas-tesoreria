@@ -27,6 +27,10 @@ PrivilegesRequired=lowest
 ; debe coincidir con el -n del build (ver README). Si cambias el nombre del
 ; build, actualiza esta ruta y el nombre del .exe en [Icons] y [Run].
 Source: ".\dist\Tesoreria\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Motor Tesseract OCR empaquetado (lo prepara el CI en '.\tesseract_bundle').
+; skipifsourcedoesntexist: si no esta (build local sin OCR empaquetado) NO rompe
+; la compilacion del instalador; la app cae a un Tesseract del sistema si existe.
+Source: ".\tesseract_bundle\*"; DestDir: "{app}\Tesseract-OCR"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 ; IconFilename apunta al icono incluido en {app}\Imagenes (la carpeta Imagenes
