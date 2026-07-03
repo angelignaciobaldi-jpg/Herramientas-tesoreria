@@ -35,6 +35,7 @@ class CuentaReporte:
     banco: str
     rfc: str
     correo: str
+    tipo: str = ""  # tipo de beneficiario (Proveedor/Deudor/Acreedor Diverso)
 
 
 def _norm(valor) -> str:
@@ -93,6 +94,7 @@ def leer(ruta: str) -> dict[str, CuentaReporte]:
             banco=campo(fila, "nombre banco"),
             rfc=campo(fila, "rfc"),
             correo=campo(fila, "correo"),
+            tipo=campo(fila, "tipo beneficiario", "tipo de beneficiario", "tipo"),
         )
     return catalogo
 

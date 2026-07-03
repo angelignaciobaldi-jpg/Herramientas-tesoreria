@@ -180,6 +180,24 @@ _JS_ELEGIR_OPCION = r"""(args) => {
 }"""
 
 
+# JS que marca TODAS las opciones de un <select multiple> de AngularJS + chosen
+# (p. ej. el filtro de Tipo de Beneficiario). Recibe el ng-model, marca cada
+# opción real como seleccionada y avisa el cambio a AngularJS y a chosen.
+# Devuelve cuántas opciones marcó (0 si no encontró el select).
+_JS_SELECCIONAR_TODOS = r"""(ngModel) => {
+    const sel = document.querySelector('select[ng-model="' + ngModel + '"]');
+    if (!sel) return 0;
+    let n = 0;
+    for (const o of sel.options) {
+        if (o.value !== '' && o.value !== '0') { o.selected = true; n++; }
+    }
+    const jq = window.jQuery || window.$;
+    if (jq) { try { jq(sel).trigger('change').trigger('chosen:updated'); } catch (e) {} }
+    sel.dispatchEvent(new Event('change', {bubbles: true}));
+    return n;
+}"""
+
+
 @dataclass
 class FiltrosSolicitudPago:
     """Filtros del modal 'Agregar Facturas/Solicitudes de Pago'.
@@ -527,30 +545,16 @@ class SesionSipp:
         )
 
     async def filtrar_reporte_cuentas_bancarias(
-        self, tipo_beneficiario: str, fecha_inicio: str, fecha_fin: str,
+        self, fecha_inicio: str, fecha_fin: str,
     ) -> None:
-        """En el reporte, elige el tipo de beneficiario (select 'chosen'
-        múltiple), captura el rango de fechas y aplica el filtro (lupa)."""
+        """En el reporte, marca TODOS los tipos de beneficiario, captura el rango
+        de fechas y aplica el filtro (lupa)."""
         page = self._exigir_pagina()
 
-        # 1) Tipo de beneficiario (chosen múltiple: #id_TipoReporte_chosen).
-        cont = page.locator("#id_TipoReporte_chosen")
-        await cont.scroll_into_view_if_needed()
-        await cont.click()
-        buscador = cont.locator("input.chosen-search-input").first
-        try:
-            await buscador.fill(tipo_beneficiario, timeout=2_000)
-        except PlaywrightTimeoutError:
-            pass
-        opcion = cont.locator(
-            ".chosen-results li.active-result", has_text=tipo_beneficiario,
-        ).first
-        try:
-            await opcion.click(timeout=self.TIMEOUT_ELEMENTO)
-        except PlaywrightTimeoutError as exc:
-            raise ErrorSipp(
-                "No se encontró la opción '%s' en el tipo de beneficiario." % tipo_beneficiario
-            ) from exc
+        # 1) Tipo de beneficiario: se marcan TODOS los tipos (Proveedores, Deudores
+        #    Diversos, Acreedores Diversos) para no perder cuentas. Es un <select
+        #    multiple> de AngularJS + chosen; se opera por su ng-model.
+        await self._seleccionar_todos_tipos()
 
         # 2) Rango de fechas (campos con máscara dd/MM/yyyy).
         await self._llenar_fecha("#fh_inicial", fecha_inicio)
@@ -575,6 +579,31 @@ class SesionSipp:
             raise
         # La grid recarga por AJAX; se da un respiro para que pinten los datos.
         await page.wait_for_timeout(2_000)
+
+    async def _seleccionar_todos_tipos(self) -> None:
+        """Marca TODOS los tipos de beneficiario del filtro (<select multiple>
+        ng-model='filtros.id_TipoReporte'). Intenta por JS; si no logra ninguno,
+        cae al widget 'chosen' (abrir y hacer clic en cada opción)."""
+        page = self._exigir_pagina()
+        try:
+            marcados = await page.evaluate(_JS_SELECCIONAR_TODOS, "filtros.id_TipoReporte")
+        except Exception:  # noqa: BLE001 — se intenta el respaldo por UI
+            marcados = 0
+        if marcados:
+            return
+        # Respaldo por interfaz: al elegir una opción, 'chosen' la saca de la lista
+        # de disponibles; se repite hasta que no queden (con tope de seguridad).
+        cont = page.locator("#id_TipoReporte_chosen")
+        try:
+            await cont.scroll_into_view_if_needed()
+            for _ in range(8):
+                await cont.click()
+                opciones = cont.locator(".chosen-results li.active-result")
+                if not await opciones.count():
+                    break
+                await opciones.first.click(timeout=self.TIMEOUT_ELEMENTO)
+        except PlaywrightTimeoutError:
+            pass  # si falla, se continúa; el filtro por fechas sigue aplicándose
 
     async def _llenar_fecha(self, selector: str, valor: str) -> None:
         """Captura una fecha en un campo con máscara dd/MM/yyyy. Recibe la fecha
@@ -988,20 +1017,20 @@ class SesionSipp:
         except Exception:  # noqa: BLE001
             pass
 
-    async def descargar_anexos_proveedores(
+    async def descargar_anexos_beneficiarios(
         self, fecha_inicio: str, fecha_fin: str, carpeta_destino: str,
-        tipo_beneficiario: str = "Proveedores",
         progreso: Callable[[int, int], None] | None = None,
     ) -> tuple[int, int]:
         """Flujo completo (asumiendo sesión ya iniciada y empresa/sucursal
-        seleccionadas): abre el reporte, filtra por tipo de beneficiario y rango
-        de fechas, y descarga todos los anexos. Devuelve (descargados, dañados).
+        seleccionadas): abre el reporte, marca TODOS los tipos de beneficiario,
+        filtra por el rango de fechas y descarga todos los anexos. Devuelve
+        (descargados, dañados).
 
         `progreso` (opcional) se reenvía a descargar_anexos para reportar avance.
         Los archivos se guardan en una subcarpeta 'Estados de cuenta proveedores
         - <rango de fechas>' dentro de `carpeta_destino`."""
         await self.ir_a_reporte_cuentas_bancarias()
-        await self.filtrar_reporte_cuentas_bancarias(tipo_beneficiario, fecha_inicio, fecha_fin)
+        await self.filtrar_reporte_cuentas_bancarias(fecha_inicio, fecha_fin)
         # El grid arranca mostrando solo 10 registros: se sube el tamaño de página
         # para traer TODOS los del filtro a una sola página antes de recorrerla.
         await self._maximizar_pagina()

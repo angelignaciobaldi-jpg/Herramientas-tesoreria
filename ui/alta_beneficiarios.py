@@ -24,7 +24,7 @@ from core.rpa_sipp import (
 )
 from ui.comun import (
     EXTENSIONES, GRIS, NARANJA, ROJO, VERDE,
-    W_ACCIONES, W_BANCO, W_CLABE, W_ESTADO, W_MONTO, W_NOMBRE,
+    W_ACCIONES, W_BANCO, W_CLABE, W_ESTADO, W_MONTO, W_NOMBRE, W_TIPO,
     celda_centrada, encabezado_col, fmt_monto, parse_monto, solo_digitos,
     tarjeta, validar,
 )
@@ -66,6 +66,8 @@ class FilaBeneficiario:
             banco_desde_clabe(solo_digitos(clabe)) or "—", size=12,
             text_align=ft.TextAlign.CENTER,
         )
+        # Tipo de beneficiario: se llena al conciliar con el reporte ('—' si no).
+        self.txt_tipo = ft.Text("—", size=12, text_align=ft.TextAlign.CENTER)
         self.tf_benef = ft.TextField(
             value=beneficiario, dense=True, width=W_NOMBRE, text_size=12,
             content_padding=8, on_change=self._cambio,
@@ -107,6 +109,7 @@ class FilaBeneficiario:
                 ft.DataCell(self.tf_clabe),
                 ft.DataCell(self.tf_monto),
                 ft.DataCell(celda_centrada(self.txt_banco, W_BANCO)),
+                ft.DataCell(celda_centrada(self.txt_tipo, W_TIPO)),
                 ft.DataCell(self.tf_benef),
                 ft.DataCell(self.tf_alias),
                 ft.DataCell(self.tf_email),
@@ -215,7 +218,12 @@ class FilaBeneficiario:
             self.tf_alias.value = rep.beneficiario
         if rep.correo:
             self.tf_email.value = rep.correo
+        self.set_tipo(rep.tipo)
         self._actualizar_estado()
+
+    def set_tipo(self, tipo: str) -> None:
+        """Muestra el tipo de beneficiario tomado del reporte (o '—' si no aplica)."""
+        self.txt_tipo.value = tipo or "—"
 
     def marcar_conciliacion(self, estado: str | None) -> None:
         """Pinta la fila según la conciliación: rojo si no coincide; ámbar si la
@@ -275,6 +283,14 @@ class SeccionAltaBeneficiarios:
             icon=ft.Icons.UPLOAD_FILE,
             on_click=self._seleccionar,
         )
+        # Cargar una carpeta completa: evita el diálogo de multiselección (que
+        # falla al elegir muchos archivos con nombres largos) y es lo más cómodo
+        # para la carpeta que deja el RPA.
+        self.btn_cargar_carpeta = ft.OutlinedButton(
+            content="Cargar carpeta completa",
+            icon=ft.Icons.FOLDER_OPEN,
+            on_click=self._seleccionar_carpeta,
+        )
         # Importación del reporte de cuentas (Excel) para conciliar.
         self.txt_estado_rep = ft.Text("", color=GRIS, size=12)
         self.btn_reporte = ft.OutlinedButton(
@@ -293,11 +309,14 @@ class SeccionAltaBeneficiarios:
                     ft.Row(
                         [
                             self.btn_cargar,
+                            self.btn_cargar_carpeta,
                             self.anillo,
-                            ft.Text("Puedes seleccionar varios archivos a la vez.", color=GRIS, size=12, italic=True),
+                            ft.Text("Selecciona varios archivos, o carga una carpeta "
+                                    "completa (recomendado para la carpeta del RPA).",
+                                    color=GRIS, size=12, italic=True),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        spacing=12,
+                        spacing=12, wrap=True,
                     ),
                     self.txt_estado,
                     ft.Divider(height=1),
@@ -333,6 +352,7 @@ class SeccionAltaBeneficiarios:
                 ft.DataColumn(label=encabezado_col("CLABE", W_CLABE)),
                 ft.DataColumn(label=encabezado_col("Monto", W_MONTO), numeric=True),
                 ft.DataColumn(label=encabezado_col("Banco", W_BANCO)),
+                ft.DataColumn(label=encabezado_col("Tipo", W_TIPO)),
                 ft.DataColumn(label=self.enc_benef),
                 ft.DataColumn(label=self.enc_alias),
                 ft.DataColumn(label=self.enc_email),
@@ -460,7 +480,8 @@ class SeccionAltaBeneficiarios:
                     ft.Text(
                         f"Entra al SIPP con las credenciales de Configuración, empresa "
                         f"{self.RPA_EMPRESA} / sucursal {self.RPA_SUCURSAL}, filtra "
-                        "Proveedores por el rango de fechas y descarga los anexos.",
+                        "todos los tipos de beneficiario por el rango de fechas y "
+                        "descarga los anexos.",
                         color=GRIS, size=12, italic=True,
                     ),
                     self.pb_rpa,
@@ -477,8 +498,9 @@ class SeccionAltaBeneficiarios:
             self.page.update()
 
     async def _iniciar_rpa_anexos(self, _e) -> None:
-        """Lanza el RPA: login en el SIPP, filtra Proveedores por el rango de
-        fechas y descarga los anexos en la carpeta que elija el usuario."""
+        """Lanza el RPA: login en el SIPP, filtra todos los tipos de beneficiario
+        por el rango de fechas y descarga los anexos en la carpeta que elija el
+        usuario."""
         usuario, contrasena = self.app.config.credenciales()
         if not usuario or not contrasena:
             self.avisar("Captura usuario y contraseña en Configuración (ícono ⚙).", ROJO)
@@ -566,7 +588,7 @@ class SeccionAltaBeneficiarios:
             await sesion.iniciar()
             await sesion.login(usuario, contrasena)
             await sesion.seleccionar_empresa_sucursal(self.RPA_EMPRESA, self.RPA_SUCURSAL)
-            return await sesion.descargar_anexos_proveedores(
+            return await sesion.descargar_anexos_beneficiarios(
                 fi, ff, carpeta, progreso=self._progreso_rpa,
             )
 
@@ -724,9 +746,11 @@ class SeccionAltaBeneficiarios:
                 por_nombre += 1
             elif len(clabe) == 18:
                 f.marcar_conciliacion("sin")
+                f.set_tipo("")
                 sin_match += 1
             else:
                 f.marcar_conciliacion(None)  # CLABE incompleta: el ícono ya avisa
+                f.set_tipo("")
         self.txt_estado_rep.value = (
             f"Reporte '{self.nombre_reporte}': {por_clabe} por CLABE, "
             f"{por_nombre} por nombre (CLABE sugerida, revisa en ámbar), "
@@ -740,6 +764,7 @@ class SeccionAltaBeneficiarios:
         for f in self.filas:
             if not self.catalogo_reporte:
                 f.marcar_conciliacion(None)
+                f.set_tipo("")
                 continue
             if f.conciliacion == "nombre":
                 f.marcar_conciliacion("nombre")  # preserva el aviso de revisión
@@ -747,20 +772,25 @@ class SeccionAltaBeneficiarios:
             clabe = solo_digitos(f.tf_clabe.value)
             if len(clabe) != 18:
                 f.marcar_conciliacion(None)
+                f.set_tipo("")
             elif clabe in self.catalogo_reporte:
                 f.marcar_conciliacion("ok")
+                f.set_tipo(self.catalogo_reporte[clabe].tipo)
             else:
                 f.marcar_conciliacion("sin")
+                f.set_tipo("")
 
     def _conciliar_una(self, fila: FilaBeneficiario) -> None:
         """Concilia una sola fila por CLABE (al editar su CLABE en vivo). No
         sugiere CLABE por nombre aquí para no pisar lo que el usuario escribe."""
         if not self.catalogo_reporte:
             fila.marcar_conciliacion(None)
+            fila.set_tipo("")
             return
         clabe = solo_digitos(fila.tf_clabe.value)
         if len(clabe) != 18:
             fila.marcar_conciliacion(None)
+            fila.set_tipo("")
             return
         rep = self.catalogo_reporte.get(clabe)
         if rep:
@@ -768,6 +798,7 @@ class SeccionAltaBeneficiarios:
             fila.marcar_conciliacion("ok")
         else:
             fila.marcar_conciliacion("sin")
+            fila.set_tipo("")
 
     def _cambio_formato_export(self, _e=None) -> None:
         """Ajusta el botón de exportar según el formato elegido."""
@@ -801,8 +832,8 @@ class SeccionAltaBeneficiarios:
         """Reparte el ancho disponible entre los campos de texto largos
         (beneficiario, alias, email) para que crezcan al agrandar la ventana."""
         ancho = self.page.width or 1180
-        # Columnas de ancho fijo: estado, CLABE, monto, banco, acciones.
-        fijo = W_ESTADO + W_CLABE + W_MONTO + W_BANCO + W_ACCIONES
+        # Columnas de ancho fijo: estado, CLABE, monto, banco, tipo, acciones.
+        fijo = W_ESTADO + W_CLABE + W_MONTO + W_BANCO + W_TIPO + W_ACCIONES
         overhead = 170  # paddings de la tarjeta y espaciamiento entre columnas
         disponible = ancho - fijo - overhead
         w = max(W_NOMBRE, int(disponible / 3))
@@ -840,6 +871,7 @@ class SeccionAltaBeneficiarios:
 
     # ======================================================= carga archivos
     async def _seleccionar(self, _e) -> None:
+        """Carga por selección de archivos (uno o varios) desde el diálogo."""
         archivos = await self.picker.pick_files(
             dialog_title="Selecciona uno o varios estados de cuenta",
             allowed_extensions=EXTENSIONES,
@@ -847,29 +879,60 @@ class SeccionAltaBeneficiarios:
         )
         if not archivos:
             return
+        await self._procesar_archivos([a.path for a in archivos])
 
+    async def _seleccionar_carpeta(self, _e) -> None:
+        """Carga TODOS los estados de cuenta (por extensión) de una carpeta. Es lo
+        más cómodo para la carpeta que deja el RPA y evita el diálogo de
+        multiselección, que falla al elegir muchos archivos con nombres largos.
+        Solo toma el primer nivel, así que ignora la subcarpeta '_no_validos'."""
+        carpeta = await self.picker.get_directory_path(
+            dialog_title="Elige la carpeta con los estados de cuenta",
+        )
+        if not carpeta:
+            return
+        exts = tuple("." + e.lower() for e in EXTENSIONES)
+        try:
+            rutas = [
+                os.path.join(carpeta, n) for n in sorted(os.listdir(carpeta))
+                if n.lower().endswith(exts) and os.path.isfile(os.path.join(carpeta, n))
+            ]
+        except OSError as exc:
+            self.avisar(f"No se pudo leer la carpeta: {exc}", ROJO)
+            return
+        if not rutas:
+            self.avisar("La carpeta no tiene estados de cuenta (PDF o imagen).", NARANJA)
+            return
+        await self._procesar_archivos(rutas)
+
+    async def _procesar_archivos(self, rutas: list[str]) -> None:
+        """Procesa una lista de rutas (OCR + extracción) y las agrega a la tabla.
+        Compartido por la carga por archivos y por carpeta."""
+        if not rutas:
+            return
         self.btn_cargar.disabled = True
+        self.btn_cargar_carpeta.disabled = True
         self.anillo.visible = True
         identificados = 0
         errores: list[tuple[str, str]] = []  # (nombre_archivo, motivo)
 
-        for i, archivo in enumerate(archivos, start=1):
-            nombre = os.path.basename(archivo.path)
-            self.txt_estado.value = f"Procesando {i}/{len(archivos)}: {nombre}…"
+        for i, ruta in enumerate(rutas, start=1):
+            nombre = os.path.basename(ruta)
+            self.txt_estado.value = f"Procesando {i}/{len(rutas)}: {nombre}…"
             self.page.update()
             try:
-                texto, uso_ocr = await asyncio.to_thread(ocr.extraer_texto, archivo.path)
+                texto, uso_ocr = await asyncio.to_thread(ocr.extraer_texto, ruta)
                 datos = extraer_datos(texto)
                 # Si la capa de texto no dio nada útil (p. ej. impresión de un
                 # correo de Outlook con el estado como imagen), forzar OCR.
                 if not datos.clabe and not datos.beneficiario and not uso_ocr:
-                    texto, _ = await asyncio.to_thread(ocr.extraer_texto, archivo.path, True)
+                    texto, _ = await asyncio.to_thread(ocr.extraer_texto, ruta, True)
                     datos = extraer_datos(texto)
                 # Último recurso para la CLABE: OCR en modo "texto disperso", que
                 # recupera números en tablas/celdas que la segmentación normal
                 # omite (p. ej. la tabla de una carta de asignación de cuenta).
                 if not datos.clabe:
-                    texto_sp = await asyncio.to_thread(ocr.texto_disperso, archivo.path)
+                    texto_sp = await asyncio.to_thread(ocr.texto_disperso, ruta)
                     clabes_sp = extraer_clabes(texto_sp)
                     if clabes_sp:
                         datos.clabe = clabes_sp[0]
@@ -881,7 +944,7 @@ class SeccionAltaBeneficiarios:
                 self.filas.append(
                     FilaBeneficiario(
                         self, None, datos.clabe, beneficiario, beneficiario,
-                        datos.email, origen=nombre, ruta_archivo=archivo.path,
+                        datos.email, origen=nombre, ruta_archivo=ruta,
                     )
                 )
                 identificados += 1
@@ -890,8 +953,9 @@ class SeccionAltaBeneficiarios:
                 errores.append((nombre, self._motivo_error(exc)))
 
         self.btn_cargar.disabled = False
+        self.btn_cargar_carpeta.disabled = False
         self.anillo.visible = False
-        resumen = f"{identificados} de {len(archivos)} archivo(s) cargado(s) en la tabla."
+        resumen = f"{identificados} de {len(rutas)} archivo(s) cargado(s) en la tabla."
         if errores:
             resumen += " " + self._resumen_errores(errores)
         self.txt_estado.value = resumen
