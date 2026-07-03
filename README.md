@@ -55,9 +55,13 @@ Por seguridad, el repositorio **solo contiene codigo**. Estos archivos viven en
 la maquina (junto a la app instalada o en la carpeta del proyecto en desarrollo):
 
 - `Cuentas bancarias/CUENTAS BANCARIAS .xlsx` - catalogo de cuentas por empresa.
-- `tessdata/` - modelos de OCR (incluye espanol).
 - `tesoreria.db` y `_cuentas_cache.json` - se crean/actualizan solos.
-- Tesseract OCR instalado en `C:\Program Files\Tesseract-OCR\`.
+
+> **Tesseract OCR ya va EMPAQUETADO** con el instalador (el CI lo prepara en
+> `tesseract_bundle/` y lo copia a `{app}\Tesseract-OCR`, con los idiomas
+> `spa+eng+osd`). En una maquina limpia el OCR funciona sin instalar nada aparte.
+> En **desarrollo**, `core/ocr.py` cae a un Tesseract del sistema
+> (`C:\Program Files\Tesseract-OCR\`) si lo tienes instalado.
 
 Para **actualizar las cuentas**: abre el menu **Configuracion (⚙) -> Catalogo de
 cuentas -> Adjuntar Excel de cuentas**. La app lo copia a su ubicacion, lo valida
