@@ -51,6 +51,14 @@ jobs:
           pip install flet pyinstaller
           if (Test-Path requirements.txt) { pip install -r requirements.txt }
 
+      # Smoke test de imports: importa app + todos los modulos de core/ y ui/ para
+      # detectar imports rotos o modulos faltantes (p. ej. un .py referenciado pero
+      # NO versionado) ANTES de compilar y publicar. Si algo no importa, el build
+      # FALLA aqui y el Release roto no llega a los usuarios.
+      - name: Smoke test de imports (falla si algo no importa)
+        shell: pwsh
+        run: python scripts/smoke_import.py
+
       # 1. Compilar la app con flet pack (onedir). Incluye el driver de Playwright
       #    via --collect-all. NO empaqueta Chromium: se descarga en la 1ra
       #    ejecución del RPA en la PC del usuario. tessdata no va (no está en el
