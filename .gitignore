@@ -36,6 +36,8 @@ credenciales_rpa.json
 
 # ===== Modelos de OCR (pesados; se obtienen aparte) =====
 tessdata/
+# Motor Tesseract empaquetado para el instalador (lo prepara el CI; pesado)
+tesseract_bundle/
 
 # ===== Datos sensibles y archivos de ejemplo (NO subir: datos reales) =====
 # Estados de cuenta / carátulas con nombres y CLABE de personas

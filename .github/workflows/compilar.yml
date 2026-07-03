@@ -65,7 +65,30 @@ jobs:
           --pyinstaller-build-args=--collect-all=playwright
           -y
 
-      # 2. Instalar Inno Setup y compilar el instalador (instalador.iss).
+      # 2. Preparar el motor Tesseract OCR para empaquetarlo con la app, de modo
+      #    que funcione en una maquina limpia sin instalarlo aparte. Se instala
+      #    con choco, se copia su carpeta a 'tesseract_bundle' y se asegura el
+      #    idioma español (spa) + orientacion (osd).
+      - name: Preparar Tesseract OCR para empaquetar
+        shell: pwsh
+        run: |
+          choco install tesseract --no-progress -y
+          $tess = "C:\Program Files\Tesseract-OCR"
+          if (-not (Test-Path $tess)) { $tess = "C:\Program Files (x86)\Tesseract-OCR" }
+          New-Item -ItemType Directory -Force -Path tesseract_bundle | Out-Null
+          Copy-Item "$tess\*" tesseract_bundle -Recurse -Force
+          $td = "tesseract_bundle\tessdata"
+          New-Item -ItemType Directory -Force -Path $td | Out-Null
+          foreach ($lang in @("spa", "osd")) {
+            $dest = "$td\$lang.traineddata"
+            if (-not (Test-Path $dest)) {
+              Invoke-WebRequest "https://github.com/tesseract-ocr/tessdata_fast/raw/main/$lang.traineddata" -OutFile $dest
+            }
+          }
+          Write-Host "--- tesseract_bundle ---"; Get-ChildItem tesseract_bundle
+          Write-Host "--- tessdata ---"; Get-ChildItem $td | Select-Object Name
+
+      # 3. Instalar Inno Setup y compilar el instalador (instalador.iss).
       - name: Instalar Inno Setup
         shell: pwsh
         run: choco install innosetup -y --no-progress
