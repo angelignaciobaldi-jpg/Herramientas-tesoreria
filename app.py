@@ -13,11 +13,12 @@ El shell expone a cada pantalla: page, picker (diálogos de archivo) y avisar().
 
 from __future__ import annotations
 
+import os
 import sys
 
 import flet as ft
 
-from core import db, ocr, rutas
+from core import db, ocr, preferencias, rutas
 from ui.alta_beneficiarios import SeccionAltaBeneficiarios
 from ui.configuracion import SeccionConfiguracion
 from ui.devoluciones import SeccionDevoluciones
@@ -242,6 +243,62 @@ def _buscar_actualizaciones(page: ft.Page) -> bool:
         return False
 
 
+_CLAVE_VENTANA = "ventana"
+
+
+def _restaurar_ventana(page: ft.Page) -> None:
+    """Aplica el tamaño/posición/maximizado guardados de la última sesión. La
+    primera vez (sin estado guardado) abre la ventana maximizada."""
+    est = preferencias.cargar_valor(_CLAVE_VENTANA)
+    if isinstance(est, dict) and est:
+        if est.get("maximized"):
+            page.window.maximized = True
+        else:
+            if est.get("width"):
+                page.window.width = est["width"]
+            if est.get("height"):
+                page.window.height = est["height"]
+            if est.get("left") is not None:
+                page.window.left = est["left"]
+            if est.get("top") is not None:
+                page.window.top = est["top"]
+    else:
+        page.window.maximized = True  # primera vez: maximizada
+
+
+def _vigilar_ventana(page: ft.Page) -> None:
+    """Guarda el estado de la ventana al redimensionar/mover/maximizar, para
+    restaurarlo en el próximo arranque. No usa prevent_close (evita el riesgo de
+    bloquear el cierre): guarda en los eventos ya 'terminados'."""
+    def guardar() -> None:
+        est = {
+            "width": page.window.width,
+            "height": page.window.height,
+            "left": page.window.left,
+            "top": page.window.top,
+            "maximized": bool(page.window.maximized),
+        }
+        # Maximizada: el ancho/alto/pos serían los de pantalla completa; conserva
+        # los últimos valores 'normales' para poder restaurar un tamaño sensato.
+        if est["maximized"]:
+            prev = preferencias.cargar_valor(_CLAVE_VENTANA)
+            if isinstance(prev, dict):
+                for k in ("width", "height", "left", "top"):
+                    if prev.get(k) is not None:
+                        est[k] = prev[k]
+        preferencias.guardar_valor(_CLAVE_VENTANA, est)
+
+    def on_event(e) -> None:
+        if e.type in (
+            ft.WindowEventType.RESIZED, ft.WindowEventType.MOVED,
+            ft.WindowEventType.MAXIMIZE, ft.WindowEventType.UNMAXIMIZE,
+            ft.WindowEventType.RESTORE,
+        ):
+            guardar()
+
+    page.window.on_event = on_event
+
+
 def main(page: ft.Page) -> None:
     page.title = "Herramienta Integral de Tesorería"
     # Icono de la ventana / barra de tareas (mismo que el del escritorio).
@@ -256,8 +313,10 @@ def main(page: ft.Page) -> None:
     )
     page.theme = ft.Theme(scrollbar_theme=_barra)
     page.dark_theme = ft.Theme(scrollbar_theme=_barra)
-    page.window.width = 1180
-    page.window.height = 800
+    # Restaura el estado de la ventana de la última sesión (o maximizada la 1ra
+    # vez) y empieza a recordarlo al redimensionar/mover/maximizar.
+    _restaurar_ventana(page)
+    _vigilar_ventana(page)
 
     # Chequeo de actualización con feedback visible (solo empaquetada). Si hay
     # una nueva versión, la app se cierra/reinicia y no se sigue construyendo.
@@ -281,4 +340,14 @@ def main(page: ft.Page) -> None:
 
 
 if __name__ == "__main__":
+    # Al anclar la app a la barra de tareas, Windows crea el acceso directo con
+    # el "Iniciar en" vacío, por lo que arranca con el directorio de trabajo en
+    # System32 (a diferencia del acceso del escritorio, que arranca en {app}).
+    # Eso dejaba la pantalla en blanco al resolverse algo contra el CWD. Fijar
+    # el CWD a la carpeta de la app hace que todos los lanzadores (pin, menú
+    # inicio, jump list) se comporten igual que el acceso del escritorio.
+    try:
+        os.chdir(rutas.INSTALL)
+    except OSError:
+        pass
     ft.run(main, assets_dir=rutas.BUNDLE)

@@ -34,15 +34,22 @@ Source: ".\tesseract_bundle\*"; DestDir: "{app}\Tesseract-OCR"; Flags: ignorever
 ; El PAT del AutoUpdater (QUETZALTIC_GITHUB_PAT) NO se distribuye: se registra a
 ; mano en cada maquina (variable de entorno del sistema). Por eso el .env no se
 ; incluye aqui.
+; Icono para los accesos directos, copiado a la RAIZ de {app}. Se toma del
+; codigo fuente (no del build): PyInstaller (onedir) mete 'Imagenes' dentro de
+; {app}\_internal, asi que un IconFilename a {app}\Imagenes\icon.ico no existiria
+; y el acceso saldria con un cuadro blanco. Copiarlo aqui garantiza la ruta.
+Source: ".\Imagenes\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-; IconFilename apunta al icono incluido en {app}\Imagenes (la carpeta Imagenes
-; se empaqueta completa). El .exe ya lleva el icono embebido, pero declararlo
-; aqui garantiza que los accesos directos lo usen explicitamente. {autodesktop} y
-; {group} son por-usuario (coherentes con la instalacion no elevada).
-Name: "{group}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; IconFilename: "{app}\Imagenes\icon.ico"
+; IconFilename apunta a {app}\icon.ico (copiado a la raiz en [Files]). NO usar
+; {app}\Imagenes\icon.ico: PyInstaller (onedir) coloca 'Imagenes' dentro de
+; {app}\_internal, por lo que esa ruta no existe y el acceso sale sin icono.
+; WorkingDir: {app} para que los accesos arranquen en la carpeta de la app (si
+; el usuario ancla ESTE acceso a la barra de tareas, Windows hereda el "Iniciar
+; en"). La app ademas fija el CWD por codigo para cubrir cualquier lanzador.
+Name: "{group}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"
 ; {autodesktop} = escritorio del usuario (no el comun, que requeriria admin).
-Name: "{autodesktop}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; IconFilename: "{app}\Imagenes\icon.ico"
+Name: "{autodesktop}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"
 
 [Run]
 ; Ejecuta la app al terminar la instalacion (no en modo silencioso/actualizacion).
