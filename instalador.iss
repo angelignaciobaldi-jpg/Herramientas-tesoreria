@@ -47,9 +47,12 @@ Source: ".\Imagenes\icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; WorkingDir: {app} para que los accesos arranquen en la carpeta de la app (si
 ; el usuario ancla ESTE acceso a la barra de tareas, Windows hereda el "Iniciar
 ; en"). La app ademas fija el CWD por codigo para cubrir cualquier lanzador.
-Name: "{group}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"
+; AppUserModelID: DEBE coincidir con AUMID en core/win_taskbar.py para que el
+; acceso y la ventana (creada por el flet.exe cliente) se agrupen como la MISMA
+; app en la barra de tareas.
+Name: "{group}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "QuetzalticSolutions.HerramientasTesoreria"
 ; {autodesktop} = escritorio del usuario (no el comun, que requeriria admin).
-Name: "{autodesktop}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"
+Name: "{autodesktop}\Herramientas Tesoreria"; Filename: "{app}\Tesoreria.exe"; WorkingDir: "{app}"; IconFilename: "{app}\icon.ico"; AppUserModelID: "QuetzalticSolutions.HerramientasTesoreria"
 
 [Run]
 ; Ejecuta la app al terminar la instalacion (no en modo silencioso/actualizacion).
