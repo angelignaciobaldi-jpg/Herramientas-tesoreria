@@ -211,24 +211,26 @@ class AutoUpdater:
         sys.exit(0)
 
     # ---------------------------------------------------- orquestación
-    def buscar_y_actualizar(self, al_iniciar_descarga=None) -> bool:
-        """Comprueba, y si hay versión nueva descarga y aplica (no retorna: la
-        app se cierra y se reinicia sola). Devuelve False si ya está actualizada.
+    def buscar_y_descargar(self, al_iniciar_descarga=None) -> str | None:
+        """Comprueba y, si hay versión nueva, descarga el instalador y devuelve su
+        ruta — SIN aplicarlo ni cerrar la app. Devuelve None si ya está al día.
 
-        `al_iniciar_descarga(tag)`: callback opcional que se invoca justo antes de
-        descargar (para avisar en la UI que se está instalando la actualización).
+        Al no llamar a sys.exit, es seguro ejecutarlo en un hilo (p. ej. con
+        asyncio.to_thread) para no congelar la interfaz durante la descarga; luego
+        el llamador aplica con aplicar_y_salir() en el hilo principal.
 
+        `al_iniciar_descarga(tag)`: callback opcional justo antes de descargar.
         Lanza ErrorActualizacion ante cualquier problema (red, asset ausente…)."""
         release = self.obtener_release_latest()
         tag = release.get("tag_name", "")
         if not self.hay_version_mas_nueva(tag):
-            return False
+            return None
         # Anti-bucle: si esta MISMA release ya se intentó aplicar y aun así la
         # versión local no avanzó (p. ej. el instalador de la release trae una
         # versión más vieja que su propio tag), no reintentar: se caería en un
         # bucle infinito de "actualizar" en cada arranque.
         if self._tag_ya_aplicado(tag):
-            return False
+            return None
         asset_id = self._id_asset(release)
         if asset_id is None:
             raise ErrorActualizacion(
@@ -243,6 +245,14 @@ class AutoUpdater:
         # detectará que este tag ya se intentó y NO volverá a aplicarlo (evita el
         # bucle infinito de actualización).
         self._marcar_tag_aplicado(tag)
+        return ruta
+
+    def buscar_y_actualizar(self, al_iniciar_descarga=None) -> bool:
+        """Comprueba, y si hay versión nueva descarga y aplica (no retorna: la
+        app se cierra y se reinicia sola). Devuelve False si ya está actualizada."""
+        ruta = self.buscar_y_descargar(al_iniciar_descarga)
+        if ruta is None:
+            return False
         self.aplicar_y_salir(ruta)  # no retorna: cierra la app y la reinicia
         return True
 
