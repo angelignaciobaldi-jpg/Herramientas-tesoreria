@@ -42,7 +42,7 @@ from core.version import __version__ as VERSION_ACTUAL
 
 # --- Configuración del repositorio (privado) ---
 OWNER = "angelignaciobaldi-jpg"
-REPO = "Herramientas-tesorer-a"
+REPO = "Herramientas-tesoreria"
 NOMBRE_ASSET = "Instalador_Quetzaltic.exe"
 NOMBRE_DESCARGA = "nuevo_instalador.exe"
 NOMBRE_BAT = "actualizar_quetzaltic.bat"
