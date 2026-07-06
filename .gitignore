@@ -25,6 +25,8 @@ Tesoreria-paquete/
 tesoreria.db
 *.db
 _cuentas_cache.json
+# Preferencias locales (estado de ventana, etc.) por máquina
+preferencias.json
 # Diagnósticos del RPA (capturas + HTML del portal real; datos sensibles)
 _diagnostico_rpa/
 # Credenciales del SIPP cifradas por usuario (DPAPI)

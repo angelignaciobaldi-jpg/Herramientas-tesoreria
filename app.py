@@ -13,6 +13,7 @@ El shell expone a cada pantalla: page, picker (diálogos de archivo) y avisar().
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 import traceback
@@ -102,6 +103,9 @@ class AppTesoreria:
             padding=6,
         )
 
+        # Quita el splash de arranque justo al pintar la app real (evita ver el
+        # splash y la app apilados, y evita un blanco intermedio).
+        self.page.controls.clear()
         self.page.add(encabezado, self._area, pie)
         # El redimensionado afecta la tabla de la pantalla de alta.
         self.page.on_resize = self.alta._on_resize
@@ -195,17 +199,17 @@ class AppTesoreria:
         self.page.update()
 
 
-def _pantalla_actualizando(page: ft.Page, mensaje: str) -> None:
-    """Muestra una pantalla centrada de 'actualizando' (con spinner) para que el
-    usuario no vea una ventana en blanco mientras se busca/descarga/instala."""
+def _pantalla_cargando(page: ft.Page, titulo: str, mensaje: str) -> None:
+    """Splash centrado (spinner + título + mensaje) para que el usuario NUNCA vea
+    la ventana en blanco: se usa al arrancar (carga de módulos pesados como OCR/
+    Playwright) y durante la búsqueda/descarga de actualizaciones."""
     page.controls.clear()
     page.add(
         ft.Container(
             content=ft.Column(
                 [
                     ft.ProgressRing(width=46, height=46, stroke_width=4),
-                    ft.Text("Actualizando Herramientas Tesorería",
-                            size=20, weight=ft.FontWeight.BOLD,
+                    ft.Text(titulo, size=20, weight=ft.FontWeight.BOLD,
                             text_align=ft.TextAlign.CENTER),
                     ft.Text(mensaje, size=14, text_align=ft.TextAlign.CENTER,
                             color=ft.Colors.ON_SURFACE_VARIANT),
@@ -221,11 +225,20 @@ def _pantalla_actualizando(page: ft.Page, mensaje: str) -> None:
     page.update()
 
 
-def _buscar_actualizaciones(page: ft.Page) -> bool:
+def _pantalla_actualizando(page: ft.Page, mensaje: str) -> None:
+    """Splash específico del auto-updater (busca/descarga/instala)."""
+    _pantalla_cargando(page, "Actualizando Herramientas Tesorería", mensaje)
+
+
+async def _buscar_actualizaciones(page: ft.Page) -> bool:
     """Solo en la app empaquetada: busca una versión más nueva en GitHub y, si la
     hay, la descarga y la instala mostrando una pantalla clara; la app se cierra y
     se reinicia sola al terminar. Devuelve True si va a actualizar. Cualquier fallo
-    (sin red, sin PAT, etc.) se ignora para no impedir el arranque."""
+    (sin red, sin PAT, etc.) se ignora para no impedir el arranque.
+
+    La parte de red (buscar release + descargar el instalador) corre en un hilo
+    (asyncio.to_thread) para NO congelar la interfaz: así el splash y su spinner
+    siguen vivos mientras se conecta y descarga."""
     if not getattr(sys, "frozen", False):
         return False  # en desarrollo no se autoactualiza
     try:
@@ -235,21 +248,32 @@ def _buscar_actualizaciones(page: ft.Page) -> bool:
         if not entorno.github_pat(requerido=False):
             return False  # sin PAT configurado: se omite el chequeo
         _pantalla_actualizando(page, "Buscando actualizaciones…")
-        actualizo = AutoUpdater().buscar_y_actualizar(
-            al_iniciar_descarga=lambda tag: _pantalla_actualizando(
-                page,
-                f"Descargando e instalando la versión {tag}.\n"
-                "La aplicación se reiniciará automáticamente al terminar.",
-            )
-        )
-        if not actualizo:
-            page.controls.clear()  # ya está al día: limpia el splash y sigue
-            page.update()
-        return actualizo
+        await asyncio.sleep(0.05)  # cede el control para que el splash SÍ se pinte
+        up = AutoUpdater()
+
+        # Al iniciar la descarga (callback desde el hilo), se agenda el cambio de
+        # mensaje del splash en el loop de la interfaz (page.run_task es seguro
+        # entre hilos).
+        def al_iniciar_descarga(tag: str) -> None:
+            page.run_task(_splash_descargando, page, tag)
+
+        ruta = await asyncio.to_thread(up.buscar_y_descargar, al_iniciar_descarga)
+        if ruta is None:
+            # NO se limpia el splash: main() lo reemplaza por "Iniciando la
+            # aplicación…" (evita un parpadeo en blanco antes de construir).
+            return False
+        up.aplicar_y_salir(ruta)  # en el hilo principal: sys.exit() cierra bien
+        return True
     except Exception:  # noqa: BLE001 — el updater nunca debe tumbar el arranque
-        page.controls.clear()
-        page.update()
         return False
+
+
+async def _splash_descargando(page: ft.Page, tag: str) -> None:
+    _pantalla_actualizando(
+        page,
+        f"Descargando e instalando la versión {tag}.\n"
+        "La aplicación se reiniciará automáticamente al terminar.",
+    )
 
 
 _CLAVE_VENTANA = "ventana"
@@ -312,7 +336,7 @@ def _vigilar_ventana(page: ft.Page) -> None:
     page.window.on_event = on_event
 
 
-def main(page: ft.Page) -> None:
+async def main(page: ft.Page) -> None:
     page.title = "Herramienta Integral de Tesorería"
     # Icono de la ventana / barra de tareas (mismo que el del escritorio).
     # Ruta relativa al assets_dir (rutas.BUNDLE), igual que el logo del encabezado.
@@ -326,6 +350,12 @@ def main(page: ft.Page) -> None:
     )
     page.theme = ft.Theme(scrollbar_theme=_barra)
     page.dark_theme = ft.Theme(scrollbar_theme=_barra)
+    # Splash inmediato: es lo PRIMERO que se pinta, para que el usuario no vea la
+    # ventana en blanco mientras se prepara la app y se busca actualización. El
+    # 'await' cede el control para que el cliente ALCANCE a pintarlo antes del
+    # trabajo pesado que viene (imports, red); si no, se quedaría en blanco.
+    _pantalla_cargando(page, "Herramientas Tesorería", "Iniciando…")
+    await asyncio.sleep(0.05)
     # Identidad en la barra de tareas: la ventana la crea un flet.exe genérico
     # (Flet abre el cliente en un proceso aparte); se etiqueta con el icono y el
     # comando de re-lanzamiento correctos para que anclarla funcione bien.
@@ -342,12 +372,18 @@ def main(page: ft.Page) -> None:
     #    hay nueva versión, la app se reinicia sola. Clave: al ir antes de
     #    construir la app, si algún módulo quedara roto (import fallido), la app
     #    igual puede autoactualizarse a una versión corregida en el próximo inicio.
-    if _buscar_actualizaciones(page):
+    if await _buscar_actualizaciones(page):
         return
 
-    # 2) Construcción de la app real. Si un import/arranque falla, se muestra una
-    #    pantalla de error clara (en vez del diálogo crudo "Unhandled exception in
-    #    script") con opción de reintentar / buscar actualización.
+    # 2) Construcción de la app real. Se mantiene el splash (ahora "Iniciando la
+    #    aplicación…") mientras se importan módulos pesados (OCR/Playwright) y se
+    #    arman las pantallas, que tarda unos segundos; así no hay ventana en
+    #    blanco. El 'await' cede el control para que el splash SÍ se pinte antes
+    #    de bloquear en la construcción (su spinner sigue animando en pantalla).
+    #    Si un import/arranque falla, se muestra una pantalla de error clara (en
+    #    vez del diálogo crudo "Unhandled exception in script").
+    _pantalla_cargando(page, "Herramientas Tesorería", "Iniciando la aplicación…")
+    await asyncio.sleep(0.05)
     try:
         _arrancar_app(page)
     except Exception as exc:  # noqa: BLE001 — se reporta en pantalla, no se propaga
@@ -405,10 +441,10 @@ def _pantalla_error_arranque(page: ft.Page, exc: Exception) -> None:
     chequeo de actualización, por si el fix ya está publicado)."""
     detalle = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
 
-    def reintentar(_e=None) -> None:
-        page.controls.clear()
-        page.update()
-        if _buscar_actualizaciones(page):
+    async def reintentar(_e=None) -> None:
+        _pantalla_cargando(page, "Herramientas Tesorería", "Reintentando…")
+        await asyncio.sleep(0.05)
+        if await _buscar_actualizaciones(page):
             return
         try:
             _arrancar_app(page)
