@@ -75,6 +75,14 @@ class AppTesoreria:
             height=58, fit=ft.BoxFit.CONTAIN,
             error_content=ft.Text("Quetzaltic Solutions", weight=ft.FontWeight.BOLD, size=20),
         )
+        # Botón de actualización: busca releases nuevas en GitHub y, si hay,
+        # ofrece aplicarla (con reinicio). Se "prende" (naranja) cuando la
+        # revisión en segundo plano detecta una versión pendiente.
+        self._tag_disponible: str | None = None
+        self.btn_actualizar = ft.IconButton(
+            icon=ft.Icons.SYSTEM_UPDATE, tooltip="Buscar actualizaciones",
+            on_click=self._buscar_actualizacion_manual,
+        )
         self.btn_config = ft.IconButton(
             icon=ft.Icons.SETTINGS, tooltip="Configuración", on_click=self.config.abrir,
         )
@@ -85,7 +93,7 @@ class AppTesoreria:
             [
                 self.logo,
                 self._construir_nav(),
-                ft.Row([self.btn_config, self.btn_tema], tight=True),
+                ft.Row([self.btn_actualizar, self.btn_config, self.btn_tema], tight=True),
             ],
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             spacing=12,
@@ -198,6 +206,92 @@ class AppTesoreria:
         self.btn_tema.tooltip = "Modo claro" if oscuro else "Modo oscuro"
         self.page.update()
 
+    # ----------------------------------------------------- actualizaciones
+    def marcar_actualizacion_disponible(self, tag: str) -> None:
+        """Prende el botón de actualización (lo detectó la revisión en 2º plano):
+        lo resalta en naranja y ajusta el tooltip. NO instala nada."""
+        self._tag_disponible = tag
+        self.btn_actualizar.icon_color = ft.Colors.AMBER
+        self.btn_actualizar.tooltip = (
+            f"Actualización disponible ({tag}) — haz clic para aplicarla"
+        )
+        self.page.update()
+
+    async def _buscar_actualizacion_manual(self, _e=None) -> None:
+        """Al pulsar el botón: revisa GitHub (en un hilo, sin congelar la UI). Si
+        hay versión nueva, ofrece aplicarla; si no, avisa que ya está al día."""
+        self.btn_actualizar.disabled = True
+        self.page.update()
+        tag = await asyncio.to_thread(_comprobar_update_sync)
+        self.btn_actualizar.disabled = False
+        self.page.update()
+        if not tag:
+            self.avisar("Ya tienes la última versión instalada.", ft.Colors.GREEN_700)
+            return
+        self.marcar_actualizacion_disponible(tag)
+        self._dialogo_actualizacion(tag)
+
+    def _dialogo_actualizacion(self, tag: str) -> None:
+        """Diálogo que confirma aplicar la actualización, avisando del reinicio."""
+        def aplicar(_e=None) -> None:
+            self.page.pop_dialog()
+            self.page.run_task(self._aplicar_update, tag)
+
+        self.page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                title=ft.Row(
+                    [ft.Icon(ft.Icons.SYSTEM_UPDATE, color=ft.Colors.PRIMARY),
+                     ft.Text("Actualización disponible", weight=ft.FontWeight.BOLD)],
+                    spacing=10,
+                ),
+                content=ft.Text(
+                    f"Hay una nueva versión ({tag}).\n\n"
+                    "Al aplicarla, la aplicación se cerrará y se volverá a abrir "
+                    "automáticamente ya actualizada. Guarda tus pendientes antes "
+                    "de continuar.",
+                ),
+                actions=[
+                    ft.TextButton("Ahora no", on_click=lambda e: self.page.pop_dialog()),
+                    ft.FilledButton("Aplicar actualización", icon=ft.Icons.SYSTEM_UPDATE,
+                                    on_click=aplicar),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+        )
+
+    async def _aplicar_update(self, tag: str) -> None:
+        """Descarga el instalador (en un hilo, con un diálogo de progreso) y lo
+        aplica: la app se cierra y se reinicia ya actualizada. Si la descarga
+        falla, se conserva la app y su estado (solo avisa)."""
+        from core.auto_updater import AutoUpdater
+
+        progreso = ft.AlertDialog(
+            modal=True,
+            content=ft.Row(
+                [
+                    ft.ProgressRing(width=28, height=28, stroke_width=3),
+                    ft.Text(f"Descargando e instalando la versión {tag}…\n"
+                            "La aplicación se reiniciará al terminar."),
+                ],
+                spacing=16, tight=True,
+            ),
+        )
+        self.page.show_dialog(progreso)
+        self.page.update()
+        try:
+            ruta = await asyncio.to_thread(AutoUpdater().buscar_y_descargar)
+        except Exception as exc:  # noqa: BLE001 — se reporta, la app sigue viva
+            self.page.pop_dialog()
+            self.avisar(f"No se pudo actualizar: {exc}", ft.Colors.RED_700)
+            return
+        if ruta is None:
+            self.page.pop_dialog()
+            self.avisar("Ya tienes la última versión instalada.", ft.Colors.GREEN_700)
+            return
+        # Descarga OK: aplica y cierra la app (no retorna; se reinicia sola).
+        AutoUpdater().aplicar_y_salir(ruta)
+
 
 def _pantalla_cargando(page: ft.Page, titulo: str, mensaje: str) -> None:
     """Splash centrado (spinner + título + mensaje) para que el usuario NUNCA vea
@@ -274,6 +368,32 @@ async def _splash_descargando(page: ft.Page, tag: str) -> None:
         f"Descargando e instalando la versión {tag}.\n"
         "La aplicación se reiniciará automáticamente al terminar.",
     )
+
+
+def _comprobar_update_sync() -> str | None:
+    """Chequeo SÍNCRONO (pensado para correr en un hilo): devuelve el tag de la
+    versión disponible o None. Solo en la app empaquetada con PAT; cualquier fallo
+    -> None (no molesta al usuario ni bloquea el arranque)."""
+    if not getattr(sys, "frozen", False):
+        return None
+    try:
+        from core import entorno
+        from core.auto_updater import AutoUpdater
+
+        if not entorno.github_pat(requerido=False):
+            return None
+        return AutoUpdater().hay_actualizacion()
+    except Exception:  # noqa: BLE001 — el chequeo nunca debe estorbar
+        return None
+
+
+async def _revisar_actualizacion_2do_plano(page: ft.Page, app: "AppTesoreria") -> None:
+    """Tras cargar la app, revisa en segundo plano (en un hilo, sin frenar nada)
+    si hay una versión nueva; si la hay, prende el botón de actualización para que
+    el usuario la aplique cuando quiera (no se instala a la fuerza)."""
+    tag = await asyncio.to_thread(_comprobar_update_sync)
+    if tag:
+        app.marcar_actualizacion_disponible(tag)
 
 
 _CLAVE_VENTANA = "ventana"
@@ -368,26 +488,27 @@ async def main(page: ft.Page) -> None:
     except Exception:  # noqa: BLE001 — la persistencia de ventana no es crítica
         pass
 
-    # 1) Chequeo de actualización PRIMERO e independiente del resto de la app. Si
-    #    hay nueva versión, la app se reinicia sola. Clave: al ir antes de
-    #    construir la app, si algún módulo quedara roto (import fallido), la app
-    #    igual puede autoactualizarse a una versión corregida en el próximo inicio.
-    if await _buscar_actualizaciones(page):
-        return
-
-    # 2) Construcción de la app real. Se mantiene el splash (ahora "Iniciando la
-    #    aplicación…") mientras se importan módulos pesados (OCR/Playwright) y se
-    #    arman las pantallas, que tarda unos segundos; así no hay ventana en
-    #    blanco. El 'await' cede el control para que el splash SÍ se pinte antes
-    #    de bloquear en la construcción (su spinner sigue animando en pantalla).
-    #    Si un import/arranque falla, se muestra una pantalla de error clara (en
-    #    vez del diálogo crudo "Unhandled exception in script").
+    # Construcción de la app real. Ya NO se fuerza la actualización al iniciar:
+    # la app arranca de inmediato en la versión instalada (arranque ágil) y la
+    # revisión de nuevas versiones se hace DESPUÉS, en segundo plano; el usuario
+    # decide cuándo aplicarla (botón de la barra superior). Se mantiene el splash
+    # "Iniciando la aplicación…" mientras se importan módulos pesados (OCR/
+    # Playwright) y se arman las pantallas; el 'await' cede el control para que el
+    # splash SÍ se pinte antes de bloquear en la construcción. Si un import/
+    # arranque falla, se muestra una pantalla de error clara con opción de
+    # reintentar / buscar actualización (por si el fix ya está publicado).
     _pantalla_cargando(page, "Herramientas Tesorería", "Iniciando la aplicación…")
     await asyncio.sleep(0.05)
     try:
-        _arrancar_app(page)
+        app = _arrancar_app(page)
     except Exception as exc:  # noqa: BLE001 — se reporta en pantalla, no se propaga
         _pantalla_error_arranque(page, exc)
+        return
+
+    # Revisión de actualizaciones en SEGUNDO PLANO (no frena el arranque): si hay
+    # una versión nueva, prende el botón de actualización para que el usuario la
+    # aplique cuando termine sus pendientes.
+    page.run_task(_revisar_actualizacion_2do_plano, page, app)
 
 
 def _configurar_taskbar(page: ft.Page) -> None:
@@ -413,10 +534,11 @@ def _configurar_taskbar(page: ft.Page) -> None:
         pass
 
 
-def _arrancar_app(page: ft.Page) -> None:
-    """Importa (de forma perezosa) y arranca la app completa. Se invoca dentro de
-    un try/except desde main() para que un módulo roto no tumbe el proceso antes
-    de que el updater haya podido correr."""
+def _arrancar_app(page: ft.Page) -> "AppTesoreria":
+    """Importa (de forma perezosa) y arranca la app completa. Devuelve la instancia
+    de AppTesoreria (para conectarle la revisión de actualizaciones). Se invoca
+    dentro de un try/except desde main() para que un módulo roto no tumbe el
+    proceso antes de que el updater haya podido correr."""
     from core import db, ocr
 
     db.inicializar()
@@ -432,7 +554,7 @@ def _arrancar_app(page: ft.Page) -> None:
             )
         )
 
-    AppTesoreria(page)
+    return AppTesoreria(page)
 
 
 def _pantalla_error_arranque(page: ft.Page, exc: Exception) -> None:

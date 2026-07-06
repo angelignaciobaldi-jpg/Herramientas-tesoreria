@@ -256,6 +256,17 @@ class AutoUpdater:
         self.aplicar_y_salir(ruta)  # no retorna: cierra la app y la reinicia
         return True
 
+    def hay_actualizacion(self) -> str | None:
+        """Devuelve el tag de la última release si es MÁS NUEVA que la versión
+        instalada (y no se marcó ya como aplicada, para no ofrecer una que
+        entraría en bucle); si no, None. Solo CONSULTA, no descarga nada. Útil
+        para avisar al usuario y que él decida cuándo aplicarla."""
+        release = self.obtener_release_latest()
+        tag = release.get("tag_name", "")
+        if not self.hay_version_mas_nueva(tag) or self._tag_ya_aplicado(tag):
+            return None
+        return tag
+
     # -------------------------------------------------- estado anti-bucle
     @staticmethod
     def _ruta_estado() -> str:
