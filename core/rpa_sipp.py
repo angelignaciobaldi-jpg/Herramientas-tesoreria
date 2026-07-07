@@ -666,11 +666,13 @@ class SesionSipp:
         danados = 0
         usados: set[str] = set()  # nombres ya usados (para no sobrescribir)
 
-        async def descargar(boton: Locator, _clave: str, hechos: int) -> None:
+        async def descargar(fila, _clave: str, hechos: int) -> None:
+            # `fila` es el ElementHandle (nodo físico) que _procesar_visibles fijó
+            # tras traerlo a la vista: nombre y clic caen sobre la MISMA fila.
             nonlocal descargados, danados
-            beneficiario = await self._beneficiario_de_fila(boton)
+            beneficiario = await self._beneficiario_de_fila(fila)
             estado = await self._descargar_un_anexo(
-                boton, carpeta_destino, hechos - 1, beneficiario, usados,
+                fila, carpeta_destino, hechos - 1, beneficiario, usados,
             )
             if estado == "ok":
                 descargados += 1
@@ -725,8 +727,22 @@ class SesionSipp:
     async def _procesar_visibles(self, botones_sel: str, vistas: set[str], accion) -> bool:
         """Procesa la PRIMERA fila nueva (con archivo) visible en la posición
         actual del grid y devuelve True (para volver a escanear). Devuelve False
-        si no hay ninguna fila nueva visible. `accion(boton, clave, hechos)` puede
-        ser None (solo contar)."""
+        si no hay ninguna fila nueva visible. `accion(fila, clave, hechos)` puede
+        ser None (solo contar).
+
+        Clave del correcto nombrado: el grid es un ngGrid VIRTUALIZADO que recicla
+        y reposiciona filas al hacer scroll. Un `botones.nth(i)` es un locator
+        POSICIONAL que se re-resuelve en cada uso: si entre leer el beneficiario y
+        hacer clic ocurre un scroll (p. ej. el scroll_into_view del clic sobre una
+        fila que estaba por debajo del borde —is_visible() no garantiza estar dentro
+        del viewport—), el índice i pasa a apuntar a OTRA fila y se descargaba el
+        anexo de un beneficiario con el nombre de otro (y se perdía la fila original).
+
+        Para evitarlo, en la pasada de descarga se trae la fila a la vista y se deja
+        asentar el grid ANTES de identificarla; luego se fija el nodo físico de la
+        fila (element_handle), y tanto la lectura del nombre como el clic se hacen
+        SOBRE ESE MISMO nodo. Así nombre y archivo provienen siempre de la misma
+        fila, aunque la virtualización recomponga el DOM."""
         page = self._exigir_pagina()
         botones = page.locator(botones_sel)
         n = await botones.count()
@@ -735,12 +751,29 @@ class SesionSipp:
             try:
                 if not await boton.is_visible():
                     continue
+                # Pre-chequeo barato (sin scroll) para saltar filas ya vistas: la
+                # clave se lee por innerText aunque la fila esté fuera del viewport.
                 clave = await self._clave_de_fila(boton)
                 if not clave or clave in vistas:
                     continue
+                if accion is None:
+                    # Pasada de conteo: no hay clic, así que no hace falta fijar el
+                    # nodo ni traerlo a la vista.
+                    vistas.add(clave)
+                    return True
+                # Pasada de descarga: primero traer la fila a la vista y dejar que
+                # el ngGrid termine de recomponer; DESPUÉS fijar el nodo físico y
+                # releer la clave sobre ese nodo (autoritativa tras el scroll).
+                await boton.scroll_into_view_if_needed()
+                await page.wait_for_timeout(150)
+                fila = await boton.element_handle()
+                if fila is None:
+                    continue
+                clave = await self._clave_de_fila(fila)
+                if not clave or clave in vistas:
+                    continue
                 vistas.add(clave)
-                if accion is not None:
-                    await accion(boton, clave, len(vistas))
+                await accion(fila, clave, len(vistas))
                 return True
             except Exception:  # noqa: BLE001 — una fila que falle no aborta el resto
                 await self._cerrar_modal_visor()
@@ -755,29 +788,47 @@ class SesionSipp:
         )
         await self._exigir_pagina().wait_for_timeout(350)
 
-    async def _clave_de_fila(self, boton: Locator) -> str:
+    async def _clave_de_fila(self, boton) -> str:
         """Clave única de la fila del botón: el texto de todas sus celdas unido.
-        Sirve para no descargar dos veces la misma fila al reciclarse el DOM."""
+        Sirve para no descargar dos veces la misma fila al reciclarse el DOM.
+
+        Acepta un Locator o un ElementHandle (ambos exponen .evaluate). Se resuelve
+        con un único JS atómico sobre el propio botón (closest('.ngRow')), para que
+        clave, beneficiario y clic provengan siempre de la MISMA fila física."""
         try:
-            fila = boton.locator("xpath=ancestor::*[contains(@class,'ngRow')][1]")
-            textos = await fila.locator(".ngCellText").all_inner_texts()
-            return " | ".join(t.strip() for t in textos)
+            return await boton.evaluate(
+                r"""(el) => {
+                    const row = el.closest('.ngRow');
+                    if (!row) return '';
+                    return [...row.querySelectorAll('.ngCellText')]
+                        .map(c => c.innerText.trim()).join(' | ');
+                }"""
+            )
         except Exception:  # noqa: BLE001
             return ""
 
-    async def _beneficiario_de_fila(self, boton: Locator) -> str:
+    async def _beneficiario_de_fila(self, boton) -> str:
         """Lee el nombre del beneficiario de la fila del botón 'Ver archivo'. En
         la grid del reporte es la 2ª columna ('Beneficiario'). Devuelve '' si no
-        se puede leer (para caer a otro nombre)."""
+        se puede leer (para caer a otro nombre).
+
+        Acepta un Locator o un ElementHandle. Lee la celda desde el propio botón
+        (closest('.ngRow')) para que el nombre corresponda EXACTAMENTE a la fila
+        cuyo anexo se va a descargar (mismo nodo físico que recibe el clic)."""
         try:
-            fila = boton.locator("xpath=ancestor::*[contains(@class,'ngRow')][1]")
-            celda = fila.locator(".ngCellText").nth(1)
-            return (await celda.inner_text()).strip()
+            return await boton.evaluate(
+                r"""(el) => {
+                    const row = el.closest('.ngRow');
+                    if (!row) return '';
+                    const celdas = row.querySelectorAll('.ngCellText');
+                    return celdas[1] ? celdas[1].innerText.trim() : '';
+                }"""
+            )
         except Exception:  # noqa: BLE001
             return ""
 
     async def _descargar_un_anexo(
-        self, boton: Locator, carpeta_destino: str, indice: int,
+        self, boton, carpeta_destino: str, indice: int,
         beneficiario: str = "", usados: set[str] | None = None,
     ) -> str:
         """Abre el 'Visor de Documentos' de un registro (modal #idFile_), descarga
@@ -795,7 +846,10 @@ class SesionSipp:
         Devuelve el estado: 'ok' (guardado válido) | 'invalido' (bajó dañado y se
         apartó en '_no_validos') | 'fallo' (no se pudo obtener el archivo)."""
         page = self._exigir_pagina()
-        await boton.scroll_into_view_if_needed()
+        # NO se hace scroll aquí: _procesar_visibles ya trajo la fila a la vista y
+        # fijó su nodo físico (element_handle). Un scroll en este punto recompondría
+        # el grid virtualizado y el clic podría caer en OTRA fila (descargando el
+        # anexo de un beneficiario con el nombre de otro). `boton` es ese mismo nodo.
         await boton.click()  # abre el modal 'Visor de Documentos' (#idFile_)
 
         modal = page.locator("#idFile_")
