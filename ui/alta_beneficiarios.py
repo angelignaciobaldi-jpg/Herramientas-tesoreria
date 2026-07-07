@@ -32,6 +32,7 @@ from ui.comun import (
 # Fondos de fila según la conciliación con el reporte de cuentas.
 SIN_COINCIDENCIA = ft.Colors.with_opacity(0.16, ft.Colors.RED)      # no coincide
 SUGERIDO_NOMBRE = ft.Colors.with_opacity(0.18, ft.Colors.AMBER)     # CLABE sugerida por nombre
+SOLO_REPORTE = ft.Colors.with_opacity(0.14, ft.Colors.BLUE)         # dato solo del reporte (sin estado de cuenta)
 
 
 class FilaBeneficiario:
@@ -39,11 +40,15 @@ class FilaBeneficiario:
 
     def __init__(self, seccion: "SeccionAltaBeneficiarios", id_: int | None, clabe: str,
                  beneficiario: str, alias: str, email: str, origen: str = "",
-                 monto: float | None = None, ruta_archivo: str | None = None):
+                 monto: float | None = None, ruta_archivo: str | None = None,
+                 desde_reporte: bool = False):
         self.seccion = seccion
         self.id = id_          # None mientras no se haya guardado en la base
         self.origen = origen   # nombre del archivo de origen (informativo)
         self.ruta_archivo = ruta_archivo  # ruta completa para previsualizar
+        # True si la fila se creó a partir del reporte (no hay estado de cuenta
+        # descargado). Se pinta en azul para distinguirla y su 'Ver archivo' avisa.
+        self.desde_reporte = desde_reporte
         # Estado de conciliación con el reporte de cuentas:
         #   None     -> no aplica (sin reporte importado)
         #   "ok"     -> la CLABE coincide con el reporte
@@ -227,12 +232,14 @@ class FilaBeneficiario:
 
     def marcar_conciliacion(self, estado: str | None) -> None:
         """Pinta la fila según la conciliación: rojo si no coincide; ámbar si la
-        CLABE se sugirió por nombre (revisar); sin color si coincide por CLABE o
-        si no hay reporte importado."""
+        CLABE se sugirió por nombre (revisar); azul si el dato viene solo del
+        reporte (sin estado de cuenta); sin color si coincide por CLABE o si no
+        hay reporte importado."""
         self.conciliacion = estado
         self.fila.color = (
             SIN_COINCIDENCIA if estado == "sin"
             else SUGERIDO_NOMBRE if estado == "nombre"
+            else SOLO_REPORTE if self.desde_reporte
             else None
         )
 
@@ -262,6 +269,8 @@ class SeccionAltaBeneficiarios:
         self.page = app.page
         self.picker = app.picker
         self.filas: list[FilaBeneficiario] = []
+        # Texto de la barra de búsqueda del listado (filtra por beneficiario/CLABE).
+        self.filtro_texto = ""
         # Reporte de cuentas importado (para conciliar). Vacío = no se subió.
         self.catalogo_reporte: dict[str, reporte_cuentas.CuentaReporte] = {}
         self.nombre_reporte = ""
@@ -302,6 +311,15 @@ class SeccionAltaBeneficiarios:
             icon=ft.Icons.CLOSE, tooltip="Quitar reporte (cancela la conciliación)",
             icon_color=GRIS, visible=False, on_click=self._quitar_reporte,
         )
+        # Registra en la tabla las cuentas del reporte que NO se descargaron como
+        # estado de cuenta (usa el reporte como fuente para no perder registros).
+        self.btn_completar_reporte = ft.OutlinedButton(
+            content="Registrar faltantes del reporte",
+            icon=ft.Icons.PLAYLIST_ADD, visible=False,
+            on_click=self._completar_desde_reporte,
+            tooltip="Agrega a la tabla las cuentas del reporte que no tienen estado "
+                    "de cuenta descargado, con su nombre, correo y tipo.",
+        )
         seccion_carga = tarjeta(
             "1. Cargar estados de cuenta",
             ft.Column(
@@ -324,15 +342,16 @@ class SeccionAltaBeneficiarios:
                         [
                             self.btn_reporte,
                             self.btn_quitar_reporte,
+                            self.btn_completar_reporte,
                             ft.Text(
                                 "Opcional: súbelo para conciliar las cuentas; se "
                                 "completa el nombre/correo y se marcan en rojo las "
                                 "que no aparezcan en el reporte.",
-                                color=GRIS, size=12, italic=True, expand=True,
+                                color=GRIS, size=12, italic=True,
                             ),
                         ],
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                        spacing=12,
+                        spacing=12, wrap=True,
                     ),
                     self.txt_estado_rep,
                 ],
@@ -416,12 +435,25 @@ class SeccionAltaBeneficiarios:
             wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
+        # Búsqueda dentro del listado + contador de registros (mejora la consulta).
+        self.tf_buscar = ft.TextField(
+            hint_text="Buscar por beneficiario, alias o CLABE…",
+            prefix_icon=ft.Icons.SEARCH, dense=True, expand=True,
+            on_change=self._filtrar,
+        )
+        self.txt_contador = ft.Text("0 registros", size=12, color=GRIS,
+                                    weight=ft.FontWeight.BOLD)
+        barra_busqueda = ft.Row(
+            [self.tf_buscar, self.txt_contador],
+            spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+        )
         seccion_tabla = tarjeta(
             "2. Revisión y edición de beneficiarios",
             ft.Column(
                 [
                     barra,
                     self._leyenda(),
+                    barra_busqueda,
                     ft.Row([self.tabla], scroll=ft.ScrollMode.AUTO),
                 ],
                 spacing=12,
@@ -666,9 +698,11 @@ class SeccionAltaBeneficiarios:
                             "Fila ámbar: CLABE sugerida por nombre (verifica)")
         chip_rojo = swatch(SIN_COINCIDENCIA, ROJO,
                           "Fila en rojo: sin coincidencia en el reporte")
+        chip_azul = swatch(SOLO_REPORTE, ft.Colors.BLUE,
+                          "Fila azul: dato del reporte (sin estado de cuenta)")
         return ft.Row(
             [ft.Text("Leyenda:", size=12, weight=ft.FontWeight.BOLD, color=GRIS),
-             *chips, chip_ambar, chip_rojo],
+             *chips, chip_ambar, chip_rojo, chip_azul],
             spacing=18,
             wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -676,12 +710,65 @@ class SeccionAltaBeneficiarios:
 
     # ========================================================= utilidades
     def _redibujar_tabla(self) -> None:
-        self.tabla.rows = [f.fila for f in self.filas]
+        visibles = self._filas_visibles()
+        self.tabla.rows = [f.fila for f in visibles]
         self._ajustar_anchos()
         self._remarcar_conciliacion()
         self._actualizar_resumen()
+        self._actualizar_contador(len(visibles))
+        self._actualizar_btn_completar()
         self._refrescar_candado_export()
         self.page.update()
+
+    # ----------------------------------------------- búsqueda / contador
+    def _filas_visibles(self) -> list[FilaBeneficiario]:
+        """Filas que pasan el filtro de la barra de búsqueda (por beneficiario,
+        alias o CLABE). Sin texto de búsqueda, devuelve todas."""
+        texto = self.filtro_texto
+        if not texto:
+            return self.filas
+        digitos = solo_digitos(texto)
+        visibles = []
+        for f in self.filas:
+            benef = (f.tf_benef.value or "").lower()
+            alias = (f.tf_alias.value or "").lower()
+            clabe = solo_digitos(f.tf_clabe.value)
+            if texto in benef or texto in alias or (digitos and digitos in clabe):
+                visibles.append(f)
+        return visibles
+
+    def _filtrar(self, _e=None) -> None:
+        """Aplica el texto de la barra de búsqueda y redibuja el listado."""
+        self.filtro_texto = (self.tf_buscar.value or "").strip().lower()
+        self._redibujar_tabla()
+
+    def _actualizar_contador(self, mostrados: int | None = None) -> None:
+        """Refresca el contador de registros del listado (total y, al filtrar,
+        cuántos se están mostrando)."""
+        total = len(self.filas)
+        if mostrados is None:
+            mostrados = len(self._filas_visibles())
+        if total == 0:
+            self.txt_contador.value = "0 registros"
+        elif mostrados == total:
+            self.txt_contador.value = f"{total} registro(s)"
+        else:
+            self.txt_contador.value = f"Mostrando {mostrados} de {total} registro(s)"
+
+    def _actualizar_btn_completar(self) -> None:
+        """Muestra el botón 'Registrar faltantes del reporte' con la cuenta de
+        cuentas del reporte que aún no están en la tabla."""
+        if not self.catalogo_reporte:
+            self.btn_completar_reporte.visible = False
+            return
+        existentes = {solo_digitos(f.tf_clabe.value) for f in self.filas}
+        faltan = sum(1 for clabe in self.catalogo_reporte if clabe not in existentes)
+        self.btn_completar_reporte.visible = True
+        self.btn_completar_reporte.disabled = faltan == 0
+        self.btn_completar_reporte.content = (
+            f"Registrar faltantes del reporte ({faltan})" if faltan
+            else "Reporte completo (sin faltantes)"
+        )
 
     # ======================================================== conciliación
     async def _importar_reporte(self, _e) -> None:
@@ -717,6 +804,7 @@ class SeccionAltaBeneficiarios:
         self.catalogo_reporte = {}
         self.nombre_reporte = ""
         self.btn_quitar_reporte.visible = False
+        self.btn_completar_reporte.visible = False
         self.txt_estado_rep.value = ""
         for f in self.filas:
             f.marcar_conciliacion(None)
@@ -799,6 +887,40 @@ class SeccionAltaBeneficiarios:
         else:
             fila.marcar_conciliacion("sin")
             fila.set_tipo("")
+
+    def _completar_desde_reporte(self, _e=None) -> None:
+        """Usa el reporte como fuente: agrega a la tabla las cuentas del reporte
+        que NO tienen un estado de cuenta cargado (comparando por CLABE), con su
+        nombre, correo y tipo. Así, si el RPA descargó menos anexos que registros
+        hay en el reporte, esos faltantes quedan igualmente registrados."""
+        if not self.catalogo_reporte:
+            self.avisar("Primero importa el reporte de cuentas (Excel).", ROJO)
+            return
+        existentes = {solo_digitos(f.tf_clabe.value) for f in self.filas}
+        faltantes = [
+            rep for clabe, rep in self.catalogo_reporte.items()
+            if clabe not in existentes
+        ]
+        if not faltantes:
+            self.avisar(
+                "No hay faltantes: todas las cuentas del reporte ya están en la tabla.",
+                GRIS,
+            )
+            return
+        for rep in faltantes:
+            fila = FilaBeneficiario(
+                self, None, rep.clabe, rep.beneficiario, rep.beneficiario,
+                rep.correo, origen="(reporte)", desde_reporte=True,
+            )
+            fila.set_tipo(rep.tipo)
+            fila.marcar_conciliacion("ok")  # coincide por CLABE; se pinta en azul
+            self.filas.append(fila)
+        self._redibujar_tabla()
+        self.avisar(
+            f"{len(faltantes)} registro(s) agregados desde el reporte (en azul, sin "
+            "estado de cuenta). Revisa el monto y guárdalos.",
+            VERDE,
+        )
 
     def _cambio_formato_export(self, _e=None) -> None:
         """Ajusta el botón de exportar según el formato elegido."""
