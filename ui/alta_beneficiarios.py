@@ -29,6 +29,14 @@ from ui.comun import (
     tarjeta, validar,
 )
 
+# Tipos de beneficiario que el RPA puede filtrar en el reporte del SIPP.
+# (etiqueta visible, clave de coincidencia que usa el RPA para marcar la opción).
+TIPOS_BENEFICIARIO = [
+    ("Proveedores", "proveedor"),
+    ("Acreedores Diversos", "acreedor"),
+    ("Deudores Diversos", "deudor"),
+]
+
 # Fondos de fila según la conciliación con el reporte de cuentas.
 SIN_COINCIDENCIA = ft.Colors.with_opacity(0.16, ft.Colors.RED)      # no coincide
 SUGERIDO_NOMBRE = ft.Colors.with_opacity(0.18, ft.Colors.AMBER)     # CLABE sugerida por nombre
@@ -496,6 +504,16 @@ class SeccionAltaBeneficiarios:
             on_click=self._iniciar_rpa_anexos,
         )
         self.anillo_rpa = ft.ProgressRing(width=18, height=18, stroke_width=2, visible=False)
+        # Selector de tipos de beneficiario a descargar (uno, dos o los tres).
+        # Arrancan los tres activos (comportamiento previo: descarga todo). El
+        # estado vive en _tipos_val; se edita en un diálogo que abre el campo
+        # 'tf_tipos', para que se vea como un desplegable (igual que las fechas).
+        self._tipos_val = {clave: True for _etq, clave in TIPOS_BENEFICIARIO}
+        self.tf_tipos = ft.TextField(
+            label="Tipos de beneficiario", width=240, read_only=True,
+            value=self._resumen_tipos(), suffix_icon=ft.Icons.ARROW_DROP_DOWN,
+            on_click=lambda e: self._abrir_selector_tipos(),
+        )
         # Barra de avance de la descarga de anexos (determinada: hechos/total).
         # Oculta hasta que empieza la descarga y se conoce el total de registros.
         self.pb_rpa = ft.ProgressBar(width=360, value=0, visible=False)
@@ -505,14 +523,15 @@ class SeccionAltaBeneficiarios:
             ft.Column(
                 [
                     ft.Row(
-                        [self.tf_rpa_ini, self.tf_rpa_fin, self.btn_rpa, self.anillo_rpa],
+                        [self.tf_tipos, self.tf_rpa_ini, self.tf_rpa_fin,
+                         self.btn_rpa, self.anillo_rpa],
                         spacing=12, wrap=True,
                         vertical_alignment=ft.CrossAxisAlignment.CENTER,
                     ),
                     ft.Text(
                         f"Entra al SIPP con las credenciales de Configuración, empresa "
-                        f"{self.RPA_EMPRESA} / sucursal {self.RPA_SUCURSAL}, filtra "
-                        "todos los tipos de beneficiario por el rango de fechas y "
+                        f"{self.RPA_EMPRESA} / sucursal {self.RPA_SUCURSAL}, filtra los "
+                        "tipos de beneficiario elegidos por el rango de fechas y "
                         "descarga los anexos.",
                         color=GRIS, size=12, italic=True,
                     ),
@@ -529,10 +548,56 @@ class SeccionAltaBeneficiarios:
             campo.value = dp.value.strftime("%d/%m/%Y")
             self.page.update()
 
+    def _tipos_seleccionados(self) -> list[str]:
+        """Claves de los tipos de beneficiario activos en el selector."""
+        return [clave for _etq, clave in TIPOS_BENEFICIARIO if self._tipos_val.get(clave)]
+
+    def _resumen_tipos(self) -> str:
+        """Texto que muestra el campo desplegable según los tipos elegidos."""
+        seleccion = [etq for etq, clave in TIPOS_BENEFICIARIO if self._tipos_val.get(clave)]
+        if not seleccion:
+            return "Ninguno"
+        if len(seleccion) == len(TIPOS_BENEFICIARIO):
+            return "Todos los tipos"
+        if len(seleccion) == 1:
+            return seleccion[0]
+        return f"{len(seleccion)} tipos seleccionados"
+
+    def _marcar_tipo(self, clave: str, valor: bool) -> None:
+        self._tipos_val[clave] = bool(valor)
+
+    def _abrir_selector_tipos(self) -> None:
+        """Despliega las opciones de tipo de beneficiario (casillas) en un diálogo.
+        Al cerrar, refleja la selección en el campo desplegable."""
+        casillas = [
+            ft.Checkbox(
+                label=etq, value=self._tipos_val.get(clave),
+                on_change=lambda e, c=clave: self._marcar_tipo(c, e.control.value),
+            )
+            for etq, clave in TIPOS_BENEFICIARIO
+        ]
+
+        def cerrar(_e=None):
+            self.tf_tipos.value = self._resumen_tipos()
+            self.page.pop_dialog()
+            self.page.update()
+
+        self.page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                title=ft.Text("Tipos de beneficiario a descargar"),
+                content=ft.Container(
+                    content=ft.Column(casillas, tight=True, spacing=2),
+                    width=320,
+                ),
+                actions=[ft.FilledButton("Listo", on_click=cerrar)],
+            )
+        )
+
     async def _iniciar_rpa_anexos(self, _e) -> None:
-        """Lanza el RPA: login en el SIPP, filtra todos los tipos de beneficiario
-        por el rango de fechas y descarga los anexos en la carpeta que elija el
-        usuario."""
+        """Lanza el RPA: login en el SIPP, filtra los tipos de beneficiario
+        elegidos por el rango de fechas y descarga los anexos en la carpeta que
+        elija el usuario."""
         usuario, contrasena = self.app.config.credenciales()
         if not usuario or not contrasena:
             self.avisar("Captura usuario y contraseña en Configuración (ícono ⚙).", ROJO)
@@ -541,6 +606,10 @@ class SeccionAltaBeneficiarios:
         ff = solo_digitos(self.tf_rpa_fin.value)
         if len(fi) != 8 or len(ff) != 8:
             self.avisar("Captura fecha inicio y fecha fin (DD/MM/AAAA).", ROJO)
+            return
+        tipos = self._tipos_seleccionados()
+        if not tipos:
+            self.avisar("Selecciona al menos un tipo de beneficiario a descargar.", ROJO)
             return
         carpeta = await self.picker.get_directory_path(
             dialog_title="Carpeta donde guardar los anexos descargados",
@@ -574,7 +643,7 @@ class SeccionAltaBeneficiarios:
         self.page.update()
         try:
             descargados, danados = await self._correr_rpa_anexos(
-                usuario, contrasena, fi, ff, carpeta,
+                usuario, contrasena, fi, ff, carpeta, tipos,
             )
         except ErrorSipp as exc:
             await self._cerrar_sesion_rpa()
@@ -608,7 +677,9 @@ class SeccionAltaBeneficiarios:
             color = NARANJA
         self._fin_rpa(mensaje, color)
 
-    async def _correr_rpa_anexos(self, usuario, contrasena, fi, ff, carpeta) -> tuple[int, int]:
+    async def _correr_rpa_anexos(
+        self, usuario, contrasena, fi, ff, carpeta, tipos,
+    ) -> tuple[int, int]:
         """Ejecuta todo el flujo del RPA en el bucle del hilo dedicado (Playwright
         requiere que todo corra en el mismo loop). Devuelve (descargados, dañados)."""
         if self.bucle_rpa is None:
@@ -621,7 +692,7 @@ class SeccionAltaBeneficiarios:
             await sesion.login(usuario, contrasena)
             await sesion.seleccionar_empresa_sucursal(self.RPA_EMPRESA, self.RPA_SUCURSAL)
             return await sesion.descargar_anexos_beneficiarios(
-                fi, ff, carpeta, progreso=self._progreso_rpa,
+                fi, ff, carpeta, tipos=tipos, progreso=self._progreso_rpa,
             )
 
         return await asyncio.wrap_future(self.bucle_rpa.enviar(flujo()))
