@@ -65,6 +65,25 @@ class SeccionConfiguracion:
         )
         self._actualizar_estado_cuentas()
 
+        # Apartado "Impresión de cheques": hoja de calibración para ubicar el
+        # cheque sobre la hoja portadora (ver core/impresion.py).
+        impresion_apartado = ft.Column(
+            [
+                ft.Text("Impresión de cheques", size=15, weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    "Imprime una hoja con cuadrícula milimétrica y las esquinas "
+                    "identificadas (SI/SD/II/ID) para calibrar la posición del "
+                    "cheque. Sale a escala real (1:1).",
+                    size=12, color=GRIS,
+                ),
+                ft.OutlinedButton(
+                    "Imprimir hoja de calibración", icon=ft.Icons.PRINT,
+                    on_click=self._imprimir_calibracion, width=_ANCHO,
+                ),
+            ],
+            spacing=10, tight=True,
+        )
+
         self.dialogo = ft.AlertDialog(
             modal=True,
             # Encabezado: título grande en negritas + botón "X" para cerrar.
@@ -80,8 +99,12 @@ class SeccionConfiguracion:
                 width=_ANCHO,
             ),
             content=ft.Column(
-                [credenciales_apartado, ft.Divider(), cuentas_apartado],
-                spacing=18, tight=True, width=_ANCHO,
+                [
+                    credenciales_apartado, ft.Divider(),
+                    cuentas_apartado, ft.Divider(),
+                    impresion_apartado,
+                ],
+                spacing=18, tight=True, width=_ANCHO, scroll=ft.ScrollMode.AUTO,
             ),
             actions=[
                 ft.FilledButton("Aceptar", icon=ft.Icons.CHECK, on_click=self._guardar),
@@ -95,6 +118,23 @@ class SeccionConfiguracion:
 
     def _cerrar(self, _e=None) -> None:
         self.page.pop_dialog()
+
+    # ---------------------------------------------- impresión de cheques
+    def _imprimir_calibracion(self, _e=None) -> None:
+        """Abre el diálogo de impresión para la hoja de calibración."""
+        from core import impresion
+        from ui.dialogo_impresion import DialogoImpresion
+
+        DialogoImpresion(
+            self.app,
+            titulo="Imprimir hoja de calibración",
+            mensaje=(
+                "Se imprimirá una hoja de calibración para cheques.\n"
+                "¿Realizar la impresión?"
+            ),
+            clave_pref="impresora_cheques",
+            al_imprimir=impresion.imprimir_hoja_calibracion,
+        ).abrir()
 
     def _guardar(self, _e=None) -> None:
         """Guarda las credenciales (la contraseña, cifrada)."""
