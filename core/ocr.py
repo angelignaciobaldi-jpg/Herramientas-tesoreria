@@ -15,12 +15,19 @@ from __future__ import annotations
 import io
 import os
 import re
+import shutil
+import subprocess
+import tempfile
+import time
 
 import fitz  # PyMuPDF
 import pytesseract
 from PIL import Image
 
 from . import rutas
+
+# En Windows, evita que el tesseract.exe que lanzamos abra una ventana de consola.
+_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 # Caracteres "normales" esperables en un documento en español. Si la capa de
 # texto de un PDF trae muy pocos de estos (codificación de fuente rota, p. ej.
@@ -79,6 +86,15 @@ class OCRNoDisponible(RuntimeError):
     """Se requiere OCR pero el binario de Tesseract no está disponible."""
 
 
+class OCRCancelado(RuntimeError):
+    """Se abortó el análisis porque quien llamó pidió cancelar (ver `cancelado`).
+
+    El OCR de un documento puede durar bastante (rasteriza y pasa Tesseract por
+    CADA página). Para poder detenerlo de verdad, las funciones públicas aceptan
+    un `cancelado()` que se consulta entre páginas: al devolver True se corta al
+    momento en vez de seguir procesando el resto del documento."""
+
+
 def tesseract_disponible() -> bool:
     try:
         pytesseract.get_tesseract_version()
@@ -105,7 +121,17 @@ def idioma_ocr() -> str:
     return "eng"
 
 
-def _ocr_imagen(img: Image.Image, psm: int | None = None) -> str:
+def _ocr_imagen(img: Image.Image, psm: int | None = None, cancelado=None) -> str:
+    """Aplica OCR a una imagen lanzando tesseract como subproceso PROPIO, para
+    poder MATARLO si `cancelado()` pasa a True.
+
+    Se hace así (en vez de pytesseract.image_to_string) porque el tesseract que
+    lanza pytesseract no lo controlamos: al abandonar el hilo de una carga
+    detenida, ese proceso seguiría ocupando la CPU hasta terminar la página,
+    retrasando la reanudación. Aquí, al detener, matamos el proceso al instante.
+
+    Devuelve el mismo texto que pytesseract (saltos de línea normalizados a '\\n').
+    """
     if not tesseract_disponible():
         raise OCRNoDisponible(
             "Se necesita OCR pero no se encontró Tesseract. Instálalo o "
@@ -113,8 +139,39 @@ def _ocr_imagen(img: Image.Image, psm: int | None = None) -> str:
         )
     if img.mode not in ("L", "RGB"):
         img = img.convert("RGB")
-    config = f"--psm {psm}" if psm is not None else ""
-    return pytesseract.image_to_string(img, lang=idioma_ocr(), config=config)
+    # Entrada y salida en archivos temporales (igual que pytesseract): evita el
+    # pipe de stdout, cuyo buffer podría bloquear a tesseract si no se lee mientras
+    # sondeamos la cancelación.
+    tmpdir = tempfile.mkdtemp()
+    entrada = os.path.join(tmpdir, "in.png")
+    base_salida = os.path.join(tmpdir, "out")
+    img.save(entrada, format="PNG")
+    proc = None
+    try:
+        cmd = [pytesseract.pytesseract.tesseract_cmd, entrada, base_salida,
+               "-l", idioma_ocr()]
+        if psm is not None:
+            cmd += ["--psm", str(psm)]
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            creationflags=_CREATE_NO_WINDOW,
+        )
+        # Se sondea cada 50 ms; si piden cancelar, se mata tesseract al momento.
+        while proc.poll() is None:
+            if cancelado is not None and cancelado():
+                proc.kill()
+                proc.wait()
+                raise OCRCancelado()
+            time.sleep(0.05)
+        with open(base_salida + ".txt", "r", encoding="utf-8", errors="replace") as fh:
+            texto = fh.read()
+        # tesseract escribe LF en el .txt, pero se normaliza por si acaso, para dar
+        # exactamente el mismo texto que daba pytesseract.
+        return texto.replace("\r\n", "\n").replace("\r", "\n")
+    finally:
+        if proc is not None and proc.poll() is None:
+            proc.kill()
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def _texto_confiable(texto: str) -> bool:
@@ -125,12 +182,22 @@ def _texto_confiable(texto: str) -> bool:
     return normales / len(texto) >= _UMBRAL_TEXTO_CONFIABLE
 
 
-def _ocr_pagina(pagina: "fitz.Page", psm: int | None = None) -> str:
+def _ocr_pagina(pagina: "fitz.Page", psm: int | None = None, cancelado=None) -> str:
     pix = pagina.get_pixmap(dpi=_DPI_OCR)
-    return _ocr_imagen(Image.open(io.BytesIO(pix.tobytes("png"))), psm=psm)
+    # Rasterizar ya costó; antes de pagar el Tesseract de esta página, se mira si
+    # entretanto pidieron cancelar. El propio _ocr_imagen también es cancelable
+    # (mata tesseract si se detiene a media página).
+    if cancelado is not None and cancelado():
+        raise OCRCancelado()
+    # Imagen directa desde los píxeles del pixmap (sin round-trip a PNG): evita dos
+    # codificaciones/decodificaciones PNG por página (más rápido).
+    modo = "RGBA" if pix.alpha else "RGB"
+    img = Image.frombytes(modo, (pix.width, pix.height), pix.samples)
+    return _ocr_imagen(img, psm=psm, cancelado=cancelado)
 
 
-def _texto_pdf(ruta: str, forzar_ocr: bool = False, psm: int | None = None) -> tuple[str, bool]:
+def _texto_pdf(ruta: str, forzar_ocr: bool = False, psm: int | None = None,
+               cancelado=None) -> tuple[str, bool]:
     """Devuelve (texto, se_uso_ocr) para un PDF.
 
     Usa la capa de texto del PDF si es legible; si la página no tiene texto, su
@@ -138,21 +205,27 @@ def _texto_pdf(ruta: str, forzar_ocr: bool = False, psm: int | None = None) -> t
     útil cuando la capa de texto trae solo "ruido" (p. ej. la impresión de un
     correo de Outlook) y el estado de cuenta real está como imagen. Con psm se
     fuerza siempre OCR usando ese modo de segmentación de página.
+
+    `cancelado` (opcional): se consulta ANTES de cada página; si devuelve True se
+    lanza OCRCancelado y no se procesa el resto del documento.
     """
     partes: list[str] = []
     uso_ocr = False
     with fitz.open(ruta) as doc:
         for pagina in doc:
+            if cancelado is not None and cancelado():
+                raise OCRCancelado(ruta)
             texto = pagina.get_text("text") or ""
             if psm is None and not forzar_ocr and _texto_confiable(texto):
                 partes.append(texto)
             else:
-                partes.append(_ocr_pagina(pagina, psm=psm))
+                partes.append(_ocr_pagina(pagina, psm=psm, cancelado=cancelado))
                 uso_ocr = True
     return "\n".join(partes), uso_ocr
 
 
-def extraer_texto(ruta: str, forzar_ocr: bool = False, psm: int | None = None) -> tuple[str, bool]:
+def extraer_texto(ruta: str, forzar_ocr: bool = False, psm: int | None = None,
+                  cancelado=None) -> tuple[str, bool]:
     """Extrae el texto de un estado de cuenta.
 
     Args:
@@ -161,6 +234,9 @@ def extraer_texto(ruta: str, forzar_ocr: bool = False, psm: int | None = None) -
             todas las páginas (útil cuando la capa de texto es solo ruido).
         psm: modo de segmentación de página de Tesseract. Si se indica, fuerza
             OCR con ese modo (p. ej. 11 = "texto disperso", útil para tablas).
+        cancelado: callable sin argumentos consultado entre páginas; si devuelve
+            True se aborta con OCRCancelado (para poder detener una carga sin
+            esperar a que termine el documento entero).
 
     Returns:
         (texto, se_uso_ocr): el texto plano del documento y si hubo que
@@ -170,23 +246,27 @@ def extraer_texto(ruta: str, forzar_ocr: bool = False, psm: int | None = None) -
         FileNotFoundError: si la ruta no existe.
         ValueError: si la extensión no es compatible.
         OCRNoDisponible: si se requería OCR pero Tesseract no está disponible.
+        OCRCancelado: si `cancelado()` devolvió True durante el análisis.
     """
     if not os.path.exists(ruta):
         raise FileNotFoundError(ruta)
 
     ext = os.path.splitext(ruta)[1].lower()
     if ext == ".pdf":
-        texto, uso_ocr = _texto_pdf(ruta, forzar_ocr=forzar_ocr, psm=psm)
+        texto, uso_ocr = _texto_pdf(ruta, forzar_ocr=forzar_ocr, psm=psm,
+                                    cancelado=cancelado)
         return _normalizar(texto), uso_ocr
     if ext in (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".bmp"):
-        return _normalizar(_ocr_imagen(Image.open(ruta), psm=psm)), True
+        if cancelado is not None and cancelado():
+            raise OCRCancelado(ruta)
+        return _normalizar(_ocr_imagen(Image.open(ruta), psm=psm, cancelado=cancelado)), True
     raise ValueError(f"Extensión no soportada: {ext}")
 
 
-def texto_disperso(ruta: str) -> str:
+def texto_disperso(ruta: str, cancelado=None) -> str:
     """OCR en modo 'texto disperso' (PSM 11). Recupera números/CLABE que la
     segmentación normal de página omite (p. ej. la celda de una tabla en una
     carta de asignación de cuenta). Pierde el orden de lectura, por eso se usa
     solo como último recurso cuando no se halló la CLABE de otra forma."""
-    texto, _ = extraer_texto(ruta, forzar_ocr=True, psm=11)
+    texto, _ = extraer_texto(ruta, forzar_ocr=True, psm=11, cancelado=cancelado)
     return texto
