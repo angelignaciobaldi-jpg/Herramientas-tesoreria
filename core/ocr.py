@@ -95,30 +95,62 @@ class OCRCancelado(RuntimeError):
     momento en vez de seguir procesando el resto del documento."""
 
 
+# Caché de las comprobaciones de Tesseract. Además de ahorrar trabajo, evita que
+# se relance tesseract por CADA OCR: esas comprobaciones, hechas con pytesseract,
+# abrían una ventana de consola que parpadeaba en pantalla (una por análisis, y
+# varias a la vez con el OCR en paralelo).
+_tess_disponible: bool | None = None
+_tess_idioma: str | None = None
+
+
+def _run_tesseract_oculto(args: list[str], timeout: int = 20) -> "subprocess.CompletedProcess":
+    """Ejecuta tesseract capturando la salida y SIN abrir ventana de consola
+    (creationflags en Windows). Se usa para las comprobaciones (versión/idiomas)
+    en lugar de pytesseract, cuyas llamadas abren una consola que parpadea."""
+    return subprocess.run(
+        args, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        creationflags=_CREATE_NO_WINDOW, timeout=timeout,
+    )
+
+
 def tesseract_disponible() -> bool:
-    try:
-        pytesseract.get_tesseract_version()
-        return True
-    except Exception:
-        return False
+    """True si el binario de Tesseract responde. Se comprueba UNA vez y se cachea:
+    evita relanzar tesseract (y su parpadeo de consola) en cada OCR."""
+    global _tess_disponible
+    if _tess_disponible is None:
+        try:
+            r = _run_tesseract_oculto(
+                [pytesseract.pytesseract.tesseract_cmd, "--version"])
+            _tess_disponible = r.returncode == 0
+        except Exception:  # noqa: BLE001 — binario ausente/ruta mala -> no disponible
+            _tess_disponible = False
+    return _tess_disponible
 
 
 def idioma_ocr() -> str:
-    """Devuelve 'spa+eng' si el idioma español está disponible; si no, 'eng'.
+    """'spa+eng' si el modelo de español está disponible; si no, 'eng'. Se cachea.
 
-    Se comprueba la existencia del archivo del modelo en lugar de llamar a
-    pytesseract.get_languages(), porque ese comando falla al decodificar rutas
-    con acentos (p. ej. la carpeta 'tesorería').
+    Se prioriza comprobar el archivo del modelo (spa.traineddata) en vez de
+    preguntar a tesseract: además de ser más rápido, evita abrir consola y no
+    falla con rutas con acentos (p. ej. la carpeta 'tesorería').
     """
+    global _tess_idioma
+    if _tess_idioma is not None:
+        return _tess_idioma
     carpeta = os.environ.get("TESSDATA_PREFIX", "")
     if carpeta and os.path.exists(os.path.join(carpeta, "spa.traineddata")):
-        return "spa+eng"
+        _tess_idioma = "spa+eng"
+        return _tess_idioma
     try:
-        if "spa" in pytesseract.get_languages(config=""):
-            return "spa+eng"
-    except Exception:
+        r = _run_tesseract_oculto(
+            [pytesseract.pytesseract.tesseract_cmd, "--list-langs"])
+        if b"spa" in (r.stdout or b"") or b"spa" in (r.stderr or b""):
+            _tess_idioma = "spa+eng"
+            return _tess_idioma
+    except Exception:  # noqa: BLE001
         pass
-    return "eng"
+    _tess_idioma = "eng"
+    return _tess_idioma
 
 
 def _ocr_imagen(img: Image.Image, psm: int | None = None, cancelado=None) -> str:
