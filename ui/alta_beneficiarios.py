@@ -37,6 +37,27 @@ TIPOS_BENEFICIARIO = [
     ("Deudores Diversos", "deudor"),
 ]
 
+class _CargaDetenida(Exception):
+    """Señal interna: el usuario pulsó 'Detener' mientras se analizaba un archivo.
+    El archivo en proceso se descarta y vuelve a la cola de pendientes."""
+
+
+class _TokenCarga:
+    """Testigo de cancelación de UNA corrida de carga.
+
+    Cada corrida tiene el suyo. Es clave que no sea una bandera compartida: al
+    detener, el OCR del archivo en curso queda huérfano en su hilo (no se puede
+    matar un hilo en Python) y va consultando este testigo para salirse. Si el
+    testigo se reiniciara al arrancar la siguiente corrida, ese OCR huérfano
+    creería que ya no está cancelado y seguiría analizando el documento entero,
+    compitiendo por la CPU y retrasando la reanudación."""
+
+    __slots__ = ("cancelado",)
+
+    def __init__(self) -> None:
+        self.cancelado = False
+
+
 # Fondos de fila según la conciliación con el reporte de cuentas.
 SIN_COINCIDENCIA = ft.Colors.with_opacity(0.16, ft.Colors.RED)      # no coincide
 SUGERIDO_NOMBRE = ft.Colors.with_opacity(0.18, ft.Colors.AMBER)     # CLABE sugerida por nombre
@@ -279,6 +300,13 @@ class SeccionAltaBeneficiarios:
         self.filas: list[FilaBeneficiario] = []
         # Texto de la barra de búsqueda del listado (filtra por beneficiario/CLABE).
         self.filtro_texto = ""
+        # Control de la carga de estados de cuenta (para poder detener/reanudar):
+        # _cargando indica que hay una carga en curso; _token_carga es el testigo
+        # de cancelación de esa corrida; _rutas_pendientes guarda los que faltaron
+        # al detener, para reanudar desde el último capturado.
+        self._cargando = False
+        self._token_carga: _TokenCarga | None = None
+        self._rutas_pendientes: list[str] = []
         # Reporte de cuentas importado (para conciliar). Vacío = no se subió.
         self.catalogo_reporte: dict[str, reporte_cuentas.CuentaReporte] = {}
         self.nombre_reporte = ""
@@ -308,6 +336,19 @@ class SeccionAltaBeneficiarios:
             icon=ft.Icons.FOLDER_OPEN,
             on_click=self._seleccionar_carpeta,
         )
+        # Detener la carga en curso (visible solo mientras se procesa) y reanudar
+        # desde el último registro capturado (visible solo si quedaron pendientes).
+        self.btn_detener_carga = ft.OutlinedButton(
+            content="Detener", icon=ft.Icons.STOP_CIRCLE_OUTLINED, visible=False,
+            on_click=self._detener_carga, style=ft.ButtonStyle(color=ROJO),
+            tooltip="Detiene la carga de inmediato. Los archivos ya cargados se "
+                    "conservan; el que se estaba analizando y los que faltan quedan "
+                    "pendientes para reanudar.",
+        )
+        self.btn_reanudar_carga = ft.FilledButton(
+            content="Reanudar carga", icon=ft.Icons.PLAY_ARROW, visible=False,
+            on_click=self._reanudar_carga,
+        )
         # Importación del reporte de cuentas (Excel) para conciliar.
         self.txt_estado_rep = ft.Text("", color=GRIS, size=12)
         self.btn_reporte = ft.OutlinedButton(
@@ -336,6 +377,8 @@ class SeccionAltaBeneficiarios:
                         [
                             self.btn_cargar,
                             self.btn_cargar_carpeta,
+                            self.btn_detener_carga,
+                            self.btn_reanudar_carga,
                             self.anillo,
                             ft.Text("Selecciona varios archivos, o carga una carpeta "
                                     "completa (recomendado para la carpeta del RPA).",
@@ -1098,64 +1141,166 @@ class SeccionAltaBeneficiarios:
             return
         await self._procesar_archivos(rutas)
 
+    def _detener_carga(self, _e=None) -> None:
+        """Corta la carga de inmediato: el análisis del archivo en proceso se
+        abandona (no se agrega a la tabla) y vuelve a la cola de pendientes junto
+        con los que faltan. Los archivos ya cargados se conservan."""
+        if not self._cargando or self._token_carga is None:
+            return
+        self._token_carga.cancelado = True
+        self.btn_detener_carga.disabled = True
+        self.btn_detener_carga.content = "Deteniendo…"
+        self.page.update()
+
+    async def _ocr_cancelable(self, token: "_TokenCarga", func, ruta, *extra):
+        """Corre `func` (OCR, pesado) en un hilo pasándole el callback de
+        cancelación de ESTA corrida.
+
+        El OCR es cancelable de verdad: consulta `cancelado` entre páginas y, sobre
+        todo, MATA el proceso tesseract si se detiene (ver core.ocr). Por eso el
+        hilo termina casi enseguida al pulsar Detener; se ESPERA su fin (no se
+        abandona, así no quedan hilos ni tesseract huérfanos ocupando CPU) y se
+        traduce OCRCancelado en _CargaDetenida para dejar el archivo pendiente.
+
+        Se usa el `token` de la corrida (no una bandera compartida) para que, si
+        alguna vez quedara un hilo colgado, siga viendo SU cancelación y no estorbe
+        a una corrida posterior."""
+        try:
+            return await asyncio.to_thread(
+                func, ruta, *extra, cancelado=lambda: token.cancelado)
+        except ocr.OCRCancelado:
+            raise _CargaDetenida()
+
+    async def _reanudar_carga(self, _e=None) -> None:
+        """Continúa la carga con los archivos que quedaron pendientes al detener."""
+        pendientes = self._rutas_pendientes
+        if not pendientes:
+            return
+        self._rutas_pendientes = []
+        self.btn_reanudar_carga.visible = False
+        await self._procesar_archivos(pendientes)
+
+    async def _ocr_archivo(self, token: "_TokenCarga", ruta: str) -> "FilaBeneficiario":
+        """Analiza UN estado de cuenta (OCR + extracción) y devuelve su fila.
+        Lanza _CargaDetenida si se detuvo la carga a media marcha (para que el
+        archivo quede pendiente). Aísla el trabajo de un archivo para poder correr
+        varios en paralelo desde _procesar_archivos."""
+        nombre = os.path.basename(ruta)
+        texto, uso_ocr = await self._ocr_cancelable(token, ocr.extraer_texto, ruta)
+        datos = extraer_datos(texto)
+        # Si la capa de texto no dio nada útil (p. ej. impresión de un correo de
+        # Outlook con el estado como imagen), forzar OCR.
+        if not datos.clabe and not datos.beneficiario and not uso_ocr:
+            texto, _ = await self._ocr_cancelable(token, ocr.extraer_texto, ruta, True)
+            datos = extraer_datos(texto)
+        # Último recurso para la CLABE: OCR en modo "texto disperso", que recupera
+        # números en tablas/celdas que la segmentación normal omite (p. ej. la
+        # tabla de una carta de asignación de cuenta).
+        if not datos.clabe:
+            texto_sp = await self._ocr_cancelable(token, ocr.texto_disperso, ruta)
+            clabes_sp = extraer_clabes(texto_sp)
+            if clabes_sp:
+                datos.clabe = clabes_sp[0]
+                datos.banco = banco_desde_clabe(datos.clabe)
+        # El nombre del archivo (si parece nombre de persona) es la fuente más
+        # confiable del beneficiario; tiene prioridad sobre el OCR.
+        beneficiario = nombre_desde_archivo(nombre) or datos.beneficiario
+        return FilaBeneficiario(
+            self, None, datos.clabe, beneficiario, beneficiario,
+            datos.email, origen=nombre, ruta_archivo=ruta,
+        )
+
     async def _procesar_archivos(self, rutas: list[str]) -> None:
         """Procesa una lista de rutas (OCR + extracción) y las agrega a la tabla.
-        Compartido por la carga por archivos y por carpeta."""
+        Compartido por la carga por archivos y por carpeta. Se puede detener con
+        el botón Detener: el archivo en proceso termina y los que falten quedan en
+        _rutas_pendientes para reanudar desde el último capturado."""
         if not rutas:
             return
+        token = _TokenCarga()  # testigo de ESTA corrida (ver _TokenCarga)
+        self._token_carga = token
+        self._cargando = True
         self.btn_cargar.disabled = True
         self.btn_cargar_carpeta.disabled = True
+        self.btn_reanudar_carga.visible = False
+        self.btn_detener_carga.visible = True
+        self.btn_detener_carga.disabled = False
+        self.btn_detener_carga.content = "Detener"
         self.anillo.visible = True
+        self.page.update()
+
+        total = len(rutas)
         identificados = 0
+        procesados = 0                       # completados (ok o error) en esta corrida
         errores: list[tuple[str, str]] = []  # (nombre_archivo, motivo)
+        completado = [False] * total
+        # OCR en PARALELO: se analizan varios archivos a la vez (cada uno lanza su
+        # tesseract), aprovechando varios núcleos. Se deja uno libre para la
+        # interfaz/el sistema y se topa a 4 para no agotar RAM.
+        n_workers = max(1, min(4, (os.cpu_count() or 2) - 1))
+        limite = asyncio.Semaphore(n_workers)
 
-        for i, ruta in enumerate(rutas, start=1):
-            nombre = os.path.basename(ruta)
-            self.txt_estado.value = f"Procesando {i}/{len(rutas)}: {nombre}…"
-            self.page.update()
-            try:
-                texto, uso_ocr = await asyncio.to_thread(ocr.extraer_texto, ruta)
-                datos = extraer_datos(texto)
-                # Si la capa de texto no dio nada útil (p. ej. impresión de un
-                # correo de Outlook con el estado como imagen), forzar OCR.
-                if not datos.clabe and not datos.beneficiario and not uso_ocr:
-                    texto, _ = await asyncio.to_thread(ocr.extraer_texto, ruta, True)
-                    datos = extraer_datos(texto)
-                # Último recurso para la CLABE: OCR en modo "texto disperso", que
-                # recupera números en tablas/celdas que la segmentación normal
-                # omite (p. ej. la tabla de una carta de asignación de cuenta).
-                if not datos.clabe:
-                    texto_sp = await asyncio.to_thread(ocr.texto_disperso, ruta)
-                    clabes_sp = extraer_clabes(texto_sp)
-                    if clabes_sp:
-                        datos.clabe = clabes_sp[0]
-                        datos.banco = banco_desde_clabe(datos.clabe)
-                # El nombre del archivo (si parece nombre de persona) es la
-                # fuente más confiable del beneficiario; tiene prioridad sobre
-                # el OCR. Si no, se usa lo identificado en el documento.
-                beneficiario = nombre_desde_archivo(nombre) or datos.beneficiario
-                self.filas.append(
-                    FilaBeneficiario(
-                        self, None, datos.clabe, beneficiario, beneficiario,
-                        datos.email, origen=nombre, ruta_archivo=ruta,
-                    )
-                )
-                identificados += 1
-                self._redibujar_tabla()
-            except Exception as exc:  # noqa: BLE001 — se reporta al usuario
-                errores.append((nombre, self._motivo_error(exc)))
+        async def procesar_uno(idx: int, ruta: str) -> None:
+            nonlocal identificados, procesados
+            async with limite:
+                if token.cancelado:
+                    return  # no se alcanzó a empezar: queda pendiente
+                nombre = os.path.basename(ruta)
+                try:
+                    fila = await self._ocr_archivo(token, ruta)
+                except _CargaDetenida:
+                    return  # abortado a media marcha: queda pendiente
+                except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+                    errores.append((nombre, self._motivo_error(exc)))
+                else:
+                    self.filas.append(fila)
+                    identificados += 1
+                    self._redibujar_tabla()
+                completado[idx] = True
+                procesados += 1
+                self.txt_estado.value = f"Analizando estados de cuenta… {procesados}/{total}"
+                self.page.update()
 
+        await asyncio.gather(*(procesar_uno(i, r) for i, r in enumerate(rutas)))
+
+        detenido = token.cancelado
+        # Pendientes: los que no se completaron (no empezados + abortados a media).
+        restantes = [r for k, r in enumerate(rutas) if not completado[k]]
+        self._token_carga = None
+        self._cargando = False
         self.btn_cargar.disabled = False
         self.btn_cargar_carpeta.disabled = False
         self.anillo.visible = False
-        resumen = f"{identificados} de {len(rutas)} archivo(s) cargado(s) en la tabla."
+        self.btn_detener_carga.visible = False
+
+        if detenido and restantes:
+            self._rutas_pendientes = restantes
+            self.btn_reanudar_carga.visible = True
+            self.btn_reanudar_carga.content = (
+                f"Reanudar carga ({len(restantes)} pendientes)"
+            )
+        else:
+            self._rutas_pendientes = []
+            self.btn_reanudar_carga.visible = False
+
+        if detenido and restantes:
+            resumen = (f"Carga detenida: {identificados} cargado(s), "
+                       f"{len(restantes)} pendiente(s) por procesar.")
+        else:
+            resumen = f"{identificados} de {procesados} archivo(s) cargado(s) en la tabla."
         if errores:
             resumen += " " + self._resumen_errores(errores)
         self.txt_estado.value = resumen
-        self.txt_estado.color = NARANJA if errores else GRIS
+        self.txt_estado.color = NARANJA if (errores or (detenido and restantes)) else GRIS
         if errores:
             self.avisar(
                 f"{len(errores)} archivo(s) no se pudieron leer (ver el detalle abajo).",
+                NARANJA,
+            )
+        elif detenido and restantes:
+            self.avisar(
+                f"Carga detenida. Quedaron {len(restantes)} pendiente(s); usa "
+                "'Reanudar carga' para continuar desde donde se quedó.",
                 NARANJA,
             )
         # Si ya hay un reporte importado, concilia los nuevos registros.
