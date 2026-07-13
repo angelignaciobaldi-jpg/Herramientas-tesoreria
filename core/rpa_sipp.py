@@ -198,16 +198,10 @@ _JS_SELECCIONAR_TODOS = r"""(ngModel) => {
 }"""
 
 
-# JS que marca SOLO los tipos indicados de un <select multiple> de AngularJS +
-# chosen. Recibe {ngModel, claves}: por cada opción, la marca si su texto
-# (normalizado, sin acentos/mayúsculas) CONTIENE alguna de las claves (p. ej.
-# 'proveedor' casa con "Proveedores"; 'acreedor' con "Acreedores Diversos"), y
-# desmarca las demás. Avisa el cambio a AngularJS y a chosen. Devuelve
-# {ok, n, elegidas, disponibles} para verificar/diagnosticar.
 _JS_SELECCIONAR_TIPOS = r"""(args) => {
     const {ngModel, claves} = args;
     const norm = s => (s || '')
-        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/\s+/g, ' ').trim().toLowerCase();
     const sel = document.querySelector('select[ng-model="' + ngModel + '"]');
     if (!sel) return {ok: false, n: 0, motivo: 'select-no-encontrado'};
@@ -228,6 +222,161 @@ _JS_SELECCIONAR_TIPOS = r"""(args) => {
             disponibles: Array.from(sel.options)
                 .filter(o => o.value !== '' && o.value !== '0')
                 .map(o => o.textContent.trim())};
+}"""
+
+
+# ------------------------ JS de la rama DISPERSIÓN (registrar dispersión) ------
+# Normalizador compartido (en JS): minúsculas, sin acentos, espacios colapsados.
+_JS_NORM = (
+    "const norm = s => (s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'')"
+    ".replace(/\\s+/g,' ').trim().toLowerCase();"
+)
+
+# Marca (para incluir en la dispersión) las solicitudes de la tabla de resultados
+# del modal cuyas 2 primeras columnas coincidan con (folio, folioFactura). Recibe
+# {pares:[{folio, ff}]}. Localiza la tabla visible cuyo thead trae 'Folio Factura'
+# (misma que _contar_filas_dom); por cada fila lee col0 (Folio) y col1 (Folio
+# Factura) y, si casa con un par pendiente, marca su checkbox (si no lo está) o, en
+# su defecto, hace clic en la fila. Devuelve {marcados, faltantes:[...]}.
+_JS_MARCAR_SOLICITUDES = r"""(args) => {
+    const {pares} = args;
+    const norm = s => (s||'').replace(/\s+/g,' ').trim();
+    const t = [...document.querySelectorAll('table')].find(
+        t => t.offsetParent &&
+             /Folio\s*Factura/i.test((t.querySelector('thead')||{}).textContent||''));
+    if (!t) return {marcados: 0, faltantes: pares.map(p => p.folio + '/' + p.ff)};
+    const pendientes = pares.map(p => ({folio: norm(p.folio), ff: norm(p.ff), ok: false}));
+    const filas = [...t.querySelectorAll('tbody tr')].filter(tr => tr.offsetParent);
+    for (const tr of filas) {
+        const celdas = tr.querySelectorAll('td');
+        if (celdas.length < 2) continue;
+        const c0 = norm(celdas[0].innerText), c1 = norm(celdas[1].innerText);
+        const p = pendientes.find(p => !p.ok && p.folio === c0 && p.ff === c1);
+        if (!p) continue;
+        // Un clic en la fila (por la 1ª columna, la del Folio) la marca para
+        // incluirla: el evento burbujea al ng-click de la <tr>.
+        (celdas[0] || tr).click();
+        p.ok = true;
+    }
+    return {
+        marcados: pendientes.filter(p => p.ok).length,
+        faltantes: pendientes.filter(p => !p.ok).map(p => p.folio + '/' + p.ff),
+    };
+}"""
+
+# Elige en el select de la cuenta de origen (ng-model dispersion.ID_CUENTABANCARIA)
+# la 1ª opción cuyo texto CONTENGA el texto buscado (normalizado). Fija el valor y
+# avisa el cambio a AngularJS (y a chosen si aplica). Recibe {ngModel, texto}.
+# Devuelve {ok, elegido} o {ok:false, disponibles:[...]}.
+_JS_ELEGIR_CUENTA_ORIGEN = r"""(args) => {
+    const {ngModel, texto} = args;
+    """ + _JS_NORM + r"""
+    const alnum = s => norm(s).replace(/[^a-z0-9]/g, '');
+    const dig = s => (s || '').replace(/\D/g, '');
+    const sel = document.querySelector('select[ng-model="' + ngModel + '"]');
+    if (!sel) return {ok: false, motivo: 'select-no-encontrado'};
+    // El placeholder de este select es value="" ('Seleccione'); las opciones reales
+    // pueden tener value="0" (índice/ID de ng-options), así que NO se excluye "0".
+    const opts = Array.from(sel.options).filter(o => o.value !== '');
+    const objetivo = norm(texto), objAlnum = alnum(texto), objDig = dig(texto);
+    // Coincidencia por texto (contiene); respaldos: alfanumérico (ignora signos y
+    // espacios) y por la secuencia de dígitos de la cuenta.
+    const opt = (objetivo && opts.find(o => norm(o.textContent).includes(objetivo)))
+             || (objAlnum && opts.find(o => alnum(o.textContent).includes(objAlnum)))
+             || (objDig && opts.find(o => dig(o.textContent).includes(objDig)));
+    if (!opt) return {ok: false, motivo: 'opcion-no-encontrada',
+                      disponibles: opts.map(o => o.textContent.trim())};
+    sel.value = opt.value;
+    const jq = window.jQuery || window.$;
+    if (jq) { try { jq(sel).val(opt.value).trigger('change').trigger('chosen:updated'); } catch (e) {} }
+    sel.dispatchEvent(new Event('change', {bubbles: true}));
+    return {ok: true, elegido: opt.textContent.trim()};
+}"""
+
+# Lee el texto de la opción actualmente seleccionada del select de cuenta de origen
+# (ignora solo el placeholder value=''). Devuelve '' si no hay una cuenta elegida.
+_JS_VALOR_CUENTA_ORIGEN = r"""(ngModel) => {
+    const sel = document.querySelector('select[ng-model="' + ngModel + '"]');
+    if (!sel) return '';
+    const o = sel.options[sel.selectedIndex];
+    if (!o || o.value === '') return '';
+    return (o.textContent || '').trim();
+}"""
+
+# Llena concepto/referencia por proveedor en la tabla de pagos de la dispersión
+# (filas ng-repeat-start="sp in dispersion.pagosProductosProveedores"). Recibe
+# {items:[{prov, cuenta}], concepto, referencia}. Por cada item ubica la fila cuya
+# col0 (proveedor) coincide y cuyo select de col1 tiene seleccionada una cuenta que
+# CONTIENE la cuenta buscada; ahí, si el input de concepto (col2) está vacío escribe
+# el concepto (si no, lo respeta), e ídem referencia (col3). Devuelve
+# {llenados, faltantes:[...]}.
+_JS_LLENAR_PAGOS = r"""(args) => {
+    const {items, concepto, referencia} = args;
+    """ + _JS_NORM + r"""
+    const setVal = (el, v) => {
+        if (!el) return false;
+        if ((el.value || '').trim() !== '') return false;  // ya precargado: respetar
+        el.value = v;
+        el.dispatchEvent(new Event('input', {bubbles: true}));
+        el.dispatchEvent(new Event('change', {bubbles: true}));
+        return true;
+    };
+    const soloDig = s => (s || '').replace(/\D/g, '');
+    const filas = [...document.querySelectorAll(
+        '[ng-repeat-start="sp in dispersion.pagosProductosProveedores"]')];
+    const pend = items.map(it => ({
+        prov: norm(it.prov), cuenta: norm(it.cuenta),
+        cuentaDig: soloDig(it.cuenta), ok: false,
+    }));
+    for (const fila of filas) {
+        if (!fila.offsetParent) continue;
+        const tds = fila.querySelectorAll('td');
+        if (tds.length < 4) continue;
+        const prov = norm(tds[0].innerText);
+        const sel = tds[1].querySelector('select');
+        let ctaSel = '', ctaDig = '';
+        if (sel) {
+            const o = sel.options[sel.selectedIndex];
+            const raw = o ? o.textContent : '';
+            ctaSel = norm(raw); ctaDig = soloDig(raw);
+        }
+        // Coincide por texto (contiene) o, como respaldo, por la secuencia de
+        // dígitos de la cuenta (robusto a distinto formato/espaciado).
+        const p = pend.find(p => !p.ok && p.prov === prov && (
+            !p.cuenta ||
+            (ctaSel && ctaSel.includes(p.cuenta)) ||
+            (p.cuentaDig && ctaDig.includes(p.cuentaDig))
+        ));
+        if (!p) continue;
+        const inpConc = tds[2].querySelector('input, textarea');
+        const inpRef  = tds[3].querySelector('input, textarea');
+        setVal(inpConc, concepto || '');
+        setVal(inpRef, referencia || '');
+        p.ok = true;
+    }
+    return {
+        llenados: pend.filter(p => p.ok).length,
+        faltantes: pend.filter(p => !p.ok).map(p => p.prov + ' / ' + p.cuenta),
+    };
+}"""
+
+# Ubica en la tabla de dispersiones YA generadas la fila cuyo FOLIO (coincidencia
+# exacta en alguna celda) y EMPRESA (contenida en alguna celda) casen. Recibe
+# {repeat, folio, empresa}. Devuelve el índice de la fila (respecto al ng-repeat)
+# o -1 si no hay match. El índice se usa luego con Playwright (.nth) para clicar el
+# botón de descarga de ESA misma fila.
+_JS_FILA_DISPERSION = r"""(args) => {
+    const {repeat, folio, empresa} = args;
+    """ + _JS_NORM + r"""
+    const f = norm(folio), e = norm(empresa);
+    const filas = [...document.querySelectorAll('[ng-repeat="' + repeat + '"]')];
+    for (let i = 0; i < filas.length; i++) {
+        const tds = [...filas[i].querySelectorAll('td')].map(td => norm(td.innerText));
+        const folioOk = tds.some(t => t === f);
+        const empOk = !e || tds.some(t => t.includes(e));
+        if (folioOk && empOk) return i;
+    }
+    return -1;
 }"""
 
 
@@ -255,8 +404,8 @@ class SesionSipp:
     # --- URLs ---
     # Sistema productivo: nuestras actividades (consultar/descargar anexos) no
     # alteran registros reales, así que se opera directo sobre producción.
-    # BASE_URL = "https://dev.sipp.petroil.dev"
-    BASE_URL = "https://sipp.petroil.com.mx"
+    BASE_URL = "https://dev.sipp.petroil.dev"
+    # BASE_URL = "https://sipp.petroil.com.mx"
     URL_LOGIN = BASE_URL + "/login.html"
     URL_CONFIG_SESION = BASE_URL + "/index.cfm#/configuracionsession"
     URL_DASHBOARD_TESOR = BASE_URL + "/#/DashboardTesor"
@@ -266,6 +415,10 @@ class SesionSipp:
     TIMEOUT_NAV = 30_000        # navegación / carga de página
     TIMEOUT_ELEMENTO = 10_000   # aparición de un elemento
     TIMEOUT_LOGIN_OK = 5_000    # confirmación de inicio de sesión (requisito: 5 s)
+    # Descarga de un layout (TXT) de dispersión: arranca casi al instante tras
+    # confirmar (archivos diminutos), así que no tiene caso esperar TIMEOUT_NAV; con
+    # esto, si un layout no genera descarga, se descarta rápido y se sigue.
+    TIMEOUT_DESCARGA = 12_000
 
     def __init__(self, headless: bool = False, slow_mo: int = 0, zoom: float = 0.8):
         self.headless = headless
@@ -1244,9 +1397,23 @@ class SesionSipp:
     # ng-click de los botones de acción del modal (verificados contra el DOM).
     _NG_BUSCAR = "getSolicitudesPagoProveedores_Dispersion()"
     _NG_REPORTE = "generarReporteSolicitudesPagoProveedores_Dispersion()"
+    # ng-click de la rama de DISPERSIÓN (registrar la dispersión, no solo buscar).
+    _NG_ACEPTAR_SOLICITUDES = "aceptarSolicitudesPagoProveedores_Dispersion()"
+    _NG_GUARDAR_DISPERSION = "guardarDispersionProveedoresNoPemex()"
+    # ng-model del select de la CUENTA BANCARIA DE ORIGEN de la dispersión.
+    _NG_CUENTA_ORIGEN = "dispersion.ID_CUENTABANCARIA"
     # Nombre de la función del backend que atiende la búsqueda; aparece en la URL
     # del XHR (cfproxy.cfc?_=<func>...). Sirve para esperar la respuesta real.
     _FUNC_BUSCAR = "getSolicitudesPagoProveedores_Dispersion"
+    # Ídem para Guardar: su XHR devuelve el folio nuevo generado (QUERY.DATA[0]).
+    _FUNC_GUARDAR = "guardarDispersionProveedoresNoPemex"
+    # XHR que carga las cuentas bancarias de origen tras aceptar las solicitudes.
+    _FUNC_CUENTAS = "listar_cuentasBancarias"
+    # Tabla de dispersiones YA generadas (para descargar sus layouts/TXT), el botón
+    # que descarga el layout de cada fila y el texto de la pestaña que la muestra.
+    _NG_REPEAT_DISPERSIONES = "item in listadoDispersionesPagosCombustible"
+    _NG_LAYOUT_DISPERSION = "generarLayoutDispersion(item)"
+    _TAB_DISPERSIONES = "Dispersiones (No Pemex)"
 
     async def abrir_modal_agregar_solicitudes(self) -> None:
         """Pulsa 'Agregar Facturas/Solicitudes de Pago' y espera el modal."""
@@ -1433,6 +1600,377 @@ class SesionSipp:
             return None
         return await self.descargar_reporte_excel(ruta_destino, prefijo=prefijo)
 
+    # ============================ rama DISPERSIÓN (registrar) =================
+    # El tronco (abrir modal + fijar_filtros + buscar_solicitudes) es común con la
+    # rama de búsqueda; a partir de aquí, en vez de descargar el Excel, se marcan
+    # las solicitudes elegidas y se registra la dispersión.
+
+    async def _esperar_filas_resultados(self, timeout: int | None = None) -> int:
+        """Espera a que AngularJS termine de RENDERIZAR las filas de la tabla de
+        resultados del modal tras Buscar. `buscar_solicitudes` regresa apenas llega
+        el XHR, pero el <tbody> se puebla un instante después (digest de Angular);
+        marcar antes de eso caería sobre una tabla vacía. Devuelve el número de
+        filas de datos visibles (0 si tras el timeout sigue vacía)."""
+        page = self._exigir_pagina()
+        limite = (timeout or self.TIMEOUT_NAV) / 1000
+        fin = asyncio.get_event_loop().time() + limite
+        js = r"""() => {
+          const t = [...document.querySelectorAll('table')].find(
+            t => t.offsetParent &&
+                 /Folio\s*Factura/i.test((t.querySelector('thead')||{}).textContent||''));
+          if (!t) return 0;
+          return [...t.querySelectorAll('tbody tr')].filter(tr => {
+            if (!tr.offsetParent) return false;
+            const tds = tr.querySelectorAll('td');
+            // La fila de "No existen registros" es un único td con colspan.
+            if (tds.length < 2 || tds[0].hasAttribute('colspan')) return false;
+            return (tds[0].innerText || '').trim() !== '';
+          }).length;
+        }"""
+        while True:
+            n = await page.evaluate(js)
+            if n > 0:
+                return n
+            if asyncio.get_event_loop().time() >= fin:
+                return 0
+            await asyncio.sleep(0.25)
+
+    async def seleccionar_solicitudes_por_folio(
+        self, pares: list[tuple[str, str]],
+    ) -> int:
+        """Marca en la tabla de resultados del modal las solicitudes cuyas dos
+        primeras columnas (Folio, Folio Factura) coincidan con cada par de
+        `pares`. Devuelve cuántas marcó. Lanza ErrorSipp si alguna no aparece."""
+        page = self._exigir_pagina()
+        # Espera a que las filas se rendericen (evita marcar sobre la tabla vacía).
+        if await self._esperar_filas_resultados(self.TIMEOUT_ELEMENTO) == 0:
+            await self._capturar_diagnostico("dispersion_seleccion")
+            raise ErrorSipp(
+                "La búsqueda de solicitudes no mostró resultados en la tabla del "
+                "modal (¿el filtro de empresa/fechas no trajo facturas?)."
+            )
+        datos = [{"folio": str(f or "").strip(), "ff": str(ff or "").strip()}
+                 for f, ff in pares]
+        res = await page.evaluate(_JS_MARCAR_SOLICITUDES, {"pares": datos})
+        faltantes = res.get("faltantes") or []
+        if faltantes:
+            await self._capturar_diagnostico("dispersion_seleccion")
+            muestra = ", ".join(faltantes[:8]) + ("…" if len(faltantes) > 8 else "")
+            raise ErrorSipp(
+                "No se encontraron en la tabla de resultados %d solicitud(es) "
+                "(Folio/Folio Factura): %s" % (len(faltantes), muestra)
+            )
+        return int(res.get("marcados", 0))
+
+    async def aceptar_solicitudes_dispersion(self) -> None:
+        """Pulsa 'Aceptar' del modal de solicitudes (ng-click
+        aceptarSolicitudesPagoProveedores_Dispersion()), acepta el diálogo de
+        confirmación y ESPERA a que termine el XHR que carga las cuentas de origen
+        (listar_cuentasBancarias). Así la cuenta de origen ya tendrá opciones."""
+        page = self._exigir_pagina()
+        boton = page.locator(
+            f'[ng-click="{self._NG_ACEPTAR_SOLICITUDES}"]:visible').first
+        # Se registra la espera del XHR ANTES de aceptar (el XHR se dispara al
+        # confirmar la aceptación de las solicitudes).
+        try:
+            async with page.expect_response(
+                lambda r: self._FUNC_CUENTAS in r.url, timeout=self.TIMEOUT_NAV,
+            ) as info:
+                try:
+                    await boton.click(timeout=self.TIMEOUT_ELEMENTO)
+                except PlaywrightTimeoutError as exc:
+                    raise ErrorSipp(
+                        "No se encontró el botón 'Aceptar' de las solicitudes de "
+                        "dispersión."
+                    ) from exc
+                # Tras 'Aceptar' aparece un diálogo de confirmación; aceptarlo es lo
+                # que dispara la carga de la dispersión (y el XHR de cuentas).
+                await self._confirmar_aviso_si_hay(timeout=self.TIMEOUT_ELEMENTO)
+                await info.value
+        except PlaywrightTimeoutError:
+            # No se detectó el XHR de cuentas; seleccionar_cuenta_origen tiene su
+            # propia espera de opciones como respaldo.
+            pass
+
+    async def _esperar_opciones_cuenta_origen(self, timeout: int | None = None) -> int:
+        """Espera a que AngularJS cargue las opciones del select de cuenta de origen
+        (ng-options 'item ... for item in cuentasBancarias'). Al aceptar las
+        solicitudes, el arreglo llega por AJAX y el select arranca solo con el
+        placeholder; elegir antes de eso no encuentra opción. Devuelve cuántas
+        opciones reales hay (0 si tras el timeout sigue solo el placeholder)."""
+        page = self._exigir_pagina()
+        limite = (timeout or self.TIMEOUT_ELEMENTO) / 1000
+        fin = asyncio.get_event_loop().time() + limite
+        js = r"""(ngModel) => {
+            const sel = document.querySelector('select[ng-model="' + ngModel + '"]');
+            if (!sel) return -1;
+            // Solo el placeholder tiene value=''; las opciones reales pueden ser "0".
+            return Array.from(sel.options).filter(
+                o => o.value !== '' && o.value !== '?').length;
+        }"""
+        while True:
+            n = await page.evaluate(js, self._NG_CUENTA_ORIGEN)
+            if n and n > 0:
+                return n
+            if asyncio.get_event_loop().time() >= fin:
+                return 0
+            await asyncio.sleep(0.25)
+
+    async def seleccionar_cuenta_origen(self, cuenta: str) -> bool:
+        """Elige en el select de la cuenta de ORIGEN de la dispersión la opción cuyo
+        texto CONTENGA `cuenta` (coincidencia parcial). Devuelve True si se eligió,
+        False si ninguna opción coincide (para el respaldo manual)."""
+        page = self._exigir_pagina()
+        # Espera a que carguen las opciones (llegan por AJAX tras aceptar).
+        await self._esperar_opciones_cuenta_origen()
+        res = await page.evaluate(
+            _JS_ELEGIR_CUENTA_ORIGEN,
+            {"ngModel": self._NG_CUENTA_ORIGEN, "texto": str(cuenta or "")},
+        )
+        return bool(res.get("ok"))
+
+    async def cuenta_origen_valor(self) -> str:
+        """Texto de la cuenta de origen actualmente seleccionada ('' si ninguna).
+        Sirve para verificar la elección manual tras una pausa asistida."""
+        page = self._exigir_pagina()
+        return await page.evaluate(_JS_VALOR_CUENTA_ORIGEN, self._NG_CUENTA_ORIGEN)
+
+    async def _esperar_cuentas_proveedores(self, timeout: int | None = None) -> int:
+        """Espera a que carguen (por AJAX, 'obtenerCuentasBancarias') los selects de
+        cuenta de cada fila de pago. Al aceptar las solicitudes, las cuentas del
+        proveedor llegan un instante después; llenar antes deja el select en el
+        placeholder y no se puede ubicar la fila por su cuenta. Devuelve cuántas
+        filas ya traen su cuenta seleccionada. Regresa en cuanto todas están listas,
+        o cuando el conteo se estabiliza (~1.5 s sin cambios), o al agotar el
+        timeout."""
+        page = self._exigir_pagina()
+        limite = (timeout or self.TIMEOUT_NAV) / 1000
+        fin = asyncio.get_event_loop().time() + limite
+        js = r"""() => {
+            const filas = [...document.querySelectorAll(
+                '[ng-repeat-start="sp in dispersion.pagosProductosProveedores"]')]
+                .filter(f => f.offsetParent);
+            let total = 0, listas = 0;
+            for (const f of filas) {
+                const tds = f.querySelectorAll('td');
+                if (tds.length < 2) continue;
+                total++;
+                const sel = tds[1].querySelector('select');
+                if (!sel) continue;
+                const reales = Array.from(sel.options).filter(
+                    o => o.value !== '' && o.value !== '?' && o.value !== '0');
+                const o = sel.options[sel.selectedIndex];
+                const selTxt = o ? (o.textContent || '').trim() : '';
+                if (reales.length > 0 && selTxt) listas++;
+            }
+            return {total: total, listas: listas};
+        }"""
+        previo = -1
+        estables = 0
+        while True:
+            r = await page.evaluate(js)
+            total, listas = int(r.get("total", 0)), int(r.get("listas", 0))
+            if total and listas >= total:
+                return listas
+            if listas == previo:
+                estables += 1
+                if estables >= 6:  # ~1.5 s sin cambios: se asume ya cargado
+                    return listas
+            else:
+                estables, previo = 0, listas
+            if asyncio.get_event_loop().time() >= fin:
+                return listas
+            await asyncio.sleep(0.25)
+
+    async def llenar_pagos_proveedores(
+        self, items: list[tuple[str, str]], concepto: str, referencia: str,
+    ) -> int:
+        """Por cada (proveedor, cuenta_bancaria) de `items`, ubica su fila en la
+        tabla de pagos de la dispersión y escribe concepto/referencia (respetando
+        los que ya vengan precargados). Devuelve cuántas filas llenó. Lanza
+        ErrorSipp si alguna fila no se encontró."""
+        page = self._exigir_pagina()
+        # Espera a que carguen las cuentas del proveedor (llegan por AJAX).
+        await self._esperar_cuentas_proveedores()
+        datos = [{"prov": str(p or ""), "cuenta": str(c or "")} for p, c in items]
+        res = await page.evaluate(
+            _JS_LLENAR_PAGOS,
+            {"items": datos, "concepto": concepto or "", "referencia": referencia or ""},
+        )
+        faltantes = res.get("faltantes") or []
+        if faltantes:
+            await self._capturar_diagnostico("dispersion_pagos")
+            muestra = ", ".join(faltantes[:8]) + ("…" if len(faltantes) > 8 else "")
+            raise ErrorSipp(
+                "No se encontró la fila de pago de %d proveedor(es)/cuenta(s): %s"
+                % (len(faltantes), muestra)
+            )
+        return int(res.get("llenados", 0))
+
+    async def guardar_dispersion(self) -> int | None:
+        """Pulsa 'Guardar' (ng-click guardarDispersionProveedoresNoPemex()) y espera
+        la respuesta del backend, de la que toma QUERY.DATA[0] = el folio nuevo
+        generado. Devuelve ese folio (int) o None si no se pudo leer."""
+        page = self._exigir_pagina()
+        boton = page.locator(
+            f'[ng-click="{self._NG_GUARDAR_DISPERSION}"]:visible').first
+        try:
+            async with page.expect_response(
+                lambda r: self._FUNC_GUARDAR in r.url, timeout=self.TIMEOUT_NAV,
+            ) as info:
+                await boton.click(timeout=self.TIMEOUT_ELEMENTO)
+                # Algunos guardados piden confirmar un aviso; si aparece, se acepta
+                # (es lo que dispara el XHR). Si no hay aviso, no espera de más.
+                await self._confirmar_aviso_si_hay(timeout=2_000)
+            resp = await info.value
+        except PlaywrightTimeoutError as exc:
+            raise ErrorSipp("No respondió el guardado de la dispersión.") from exc
+        folio = self._folio_de_respuesta(await self._texto_respuesta(resp))
+        # Al guardar, el SIPP carga el dashboard; se da un respiro antes de seguir.
+        await page.wait_for_timeout(1_500)
+        return folio
+
+    # -------------------------------- descarga de layouts (TXT) de dispersión
+    async def _ir_a_tab_dispersiones(self) -> None:
+        """Abre la pestaña 'Dispersiones (No Pemex)' (el <li> que contiene el
+        <uib-tab-heading> con ese texto) SOBRE LA PÁGINA ACTUAL, donde se listan las
+        dispersiones ya generadas.
+
+        Importante: NO se re-navega a 'Registrar Dispersión'. Tras el último Guardar,
+        el sistema ya deja al robot en la pantalla con el tabset; volver a navegar por
+        el menú lo sacaría de ahí. Solo se cambia de pestaña desde donde quedó."""
+        page = self._exigir_pagina()
+        # ui-bootstrap transcluye el <uib-tab-heading> dentro del <a
+        # uib-tab-heading-transclude ng-click="select()">, que es el elemento
+        # clicable de la pestaña. El tabset puede tardar un instante en renderizar
+        # (p. ej. justo tras navegar), así que primero se espera a que aparezca.
+        tab = page.locator(
+            "a[uib-tab-heading-transclude]", has_text=self._TAB_DISPERSIONES)
+        try:
+            await tab.first.wait_for(state="visible", timeout=self.TIMEOUT_ELEMENTO)
+        except PlaywrightTimeoutError:
+            pass  # se intentan los respaldos de abajo de todos modos
+        li_tab = page.locator(
+            "li", has=page.locator("uib-tab-heading", has_text=self._TAB_DISPERSIONES))
+        candidatos = [
+            tab,
+            li_tab.locator("a"),
+            li_tab,
+            page.get_by_text(self._TAB_DISPERSIONES, exact=True),
+        ]
+        for loc in candidatos:
+            try:
+                if await loc.count():
+                    await loc.first.click(timeout=self.TIMEOUT_ELEMENTO)
+                    break
+            except PlaywrightTimeoutError:
+                continue
+        else:
+            await self._capturar_diagnostico("tab_dispersiones")
+            raise ErrorSipp("No se encontró la pestaña 'Dispersiones (No Pemex)'.")
+        # Espera a que aparezca la tabla de dispersiones generadas.
+        try:
+            await page.locator(
+                f'[ng-repeat="{self._NG_REPEAT_DISPERSIONES}"]').first.wait_for(
+                state="attached", timeout=self.TIMEOUT_ELEMENTO)
+        except PlaywrightTimeoutError:
+            pass  # puede estar vacía; cada descarga lo maneja fila por fila
+
+    async def descargar_layouts_dispersion(
+        self, items: list[dict], carpeta_destino: str,
+        progreso: Callable[[int, int], None] | None = None,
+    ) -> list[dict]:
+        """Descarga el layout (TXT) de cada dispersión generada. `items` es una
+        lista de dicts con 'folio', 'empresa' y 'nombre' (nombre base del archivo).
+        Por cada uno: ubica su fila en la tabla de dispersiones (folio exacto +
+        empresa) y pulsa el botón generarLayoutDispersion(item) de ESA fila, guarda
+        el archivo en `carpeta_destino` con `nombre` (+ sufijo numérico si ya
+        existe). Si no hay fila o botón, lo salta. Devuelve, por item, un dict
+        {folio, empresa, ok, archivo}."""
+        page = self._exigir_pagina()
+        os.makedirs(carpeta_destino, exist_ok=True)
+        await self._ir_a_tab_dispersiones()
+        filas_sel = f'[ng-repeat="{self._NG_REPEAT_DISPERSIONES}"]'
+        resultados: list[dict] = []
+        total = len(items)
+        for i, it in enumerate(items, start=1):
+            folio = str(it.get("folio") or "").strip()
+            empresa = str(it.get("empresa") or "").strip()
+            nombre = (it.get("nombre") or f"{folio} {empresa}").strip()
+            ok, archivo = False, None
+            try:
+                idx = await page.evaluate(
+                    _JS_FILA_DISPERSION,
+                    {"repeat": self._NG_REPEAT_DISPERSIONES,
+                     "folio": folio, "empresa": empresa},
+                )
+                if idx is not None and idx >= 0:
+                    fila = page.locator(filas_sel).nth(idx)
+                    boton = fila.locator(
+                        f'[ng-click="{self._NG_LAYOUT_DISPERSION}"]').first
+                    if await boton.count():
+                        async with page.expect_download(
+                            timeout=self.TIMEOUT_DESCARGA) as info:
+                            await boton.click(timeout=self.TIMEOUT_ELEMENTO)
+                            # El botón abre un diálogo de confirmación; aceptarlo es
+                            # lo que dispara la descarga del layout (aparece rápido).
+                            await self._confirmar_aviso_si_hay(timeout=3_000)
+                        descarga = await info.value
+                        ext = os.path.splitext(
+                            descarga.suggested_filename or "")[1] or ".txt"
+                        destino = _ruta_unica(os.path.join(
+                            carpeta_destino, self._sanear_nombre(nombre) + ext))
+                        await descarga.save_as(destino)
+                        ok, archivo = True, destino
+            except Exception:  # noqa: BLE001 — un layout que falle no aborta el resto
+                await self._capturar_diagnostico("dispersion_layout")
+            resultados.append(
+                {"folio": folio, "empresa": empresa, "ok": ok, "archivo": archivo})
+            if progreso:
+                progreso(i, total)
+        return resultados
+
+    @staticmethod
+    async def _texto_respuesta(resp) -> str:
+        try:
+            return await resp.text()
+        except Exception:  # noqa: BLE001
+            return ""
+
+    @staticmethod
+    def _folio_de_respuesta(texto: str) -> int | None:
+        """Extrae QUERY.DATA[0] (el folio) del JSON de la respuesta de Guardar.
+        DATA puede venir como [folio] o como [[folio, ...]]. Devuelve int o None."""
+        try:
+            data = json.loads(texto or "").get("QUERY", {}).get("DATA", [])
+        except Exception:  # noqa: BLE001
+            return None
+        if not data:
+            return None
+        crudo = data[0]
+        if isinstance(crudo, (list, tuple)):
+            crudo = crudo[0] if crudo else None
+        try:
+            return int(float(crudo))
+        except (TypeError, ValueError):
+            return None
+
+    async def _confirmar_aviso_si_hay(self, timeout: int = 2_000) -> bool:
+        """Si aparece (dentro de `timeout`) un aviso con botón 'Aceptar', lo pulsa.
+        Devuelve True si lo hizo. No lanza si no aparece (best-effort)."""
+        page = self._exigir_pagina()
+        aceptar = page.get_by_role(
+            "button", name=re.compile(r"^\s*aceptar\s*$", re.I))
+        try:
+            await aceptar.first.wait_for(state="visible", timeout=timeout)
+        except PlaywrightTimeoutError:
+            return False
+        try:
+            await aceptar.first.click(timeout=self.TIMEOUT_ELEMENTO)
+            return True
+        except PlaywrightTimeoutError:
+            return False
+
     async def confirmar_aviso(self) -> None:
         """Pulsa 'Aceptar' en el modal de confirmación (HTML, no nativo) que el
         portal muestra antes de ciertas acciones. Reutilizable para cualquier
@@ -1593,6 +2131,53 @@ class BucleRpa:
     def cerrar(self) -> None:
         """Detiene el bucle (el hilo es daemon, así que muere con la app)."""
         self._loop.call_soon_threadsafe(self._loop.stop)
+
+
+class RpaDetenido(Exception):
+    """Señala que el flujo del RPA se abortó a petición del usuario (Detener).
+
+    No es un error: el llamador lo trata como una parada limpia (sin mostrar un
+    diálogo de error)."""
+
+
+class ControlRpa:
+    """Control cooperativo de pausa / reanudación / detención del flujo del RPA.
+
+    Se construye desde el hilo de la UI pasando el `loop` del BucleRpa. Como una
+    asyncio.Event no es segura de modificar entre hilos, los cambios de estado se
+    agendan en ESE bucle con call_soon_threadsafe. El flujo del RPA llama a
+    `await punto_control()` en puntos seguros (entre iteraciones): ahí se queda
+    en pausa (espera) o aborta (lanza RpaDetenido).
+
+    Nota: para detener de inmediato una operación en curso (no solo entre
+    iteraciones) el llamador además cancela el Future del flujo; esto es solo el
+    lado cooperativo."""
+
+    def __init__(self, loop: "asyncio.AbstractEventLoop"):
+        self._loop = loop
+        self._reanudar = asyncio.Event()
+        self._reanudar.set()  # arranca corriendo (no pausado)
+        self._detenido = False
+
+    def pausar(self) -> None:
+        self._loop.call_soon_threadsafe(self._reanudar.clear)
+
+    def reanudar(self) -> None:
+        self._loop.call_soon_threadsafe(self._reanudar.set)
+
+    def detener(self) -> None:
+        self._detenido = True
+        # Despierta si estaba en pausa, para que llegue al punto de control y aborte.
+        self._loop.call_soon_threadsafe(self._reanudar.set)
+
+    async def punto_control(self) -> None:
+        """Punto seguro para pausar/abortar. Se llama ENTRE operaciones del flujo.
+        Bloquea mientras esté en pausa; lanza RpaDetenido si se pidió detener."""
+        if self._detenido:
+            raise RpaDetenido()
+        await self._reanudar.wait()  # espera mientras esté en pausa
+        if self._detenido:
+            raise RpaDetenido()
 
 
 async def _demo() -> None:

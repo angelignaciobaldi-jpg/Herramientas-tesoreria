@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import flet as ft
 
-from core import credenciales, cuentas_bancarias
+from core import credenciales, cuentas_bancarias, cuentas_dispersion
 from ui.comun import GRIS, ROJO, VERDE
 
 # Ancho útil del modal: los inputs lo abarcan de margen a margen.
@@ -65,6 +65,29 @@ class SeccionConfiguracion:
         )
         self._actualizar_estado_cuentas()
 
+        # Apartado "Cuentas de dispersión": Excel sencillo (id Empresa + Cuenta)
+        # que filtra las cuentas del selector en la pantalla de Dispersión.
+        self.txt_estado_cuentas_disp = ft.Text(size=12)
+        cuentas_disp_apartado = ft.Column(
+            [
+                ft.Text("Cuentas de dispersión", size=15, weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    "Adjunta el Excel con las columnas 'id Empresa', 'Cuenta' y "
+                    "'CLABE interbancaria' (opcional). Determina las cuentas y "
+                    "CLABEs que aparecen en los selectores de la pantalla de "
+                    "Dispersión (por empresa).",
+                    size=12, color=GRIS,
+                ),
+                ft.OutlinedButton(
+                    "Adjuntar Excel de cuentas de dispersión", icon=ft.Icons.UPLOAD_FILE,
+                    on_click=self._adjuntar_cuentas_dispersion, width=_ANCHO,
+                ),
+                self.txt_estado_cuentas_disp,
+            ],
+            spacing=10, tight=True,
+        )
+        self._actualizar_estado_cuentas_dispersion()
+
         # Apartado "Impresión de cheques": hoja de calibración para ubicar el
         # cheque sobre la hoja portadora (ver core/impresion.py).
         impresion_apartado = ft.Column(
@@ -102,6 +125,7 @@ class SeccionConfiguracion:
                 [
                     credenciales_apartado, ft.Divider(),
                     cuentas_apartado, ft.Divider(),
+                    cuentas_disp_apartado, ft.Divider(),
                     impresion_apartado,
                 ],
                 spacing=18, tight=True, width=_ANCHO, scroll=ft.ScrollMode.AUTO,
@@ -178,13 +202,48 @@ class SeccionConfiguracion:
         self.app.avisar(
             f"Excel de cuentas actualizado ({empresas} empresa(s)).", VERDE)
 
+    # ------------------------------------------- cuentas de dispersión
+    def _actualizar_estado_cuentas_dispersion(self) -> None:
+        """Refleja si ya hay un Excel de cuentas de dispersión cargado."""
+        if cuentas_dispersion.hay_excel():
+            self.txt_estado_cuentas_disp.value = "Archivo de cuentas de dispersión cargado ✓"
+            self.txt_estado_cuentas_disp.color = VERDE
+        else:
+            self.txt_estado_cuentas_disp.value = "Sin archivo de cuentas de dispersión cargado."
+            self.txt_estado_cuentas_disp.color = GRIS
+
+    async def _adjuntar_cuentas_dispersion(self, _e=None) -> None:
+        """Deja elegir el Excel de cuentas de dispersión (id Empresa + Cuenta) y
+        lo instala (reemplazando el anterior)."""
+        archivos = await self.app.picker.pick_files(
+            dialog_title="Selecciona el Excel de cuentas de dispersión",
+            allowed_extensions=["xlsx", "xls"],
+            allow_multiple=False,
+        )
+        if not archivos:
+            return
+        try:
+            empresas = cuentas_dispersion.instalar_excel(archivos[0].path)
+        except cuentas_dispersion.ExcelCuentasDispersionInvalido as exc:
+            self.app.avisar(f"{exc} Se conservó el archivo anterior.", ROJO)
+            return
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self.app.avisar(f"No se pudo guardar el archivo: {exc}", ROJO)
+            return
+        self._actualizar_estado_cuentas_dispersion()
+        self.txt_estado_cuentas_disp.update()
+        self._recargar_catalogos()
+        self.app.avisar(
+            f"Cuentas de dispersión actualizadas ({empresas} empresa(s)).", VERDE)
+
     def _recargar_catalogos(self) -> None:
         """Refresca en caliente las pantallas que consultan el catálogo de
         cuentas (para que el Excel nuevo se refleje sin reabrir la app)."""
-        try:
-            self.app.devoluciones.recargar_catalogo()
-        except Exception:  # noqa: BLE001 — no debe romper el guardado
-            pass
+        for pantalla in ("devoluciones", "dispersion_no_pemex"):
+            try:
+                getattr(self.app, pantalla).recargar_catalogo()
+            except Exception:  # noqa: BLE001 — no debe romper el guardado
+                pass
 
     # --------------------------------------------------- credenciales
     def _cargar_credenciales(self) -> None:
