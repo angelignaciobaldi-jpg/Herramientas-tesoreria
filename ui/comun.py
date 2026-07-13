@@ -21,6 +21,37 @@ VERDE = ft.Colors.GREEN_700
 ROJO = ft.Colors.RED_700
 NARANJA = ft.Colors.ORANGE_800
 GRIS = ft.Colors.ON_SURFACE_VARIANT
+# Rojo para el FOREGROUND de botones/íconos de acción destructiva. ROJO (RED_700)
+# es un rojo oscuro fijo: sobre el fondo oscuro del tema nocturno tiene poco
+# contraste (texto casi ilegible). ERROR es un ROL de tema que Material adapta a
+# un rojo legible en claro y en oscuro, así que se usa para esos acentos.
+ROJO_BOTON = ft.Colors.ERROR
+
+# --- Empresas (No Pemex) -------------------------------------------------
+# Empresas disponibles (dispersión y demás pantallas). Array de objetos
+# {id, Empresa}: el 'id' es el identificador de la empresa en la base y sirve
+# para emparejar con las cuentas bancarias por id. Respeta la capitalización.
+EMPRESAS = [
+    {"id": 1, "Empresa": "Abastecedora"},
+    {"id": 2, "Empresa": "ACP Combustibles"},
+    {"id": 20, "Empresa": "AMBIENTAL TEK RESOURCES"},
+    {"id": 28, "Empresa": "ASFALTOS"},
+    {"id": 40, "Empresa": "BLUE PROPANE"},
+    {"id": 52, "Empresa": "ELEKTRON MOTORS AMERICA"},
+    {"id": 44, "Empresa": "ELYON LOGISTICS"},
+    {"id": 39, "Empresa": "Gas Natural Petroil"},
+    {"id": 8, "Empresa": "Petro Smart"},
+    {"id": 25, "Empresa": "PETRO SMART COMBUSTIBLES DEL PACIFICO"},
+    {"id": 15, "Empresa": "PETROIL MARINE"},
+    {"id": 46, "Empresa": "SERVICIOS  EDUCATIVOS IMAA"},
+    {"id": 45, "Empresa": "SERVICIOS COMPLEMENTARIOS EDUCATIVOS"},
+    {"id": 48, "Empresa": "TRASLADOS ROEH"},
+]
+# Nombres de empresa (para los combos) e índice nombre -> id (para el match con
+# las cuentas bancarias). 'EMPRESAS' es la fuente única; estos se derivan de él.
+NOMBRES_EMPRESAS = [e["Empresa"] for e in EMPRESAS]
+ID_POR_EMPRESA = {e["Empresa"]: e["id"] for e in EMPRESAS}
+
 
 # --- Anchos de columna (compartidos entre encabezado y celdas) -----------
 W_ESTADO = 64
