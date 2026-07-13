@@ -34,13 +34,53 @@ class AppTesoreria:
         self.page = page
         self.picker = ft.FilePicker()
         page.services.append(self.picker)
+        self._picker_al_frente()
         self._construir()
 
-    # Servicio compartido por todas las pantallas: aviso tipo snackbar.
-    def avisar(self, mensaje: str, color: str | None = None) -> None:
-        self.page.show_dialog(
-            ft.SnackBar(content=ft.Text(mensaje, color=ft.Colors.WHITE), bgcolor=color)
-        )
+    # ------------------------------------------------ diálogos de archivo
+    def _picker_al_frente(self) -> None:
+        """Envuelve los métodos del FilePicker (elegir/guardar archivo o carpeta)
+        para que la ventana del sistema aparezca SIEMPRE por encima de la app: si
+        no, en Windows el diálogo nativo suele abrirse detrás de la ventana y el
+        usuario cree que no pasó nada. Se pone la ventana en 'topmost' mientras el
+        diálogo está abierto (el diálogo es hijo de la ventana, así sube con ella)
+        y se restaura al cerrarse."""
+        for nombre in ("pick_files", "get_directory_path", "save_file"):
+            original = getattr(self.picker, nombre, None)
+            if callable(original):
+                setattr(self.picker, nombre, self._envolver_al_frente(original))
+
+    def _envolver_al_frente(self, original):
+        async def envuelto(*args, **kwargs):
+            self._fijar_topmost(True)
+            try:
+                return await original(*args, **kwargs)
+            finally:
+                self._fijar_topmost(False)
+        return envuelto
+
+    def _fijar_topmost(self, valor: bool) -> None:
+        """Pone/quita el 'siempre encima' de la ventana (best-effort: nunca debe
+        romper la apertura del diálogo)."""
+        try:
+            self.page.window.always_on_top = valor
+            self.page.update()
+        except Exception:  # noqa: BLE001 — el traer-al-frente no es crítico
+            pass
+
+    # Servicio compartido por todas las pantallas: aviso tipo snackbar. Opcional:
+    # un botón de acción (p. ej. "Abrir") con su callback, y una duración mayor
+    # para dar tiempo a hacer clic.
+    def avisar(self, mensaje: str, color: str | None = None,
+               accion: str | None = None, on_accion=None, duracion=None) -> None:
+        barra = ft.SnackBar(
+            content=ft.Text(mensaje, color=ft.Colors.WHITE), bgcolor=color)
+        if accion:
+            barra.action = accion
+            barra.on_action = on_accion
+        if duracion is not None:
+            barra.duration = duracion
+        self.page.show_dialog(barra)
 
     def _construir(self) -> None:
         # Import perezoso de las pantallas (ver nota de imports arriba): si una
@@ -70,8 +110,11 @@ class AppTesoreria:
 
         # Encabezado: logo (izq), navegación (centro, scroll horizontal) y
         # botones de configuración/tema (der).
+        # Estado inicial del tema (recordado entre sesiones, leído en main()): el
+        # logo y el botón se inicializan acorde a claro/oscuro.
+        oscuro = self.page.theme_mode == ft.ThemeMode.DARK
         self.logo = ft.Image(
-            src="Imagenes/Quetzaltic Texto negro.png",
+            src=self._logo_src(oscuro),
             height=58, fit=ft.BoxFit.CONTAIN,
             error_content=ft.Text("Quetzaltic Solutions", weight=ft.FontWeight.BOLD, size=20),
         )
@@ -87,7 +130,9 @@ class AppTesoreria:
             icon=ft.Icons.SETTINGS, tooltip="Configuración", on_click=self.config.abrir,
         )
         self.btn_tema = ft.IconButton(
-            icon=ft.Icons.DARK_MODE, tooltip="Modo oscuro", on_click=self._alternar_tema,
+            icon=ft.Icons.LIGHT_MODE if oscuro else ft.Icons.DARK_MODE,
+            tooltip="Modo claro" if oscuro else "Modo oscuro",
+            on_click=self._alternar_tema,
         )
         encabezado = ft.Row(
             [
@@ -99,16 +144,17 @@ class AppTesoreria:
             spacing=12,
         )
 
-        # Pie de página: crédito fijo abajo, centrado y discreto.
+        # Pie de página: crédito fijo abajo, centrado y discreto. Padding vertical
+        # mínimo para que ocupe poca altura.
         pie = ft.Container(
             content=ft.Text(
                 "Quetzaltic Solutions - 2026",
-                size=12,
+                size=11,
                 color=ft.Colors.ON_SURFACE_VARIANT,
                 text_align=ft.TextAlign.CENTER,
             ),
             alignment=ft.Alignment(0, 0),
-            padding=6,
+            padding=ft.Padding.symmetric(horizontal=6, vertical=1),
         )
 
         # Quita el splash de arranque justo al pintar la app real (evita ver el
@@ -194,16 +240,20 @@ class AppTesoreria:
         self._nav_items[idx]["container"].update()
         self._area.update()
 
+    @staticmethod
+    def _logo_src(oscuro: bool) -> str:
+        return ("Imagenes/Quetzaltic Texto Blanco .png" if oscuro
+                else "Imagenes/Quetzaltic Texto negro.png")
+
     def _alternar_tema(self, _e) -> None:
-        """Cambia entre modo claro y oscuro (y ajusta el logo y el ícono)."""
+        """Cambia entre modo claro y oscuro (ajusta logo e ícono) y RECUERDA la
+        elección para el próximo arranque."""
         oscuro = self.page.theme_mode != ft.ThemeMode.DARK
         self.page.theme_mode = ft.ThemeMode.DARK if oscuro else ft.ThemeMode.LIGHT
-        self.logo.src = (
-            "Imagenes/Quetzaltic Texto Blanco .png" if oscuro
-            else "Imagenes/Quetzaltic Texto negro.png"
-        )
+        self.logo.src = self._logo_src(oscuro)
         self.btn_tema.icon = ft.Icons.LIGHT_MODE if oscuro else ft.Icons.DARK_MODE
         self.btn_tema.tooltip = "Modo claro" if oscuro else "Modo oscuro"
+        _guardar_tema_oscuro(oscuro)
         self.page.update()
 
     # ----------------------------------------------------- actualizaciones
@@ -397,6 +447,26 @@ async def _revisar_actualizacion_2do_plano(page: ft.Page, app: "AppTesoreria") -
 
 
 _CLAVE_VENTANA = "ventana"
+_CLAVE_TEMA = "tema"
+
+
+def _tema_oscuro_guardado() -> bool:
+    """True si la última sesión quedó en modo oscuro (best-effort: si no hay
+    preferencia o falla la lectura, arranca en claro)."""
+    try:
+        from core import preferencias
+        return preferencias.cargar_valor(_CLAVE_TEMA) == "oscuro"
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _guardar_tema_oscuro(oscuro: bool) -> None:
+    """Recuerda la preferencia de tema (claro/oscuro) para el próximo arranque."""
+    try:
+        from core import preferencias
+        preferencias.guardar_valor(_CLAVE_TEMA, "oscuro" if oscuro else "claro")
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _restaurar_ventana(page: ft.Page) -> None:
@@ -461,8 +531,14 @@ async def main(page: ft.Page) -> None:
     # Icono de la ventana / barra de tareas (mismo que el del escritorio).
     # Ruta relativa al assets_dir (rutas.BUNDLE), igual que el logo del encabezado.
     page.window.icon = "Imagenes/icon.ico"
-    page.padding = 18
-    page.theme_mode = ft.ThemeMode.LIGHT
+    # Padding inferior menor que el resto: el pie va al fondo y, con 18 abajo, el
+    # espacio bajo la firma superaba al de encima (spacing de la columna) y el
+    # texto quedaba por encima del centro. Se equilibra reduciéndolo.
+    page.padding = ft.Padding.only(left=18, right=18, top=18, bottom=10)
+    # Tema recordado de la última sesión (claro por defecto).
+    page.theme_mode = (
+        ft.ThemeMode.DARK if _tema_oscuro_guardado() else ft.ThemeMode.LIGHT
+    )
     # Barras de scroll siempre visibles e interactivas (no solo al hacer hover),
     # para que el usuario pueda desplazarse en tablas anchas sin adivinar.
     _barra = ft.ScrollbarTheme(

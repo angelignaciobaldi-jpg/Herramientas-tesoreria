@@ -34,6 +34,18 @@ def _ascii(texto: str, mayusculas: bool = False) -> str:
     return " ".join(s.split())
 
 
+def banco_formato(texto: str) -> str | None:
+    """Formato de layout según el banco que menciona `texto` (p. ej. el nombre de la
+    cuenta de origen). Devuelve 'banregio' o 'bancomer', o None si el banco no tiene
+    un formato de generación soportado por la app."""
+    t = _ascii(texto, mayusculas=True)
+    if "BANREGIO" in t:
+        return "banregio"
+    if "BBVA" in t or "BANCOMER" in t:
+        return "bancomer"
+    return None
+
+
 def _monto16(monto: float | None) -> str:
     s = f"{float(monto or 0):.2f}"
     return s.rjust(16, "0")[-16:]
