@@ -107,12 +107,7 @@ _AYUDA_SOLICITUDES = (
 # Texto de ayuda del ícono de interrogante junto a "Buscar solicitudes de pago".
 _AYUDA_BUSCAR = (
     'Busca las solicitudes de pago pendientes en la sección "Dispersiones (no '
-    'Pemex)" del "Dashboard Tesorería".\n\n'
-    "Búsqueda por reportes:\n"
-    "- Permite subir uno o más reportes de solicitudes de pago (no Pemex).\n"
-    "- Se buscarán y agregarán las facturas que se encuentren en el reporte y en "
-    "SIPP.\n"
-    "- El proceso de búsqueda será automático."
+    'Pemex)" del "Dashboard Tesorería".'
 )
 
 # --- Formato de moneda ---------------------------------------------------
