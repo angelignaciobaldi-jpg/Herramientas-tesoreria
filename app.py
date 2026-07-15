@@ -87,6 +87,7 @@ class AppTesoreria:
         # pantalla estuviera rota, el error se contiene en _arrancar_app (que lo
         # muestra en una pantalla clara) en vez de tumbar todo el proceso.
         from ui.alta_beneficiarios import SeccionAltaBeneficiarios
+        from ui.cheques import SeccionCheques
         from ui.configuracion import SeccionConfiguracion
         from ui.devoluciones import SeccionDevoluciones
         from ui.dispersion_no_pemex import SeccionDispersionNoPemex
@@ -96,6 +97,7 @@ class AppTesoreria:
         self.alta = SeccionAltaBeneficiarios(self)
         self.devoluciones = SeccionDevoluciones(self)
         self.dispersion_no_pemex = SeccionDispersionNoPemex(self)
+        self.cheques = SeccionCheques(self)
 
         # Área de contenido: las tres pantallas viven aquí; solo se muestra la
         # activa (se alterna 'visible'), en vez de un TabBarView de Material.
@@ -103,6 +105,7 @@ class AppTesoreria:
             self.alta.contenido,
             self.devoluciones.contenido,
             self.dispersion_no_pemex.contenido,
+            self.cheques.contenido,
         ]
         for i, seccion in enumerate(self._secciones):
             seccion.visible = i == 0
@@ -177,6 +180,7 @@ class AppTesoreria:
             ("Alta de beneficiarios", ft.Icons.ACCOUNT_BALANCE),
             ("Generar dispersión devoluciones", ft.Icons.CURRENCY_EXCHANGE),
             ("Dispersión (No Pemex)", ft.Icons.PAYMENTS),
+            ("Cheques", ft.Icons.REQUEST_QUOTE),
         ]
         controles = []
         for idx, (texto, icono) in enumerate(definiciones):
