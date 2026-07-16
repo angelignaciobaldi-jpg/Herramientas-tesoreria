@@ -16,6 +16,7 @@ El banco destino NO se captura: se deduce de los 3 primeros dígitos de la CLABE
 
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 from datetime import date
@@ -23,12 +24,13 @@ from datetime import date
 import flet as ft
 
 from core import (
-    cuentas_bancarias, exportador_devoluciones, reporte_excel,
+    api, cuentas_bancarias, exportador_devoluciones, reporte_excel,
     solicitudes_devolucion,
 )
 from core.catalogo_bancos import banco_desde_clabe
 from ui.comun import (
-    GRIS, NARANJA, ROJO, VERDE, W_BANCO, W_CLABE, W_MONTO, W_NOMBRE,
+    GRIS, ID_POR_EMPRESA, NARANJA, NOMBRES_EMPRESAS, ROJO, VERDE,
+    W_BANCO, W_CLABE, W_MONTO, W_NOMBRE,
     celda_centrada, encabezado_col, fmt_monto, parse_monto, solo_digitos, tarjeta,
 )
 
@@ -214,15 +216,15 @@ class SeccionDevoluciones:
         self.app = app
         self.page = app.page
         self.filas: list[FilaSolicitud] = []
-        self._empresas_val = {
-            e: True for e in solicitudes_devolucion.empresas()  # todas por defecto
-        }
+        # Empresas y sus IDs: fuente única en ui/comun.EMPRESAS. Por defecto se
+        # consultan todas (todas marcadas).
+        self._empresas_val = {e: True for e in NOMBRES_EMPRESAS}
         self.catalogo = cuentas_bancarias.CatalogoCuentas()
         self.contenido = self._construir()
 
     def empresas_solicitantes(self) -> list[str]:
-        """Empresas del desplegable 'Empresa solicitante' (las del SIPP)."""
-        return solicitudes_devolucion.empresas()
+        """Empresas del desplegable 'Empresa solicitante' (las de ui/comun)."""
+        return list(NOMBRES_EMPRESAS)
 
     def recargar_catalogo(self) -> None:
         """Relee el Excel de cuentas y refresca el combo de empresas que dispersan.
@@ -248,6 +250,36 @@ class SeccionDevoluciones:
             label="Empresas a consultar", width=280, read_only=True,
             value=self._resumen_empresas(), suffix_icon=ft.Icons.ARROW_DROP_DOWN,
             on_click=lambda e: self._abrir_selector_empresas(),
+        )
+        self.btn_consultar = ft.FilledButton(
+            content="Consultar solicitudes", icon=ft.Icons.SEARCH,
+            on_click=self._consultar,
+        )
+        # Rango de fechas de la consulta (opcional): el servicio filtra por
+        # fechaInicio/fechaFin. Campos de solo lectura con calendario (como el RPA).
+        self.dp_fi = ft.DatePicker(
+            first_date=date(2020, 1, 1), last_date=date(2035, 12, 31),
+            help_text="Fecha inicio de la consulta",
+            on_change=lambda e: self._fecha_consulta(self.tf_fi, self.dp_fi),
+        )
+        self.dp_ff = ft.DatePicker(
+            first_date=date(2020, 1, 1), last_date=date(2035, 12, 31),
+            help_text="Fecha fin de la consulta",
+            on_change=lambda e: self._fecha_consulta(self.tf_ff, self.dp_ff),
+        )
+        self.tf_fi = ft.TextField(
+            label="Fecha inicio", hint_text="DD/MM/AAAA", width=160, read_only=True,
+            dense=True, content_padding=10, suffix_icon=ft.Icons.CALENDAR_MONTH,
+            on_click=lambda e: self.page.show_dialog(self.dp_fi),
+        )
+        self.tf_ff = ft.TextField(
+            label="Fecha fin", hint_text="DD/MM/AAAA", width=160, read_only=True,
+            dense=True, content_padding=10, suffix_icon=ft.Icons.CALENDAR_MONTH,
+            on_click=lambda e: self.page.show_dialog(self.dp_ff),
+        )
+        self.btn_limpiar_fechas = ft.IconButton(
+            icon=ft.Icons.CLEAR, tooltip="Limpiar fechas (consultar sin rango)",
+            icon_color=GRIS, on_click=self._limpiar_fechas_consulta,
         )
         self.txt_contador = ft.Text("Sin registros.", size=12, color=GRIS,
                                     weight=ft.FontWeight.BOLD)
@@ -282,10 +314,10 @@ class SeccionDevoluciones:
                     ft.Row(
                         [
                             self.tf_empresas,
-                            ft.FilledButton(
-                                content="Consultar solicitudes", icon=ft.Icons.SEARCH,
-                                on_click=self._consultar,
-                            ),
+                            self.tf_fi,
+                            self.tf_ff,
+                            self.btn_limpiar_fechas,
+                            self.btn_consultar,
                             ft.OutlinedButton(
                                 content="Agregar movimiento manual", icon=ft.Icons.ADD,
                                 on_click=self._agregar_manual,
@@ -316,7 +348,7 @@ class SeccionDevoluciones:
                         "Los datos llegan llenos del SIPP pero puedes editarlos (empresa, "
                         "cliente, CLABE, monto y concepto); el botón ↺ restaura el original. "
                         "Los movimientos manuales no llevan folio y su banco se deduce de la "
-                        "CLABE. Datos de prueba mientras se conecta el SIPP.",
+                        "CLABE.",
                         color=GRIS, size=12, italic=True,
                     ),
                     ft.Row([self.tabla], scroll=ft.ScrollMode.AUTO),
@@ -504,27 +536,90 @@ class SeccionDevoluciones:
             )
         )
 
-    def _consultar(self, _e=None) -> None:
-        """Trae las solicitudes autorizadas de las empresas elegidas. Conserva los
-        movimientos manuales ya capturados (solo reemplaza las del SIPP)."""
-        empresas = [e for e, v in self._empresas_val.items() if v]
-        if not empresas:
+    def _fecha_consulta(self, campo: ft.TextField, dp: ft.DatePicker) -> None:
+        """Vuelca la fecha elegida en el calendario al campo, como DD/MM/AAAA."""
+        if dp.value:
+            campo.value = dp.value.strftime("%d/%m/%Y")
+            self.page.update()
+
+    def _limpiar_fechas_consulta(self, _e=None) -> None:
+        """Borra el rango de fechas (para consultar sin filtro de fecha)."""
+        self.dp_fi.value = None
+        self.dp_ff.value = None
+        self.tf_fi.value = ""
+        self.tf_ff.value = ""
+        self.page.update()
+
+    def _consultar_api(self, nombres: list[str], fecha_inicio: str | None,
+                       fecha_fin: str | None) -> list:
+        """Consulta la API (una llamada por empresa, usando su id de ui/comun) y
+        junta todas las solicitudes. Corre en un hilo (lo llama _consultar con
+        asyncio.to_thread) porque hace red y no debe congelar la interfaz."""
+        todas = []
+        for nombre in nombres:
+            id_empresa = ID_POR_EMPRESA.get(nombre)
+            if id_empresa is None:
+                continue
+            todas.extend(solicitudes_devolucion.consultar(
+                id_empresa, nombre, fecha_inicio, fecha_fin))
+        return todas
+
+    async def _consultar(self, _e=None) -> None:
+        """Trae las solicitudes autorizadas de las empresas elegidas desde la API,
+        opcionalmente filtradas por rango de fechas. Conserva los movimientos
+        manuales ya capturados (solo reemplaza las del SIPP)."""
+        nombres = [e for e, v in self._empresas_val.items() if v]
+        if not nombres:
             self.app.avisar("Elige al menos una empresa para consultar.", ROJO)
             return
+        # Rango de fechas (opcional). El servicio las espera como 'YYYY-MM-DD'.
+        fi, ff = self.dp_fi.value, self.dp_ff.value
+        if fi and ff and fi > ff:
+            self.app.avisar(
+                "La fecha inicio no puede ser posterior a la fecha fin.", ROJO)
+            return
+        fecha_inicio = fi.strftime("%Y-%m-%d") if fi else None
+        fecha_fin = ff.strftime("%Y-%m-%d") if ff else None
+
+        self.btn_consultar.disabled = True
+        self.txt_contador.value = "Consultando solicitudes…"
+        self.page.update()
         try:
-            resultados = solicitudes_devolucion.consultar(empresas)
+            resultados = await asyncio.to_thread(
+                self._consultar_api, nombres, fecha_inicio, fecha_fin)
+        except api.ApiSinConexion as exc:
+            self._fin_consulta()
+            self.app.avisar(
+                "No se pudo conectar con el servicio de solicitudes. Revisa tu "
+                f"conexión e inténtalo de nuevo. ({exc})", ROJO)
+            return
+        except api.ErrorRespuestaApi as exc:
+            self._fin_consulta()
+            detalle = ""
+            if exc.status in (401, 403):
+                detalle = " Revisa el token de la API en Configuración (⚙)."
+            self.app.avisar(
+                f"El servicio respondió con error (HTTP {exc.status}).{detalle}", ROJO)
+            return
         except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self._fin_consulta()
             self.app.avisar(f"No se pudo consultar: {exc}", ROJO)
             return
+        self._fin_consulta()
         manuales = [f for f in self.filas if f.manual]
         self.filas = [FilaSolicitud(self, s) for s in resultados] + manuales
         self._refrescar()
         if resultados:
             self.app.avisar(
-                f"{len(resultados)} solicitud(es) autorizada(s) encontrada(s).", VERDE)
+                f"{len(resultados)} solicitud(es) encontrada(s).", VERDE)
         else:
             self.app.avisar(
-                "No hay solicitudes autorizadas para las empresas elegidas.", NARANJA)
+                "No hay solicitudes para las empresas elegidas.", NARANJA)
+
+    def _fin_consulta(self) -> None:
+        self.btn_consultar.disabled = False
+        self._actualizar_contador()
+        self.page.update()
 
     def _agregar_manual(self, _e=None) -> None:
         """Agrega una fila vacía para capturar un movimiento a mano (sin folio)."""
