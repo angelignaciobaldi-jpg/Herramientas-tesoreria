@@ -302,6 +302,11 @@ class SeccionDevoluciones:
                                 content="Generar Excel", icon=ft.Icons.TABLE_VIEW,
                                 on_click=self._generar_excel,
                             ),
+                            ft.OutlinedButton(
+                                content="Eliminar todos", icon=ft.Icons.DELETE_SWEEP_OUTLINED,
+                                on_click=self._eliminar_todos,
+                                style=ft.ButtonStyle(color=ROJO),
+                            ),
                             self.txt_contador,
                         ],
                         spacing=10, wrap=True,
@@ -530,6 +535,38 @@ class SeccionDevoluciones:
         if fila in self.filas:
             self.filas.remove(fila)
         self._refrescar()
+
+    def _eliminar_todos(self, _e=None) -> None:
+        """Vacía la tabla (solicitudes consultadas + movimientos manuales), con
+        confirmación por lo que se pierde (ediciones y capturas manuales)."""
+        if not self.filas:
+            self.app.avisar("No hay registros que eliminar.", GRIS)
+            return
+
+        def confirmar(_ev=None):
+            cuantos = len(self.filas)
+            self.filas = []
+            self.page.pop_dialog()
+            self._refrescar()
+            self.app.avisar(f"{cuantos} registro(s) eliminado(s) de la tabla.", GRIS)
+
+        self.page.show_dialog(
+            ft.AlertDialog(
+                modal=True,
+                title=ft.Text("Eliminar todos los registros"),
+                content=ft.Text(
+                    f"¿Quitar los {len(self.filas)} registro(s) de la tabla "
+                    "(solicitudes y movimientos manuales)? Se perderán las ediciones "
+                    "y capturas. Las solicitudes del SIPP puedes volver a consultarlas."
+                ),
+                actions=[
+                    ft.TextButton("Cancelar", on_click=lambda e: self.page.pop_dialog()),
+                    ft.FilledButton("Eliminar todos", on_click=confirmar,
+                                    color=ft.Colors.WHITE, bgcolor=ROJO),
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+        )
 
     def _seleccionar_todas(self, _e=None) -> None:
         if not self.filas:
