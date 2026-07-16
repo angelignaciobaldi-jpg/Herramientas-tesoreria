@@ -27,6 +27,28 @@ def _rgb(r: int, g: int, b: int) -> int:
     return r | (g << 8) | (b << 16)
 
 
+def _tope_x_layout(coords: dict) -> float:
+    """Máximo borde-derecho lógico (x, en mm) entre los campos del layout,
+    considerando el ancho y la alineación de cada recuadro. Al girar 90° CCW ese
+    borde es el que queda MÁS ARRIBA en la página, así que sirve para anclar el
+    'margen_superior' (el elemento más alto se coloca en esa Y)."""
+    tope = 0.0
+    for p in coords.values():
+        if not isinstance(p, dict) or "x" not in p:
+            continue  # llaves escalares como 'margen_superior' se ignoran
+        x = float(p["x"])
+        ancho = float(p.get("ancho_max") or 0)
+        alinear = p.get("alineacion", "izq")
+        if alinear == "der":
+            borde = x
+        elif alinear == "centro":
+            borde = x + ancho / 2
+        else:
+            borde = x + ancho
+        tope = max(tope, borde)
+    return tope
+
+
 if sys.platform == "win32":
     import ctypes
     from ctypes import wintypes
@@ -44,6 +66,31 @@ if sys.platform == "win32":
     _TRANSPARENT = 1
     _BLACK_PEN, _SYSTEM_FONT = 7, 13  # stock objects
     _DEFAULT_CHARSET = 1
+
+    # Margen superior (mm) por defecto para la impresión VERTICAL si un layout no
+    # define 'margen_superior': el elemento más alto del cheque queda con su borde
+    # superior a esta distancia del borde de la página.
+    _MARGEN_SUP_DEFECTO = 10
+
+    # Modo CALIBRACIÓN: True imprime la cuadrícula milimétrica + los datos en ROJO
+    # con sus recuadros (para calibrar layouts nuevos). False = impresión NORMAL
+    # (solo el texto del cheque, en negro, sin rejilla ni recuadros). Cámbialo a
+    # True temporalmente cuando agregues/afines un layout.
+    _MODO_CALIBRACION = False
+
+    # Tamaño de fuente (pt) de los datos del cheque en la impresión. El monto en
+    # letra usa una fuente más COMPACTA (condensada y algo menor) porque es larga;
+    # si aun así no cabe, se parte en 2 renglones reduciendo hasta _PTS_LETRAS_MIN.
+    # Fuente condensada para todos los datos del cheque (si no existe, GDI
+    # sustituye por la más parecida sin fallar).
+    _FAMILIA = "Arial Narrow"
+    # Un solo tamaño para todos los campos; si un campo largo no cabe se reduce
+    # hasta _PTS_MIN al partirlo en 2 renglones.
+    _PTS_LETRAS = 9
+    _PTS_LETRAS_MIN = 6
+    # Interlínea de un campo a 2 renglones (factor del alto del texto): apretada
+    # para que queden lo más pegados posible sin solaparse.
+    _FACTOR_INTERLINEA = 0.9
 
     # Flags de EnumPrinters: impresoras locales + conexiones de red.
     _ENUM_LOCAL, _ENUM_CONNECTIONS = 0x2, 0x4
@@ -159,6 +206,11 @@ if sys.platform == "win32":
             self.phys_w = _gdi.GetDeviceCaps(hdc, _PHYSICALWIDTH)
             self.phys_h = _gdi.GetDeviceCaps(hdc, _PHYSICALHEIGHT)
             self._objetos: list = []
+            # Rotación 90° CCW (impresión vertical): cuando `girar` es True, cada
+            # punto lógico (x, y) se mapea a la página como (y, largo_mm - x) y el
+            # texto se dibuja con la fuente rotada. Se conmuta por dibujo.
+            self.girar = False
+            self.largo_mm = 0.0
 
         # --- conversión mm -> pixeles de dispositivo (restando el offset) ---
         def _px_x(self, mm: float) -> int:
@@ -166,6 +218,17 @@ if sys.platform == "win32":
 
         def _px_y(self, mm: float) -> int:
             return int(round(mm / 25.4 * self.dpiy)) - self.offy
+
+        def _map(self, x: float, y: float) -> tuple[float, float]:
+            """Punto lógico (marco horizontal del layout) -> punto de página (mm).
+            Si `girar`, rota 90° CCW: (x, y) -> (y, largo_mm - x)."""
+            return (y, self.largo_mm - x) if self.girar else (x, y)
+
+        def _px_pt(self, x: float, y: float) -> tuple[int, int]:
+            """Punto lógico (mm) -> pixeles de dispositivo, aplicando la rotación."""
+            mx, my = self._map(x, y)
+            return (int(round(mx / 25.4 * self.dpix)) - self.offx,
+                    int(round(my / 25.4 * self.dpiy)) - self.offy)
 
         # --- medidas del papel / área imprimible, en mm ---------------------
         @property
@@ -198,36 +261,53 @@ if sys.platform == "win32":
             self._objetos.append(pluma)
             return pluma
 
-        def crear_fuente(self, puntos: float, negrita: bool = False):
+        def crear_fuente(self, puntos: float, negrita: bool = False,
+                         familia: str = "Arial"):
             alto = -int(round(puntos / 72 * self.dpiy))  # negativo = alto de car.
             peso = 700 if negrita else 400
+            # Vertical: escapement/orientation = 900 (90° CCW, en décimas de grado).
+            esc = 900 if self.girar else 0
+            # Si la familia no existe (p. ej. 'Arial Narrow' sin Office), GDI
+            # sustituye por la más parecida; no falla.
             fuente = _gdi.CreateFontW(
-                alto, 0, 0, 0, peso, 0, 0, 0, _DEFAULT_CHARSET, 0, 0, 0, 0,
-                "Arial")
+                alto, 0, esc, esc, peso, 0, 0, 0, _DEFAULT_CHARSET, 0, 0, 0, 0,
+                familia)
             self._objetos.append(fuente)
             return fuente
 
         # --- primitivas de dibujo (coordenadas en mm) -----------------------
         def linea(self, pluma, x1: float, y1: float, x2: float, y2: float):
             _gdi.SelectObject(self.hdc, pluma)
-            _gdi.MoveToEx(self.hdc, self._px_x(x1), self._px_y(y1), None)
-            _gdi.LineTo(self.hdc, self._px_x(x2), self._px_y(y2))
+            p1x, p1y = self._px_pt(x1, y1)
+            p2x, p2y = self._px_pt(x2, y2)
+            _gdi.MoveToEx(self.hdc, p1x, p1y, None)
+            _gdi.LineTo(self.hdc, p2x, p2y)
 
         def texto(self, fuente, x: float, y: float, texto: str,
                   color: int = 0, alinear: str = "izq"):
             """Dibuja `texto` con la esquina/borde dado en (x, y) mm.
 
             alinear: 'izq' (x = borde izquierdo), 'der' (x = borde derecho),
-            'centro' (x = centro horizontal)."""
+            'centro' (x = centro horizontal). La alineación se resuelve en el marco
+            lógico y luego se mapea (respeta la rotación vertical)."""
             _gdi.SelectObject(self.hdc, fuente)
             _gdi.SetTextColor(self.hdc, color)
-            px, py = self._px_x(x), self._px_y(y)
             if alinear != "izq":
                 tam = _SIZE()
                 _gdi.GetTextExtentPoint32W(self.hdc, texto, len(texto),
                                            ctypes.byref(tam))
-                px -= tam.cx if alinear == "der" else tam.cx // 2
+                ancho_mm = tam.cx / self.dpix * 25.4
+                x -= ancho_mm if alinear == "der" else ancho_mm / 2
+            px, py = self._px_pt(x, y)
             _gdi.TextOutW(self.hdc, px, py, texto, len(texto))
+
+        def medir_mm(self, fuente, texto: str) -> float:
+            """Ancho (mm) que ocupa `texto` con `fuente` en este dispositivo."""
+            _gdi.SelectObject(self.hdc, fuente)
+            tam = _SIZE()
+            _gdi.GetTextExtentPoint32W(self.hdc, texto, len(texto),
+                                       ctypes.byref(tam))
+            return tam.cx / self.dpix * 25.4
 
         def cerrar(self):
             # No se puede borrar un objeto seleccionado: primero se reponen los
@@ -358,6 +438,156 @@ if sys.platform == "win32":
         imprimir(nombre, "Hoja de calibración de cheques", _dibujar_calibracion,
                  salida=salida)
 
+    # ------------------------------------------------ prueba de cheque (overlay)
+    def _dibujar_linea(l: "_Lienzo", fuente, pos: dict, texto: str, color: int,
+                       guia, alto_txt: float) -> None:
+        """Dibuja un renglón en `pos` ({x, y, alineacion, ancho_max}). Si `guia` no
+        es None y hay ancho_max, traza además su recuadro fino (guía de calibración);
+        en impresión normal `guia` es None y solo se dibuja el texto."""
+        x, y = float(pos["x"]), float(pos["y"])
+        alinear = pos.get("alineacion", "izq")
+        l.texto(fuente, x, y, texto, color=color, alinear=alinear)
+        ancho = pos.get("ancho_max")
+        if ancho and guia is not None:
+            if alinear == "der":
+                xa, xb = x - ancho, x
+            elif alinear == "centro":
+                xa, xb = x - ancho / 2, x + ancho / 2
+            else:
+                xa, xb = x, x + ancho
+            ya, yb = y - 0.6, y + alto_txt + 0.6
+            l.linea(guia, xa, ya, xb, ya)   # borde superior
+            l.linea(guia, xb, ya, xb, yb)   # borde derecho
+            l.linea(guia, xb, yb, xa, yb)   # borde inferior
+            l.linea(guia, xa, yb, xa, ya)   # borde izquierdo
+
+    def _dibujar_datos_cheque(l: "_Lienzo", campos: dict, coords: dict,
+                              color: int, cajas: bool = True) -> None:
+        """Dibuja los datos del cheque (`campos`: campo -> texto) en las posiciones
+        de `coords` (campo -> {x, y, alineacion, ancho_max} en mm). Si `cajas`,
+        traza además el recuadro fino de cada campo (guía de calibración); en
+        impresión normal `cajas=False` y solo sale el texto."""
+        fuente = l.crear_fuente(_PTS_LETRAS, familia=_FAMILIA)
+        guia = l.crear_pluma(0, color) if cajas else None
+        alto_normal = _PTS_LETRAS / 72 * 25.4
+        for campo in ("fecha", "monto_numero"):
+            pos = coords.get(campo)
+            texto = campos.get(campo)
+            if pos and texto:
+                _dibujar_linea(l, fuente, pos, str(texto), color, guia, alto_normal)
+        # Beneficiario: fuente condensada; si no cabe, 2 renglones anclados en
+        # 'beneficiario_2'.
+        _dibujar_campo_multilinea(
+            l, coords, campos.get("beneficiario"), "beneficiario",
+            "beneficiario_2", _FAMILIA, _PTS_LETRAS, _PTS_LETRAS_MIN, color, guia)
+        # Monto en letra: fuente condensada; si no cabe, 2 renglones anclados en
+        # 'monto_letras_2'.
+        _dibujar_campo_multilinea(
+            l, coords, campos.get("monto_letras"), "monto_letras",
+            "monto_letras_2", _FAMILIA, _PTS_LETRAS, _PTS_LETRAS_MIN,
+            color, guia)
+
+    def _dibujar_campo_multilinea(l: "_Lienzo", coords: dict, texto, campo1: str,
+                                  campo2: str, familia: str, pts_base: float,
+                                  pts_min: float, color: int, guia) -> None:
+        """Dibuja un campo que puede requerir 2 renglones:
+          - Si cabe en UN renglón (fuente base `pts_base`/`familia`) -> se dibuja en
+            `campo1`.
+          - Si no cabe -> se parte en 2 renglones anclados en `campo2` (o `campo1`
+            si no está), reduciendo la fuente hasta `pts_min` y con interlínea
+            apretada para que queden pegados sin solaparse."""
+        pos1 = coords.get(campo1)
+        if not pos1 or not texto:
+            return
+        texto = str(texto)
+        ancho1 = pos1.get("ancho_max")
+        fuente_base = l.crear_fuente(pts_base, familia=familia)
+        alto_base = pts_base / 72 * 25.4
+        # 1 renglón: cabe tal cual en el ancho de `campo1`.
+        if not ancho1 or l.medir_mm(fuente_base, texto) <= ancho1:
+            _dibujar_linea(l, fuente_base, pos1, texto, color, guia, alto_base)
+            return
+        # 2 renglones: la posición HORIZONTAL (x, alineación, ancho_max) sale
+        # SIEMPRE del campo principal (`campo1`); `campo2` solo aporta la Y del
+        # bloque (para subirlo y que quepan las 2 líneas). Así, aunque `campo2`
+        # tenga x/ancho distintos, el x y el ancho del campo principal se respetan.
+        y_ancla = float((coords.get(campo2) or pos1).get("y", pos1["y"]))
+        fuente, lineas, pts = _ajustar_dos_lineas(
+            l, texto, ancho1, familia, pts_base, pts_min)
+        alto_txt = pts / 72 * 25.4
+        pos_l1 = dict(pos1)
+        pos_l1["y"] = y_ancla
+        _dibujar_linea(l, fuente, pos_l1, lineas[0], color, guia, alto_txt)
+        if len(lineas) > 1:
+            pos_l2 = dict(pos1)
+            pos_l2["y"] = y_ancla + alto_txt * _FACTOR_INTERLINEA
+            _dibujar_linea(l, fuente, pos_l2, lineas[1], color, guia, alto_txt)
+
+    def _envolver_dos_lineas(l: "_Lienzo", fuente, texto: str,
+                             ancho_max: float) -> list[str]:
+        """Parte `texto` en 1 o 2 renglones (por palabras) para que el 1º quepa en
+        `ancho_max`. Llena el 1er renglón lo más posible y el resto va al 2º."""
+        if not ancho_max or l.medir_mm(fuente, texto) <= ancho_max:
+            return [texto]
+        palabras = texto.split()
+        linea1: list[str] = []
+        for w in palabras:
+            prueba = " ".join(linea1 + [w])
+            if linea1 and l.medir_mm(fuente, prueba) > ancho_max:
+                break
+            linea1.append(w)
+        resto = palabras[len(linea1):]
+        return [" ".join(linea1)] + ([" ".join(resto)] if resto else [])
+
+    def _ajustar_dos_lineas(l: "_Lienzo", texto: str, ancho: float, familia: str,
+                            pts_base: float, pts_min: float):
+        """Elige la fuente (`familia`) y el partido en 2 renglones: parte de
+        `pts_base` y reduce hasta que ambos renglones quepan en `ancho` (o llega a
+        `pts_min`). Devuelve (fuente, [renglones], pts)."""
+        pts = pts_base
+        while pts >= pts_min:
+            fuente = l.crear_fuente(pts, familia=familia)
+            lineas = _envolver_dos_lineas(l, fuente, texto, ancho)
+            cabe = not ancho or all(l.medir_mm(fuente, ln) <= ancho for ln in lineas)
+            if len(lineas) <= 2 and cabe:
+                return fuente, lineas, pts
+            pts -= 0.5
+        # Último recurso: la fuente mínima con lo que resulte (hasta 2 renglones).
+        fuente = l.crear_fuente(pts_min, familia=familia)
+        return fuente, _envolver_dos_lineas(l, fuente, texto, ancho), pts_min
+
+    def imprimir_prueba_cheque(nombre: str, campos: dict, coords: dict,
+                               salida: str | None = None) -> None:
+        """Imprime el cheque (texto negro, rotado 90° CCW) en la impresora `nombre`.
+
+        En modo NORMAL (`_MODO_CALIBRACION = False`) sale solo el texto del cheque,
+        en negro, sin rejilla ni recuadros. Con `_MODO_CALIBRACION = True` imprime
+        además la cuadrícula milimétrica y los datos en rojo con sus recuadros, para
+        calibrar layouts nuevos. `campos` mapea campo -> texto; `coords` mapea
+        campo -> {x, y, alineacion, ancho_max} (mm)."""
+        # Rojo sobre la rejilla al calibrar; negro puro en impresión normal.
+        color = _rgb(210, 30, 30) if _MODO_CALIBRACION else _rgb(0, 0, 0)
+
+        def dibujar(l: "_Lienzo") -> None:
+            # 'margen_superior' (mm): el elemento MÁS ALTO del cheque queda con su
+            # borde superior en esa Y. Girado, page_y = largo_mm - x, y el borde más
+            # alto corresponde al mayor x lógico (_tope_x_layout); por eso
+            # largo_mm = margen + tope_x hace que ese borde caiga en 'margen'.
+            margen = coords.get("margen_superior", _MARGEN_SUP_DEFECTO)
+            l.largo_mm = margen + _tope_x_layout(coords)
+            # Solo al calibrar: cuadrícula (sin rotar) de referencia de página.
+            if _MODO_CALIBRACION:
+                l.girar = False
+                _dibujar_calibracion(l)
+            # Datos del cheque, ROTADOS 90° CCW (impresión vertical). Los recuadros
+            # de guía solo se dibujan en modo calibración (`cajas`).
+            l.girar = True
+            _dibujar_datos_cheque(l, campos, coords, color,
+                                  cajas=_MODO_CALIBRACION)
+
+        doc = "Cheque (calibración)" if _MODO_CALIBRACION else "Cheque"
+        imprimir(nombre, doc, dibujar, salida=salida)
+
 else:  # fuera de Windows: stubs que no rompen imports (la app es solo Windows)
 
     def listar_impresoras() -> list[str]:
@@ -370,4 +600,7 @@ else:  # fuera de Windows: stubs que no rompen imports (la app es solo Windows)
         raise RuntimeError("La impresión solo está disponible en Windows.")
 
     def imprimir_hoja_calibracion(*_args, **_kwargs) -> None:
+        raise RuntimeError("La impresión solo está disponible en Windows.")
+
+    def imprimir_prueba_cheque(*_args, **_kwargs) -> None:
         raise RuntimeError("La impresión solo está disponible en Windows.")

@@ -21,6 +21,10 @@ from core import rutas
 
 # Nombres de las variables que maneja la app.
 VAR_GITHUB_PAT = "QUETZALTIC_GITHUB_PAT"
+# Microservicios: URL base (p. ej. https://api.quetzaltic.dev) y token opcional
+# (Bearer) para autenticar las peticiones. Los consume core/api.py.
+VAR_API_BASE_URL = "QUETZALTIC_API_BASE_URL"
+VAR_API_TOKEN = "QUETZALTIC_API_TOKEN"
 
 _cargado = False
 
@@ -85,3 +89,15 @@ def obtener(nombre: str, por_defecto: str | None = None, requerido: bool = False
 def github_pat(requerido: bool = True) -> str | None:
     """PAT de GitHub para acceder al repositorio privado (AutoUpdater)."""
     return obtener(VAR_GITHUB_PAT, requerido=requerido)
+
+
+def api_base_url(requerido: bool = False) -> str | None:
+    """URL base de los microservicios (sin '/' final). p. ej.
+    https://api.quetzaltic.dev. La consume core/api.py."""
+    valor = obtener(VAR_API_BASE_URL, requerido=requerido)
+    return valor.rstrip("/") if valor else valor
+
+
+def api_token(requerido: bool = False) -> str | None:
+    """Token (Bearer) opcional para autenticar con los microservicios."""
+    return obtener(VAR_API_TOKEN, requerido=requerido)
