@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import flet as ft
 
-from core import credenciales, cuentas_bancarias, cuentas_dispersion
+from core import ajustes_api, credenciales, cuentas_bancarias, cuentas_dispersion
 from ui.comun import GRIS, ROJO, VERDE
 
 # Ancho útil del modal: los inputs lo abarcan de margen a margen.
@@ -25,6 +25,7 @@ class SeccionConfiguracion:
         self.page = app.page
         self._construir()
         self._cargar_credenciales()
+        self._cargar_ajustes_api()
 
     # ------------------------------------------------------------ UI
     def _construir(self) -> None:
@@ -107,6 +108,43 @@ class SeccionConfiguracion:
             spacing=10, tight=True,
         )
 
+        # Apartado "Integración (API)": URL base y token de los microservicios.
+        # La URL se guarda como preferencia (no es secreta); el token se guarda
+        # CIFRADO con DPAPI en este equipo (nunca en claro, ni en el repo/.exe) y
+        # no se muestra: solo se indica si hay uno guardado.
+        self.tf_api_url = ft.TextField(
+            label="URL base de la API", width=_ANCHO, height=40, dense=True,
+            content_padding=10, hint_text="https://api.quetzaltic.dev",
+        )
+        self.tf_api_token = ft.TextField(
+            label="Token de la API", width=_ANCHO, height=40, password=True,
+            can_reveal_password=True, dense=True, content_padding=10,
+            hint_text="Déjalo vacío para conservar el actual",
+        )
+        self.txt_api_token_estado = ft.Text(size=12)
+        api_apartado = ft.Column(
+            [
+                ft.Text("Integración (API)", size=15, weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    "URL y token de los microservicios. El token se guarda cifrado "
+                    "en este equipo (DPAPI); nunca en claro ni en la instalación.",
+                    size=12, color=GRIS,
+                ),
+                self.tf_api_url,
+                self.tf_api_token,
+                ft.Row(
+                    [
+                        self.txt_api_token_estado,
+                        ft.TextButton("Quitar token", on_click=self._quitar_token),
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER, width=_ANCHO,
+                ),
+            ],
+            spacing=10, tight=True,
+        )
+        self._actualizar_estado_token()
+
         self.dialogo = ft.AlertDialog(
             modal=True,
             # Encabezado: título grande en negritas + botón "X" para cerrar.
@@ -126,7 +164,8 @@ class SeccionConfiguracion:
                     credenciales_apartado, ft.Divider(),
                     cuentas_apartado, ft.Divider(),
                     cuentas_disp_apartado, ft.Divider(),
-                    impresion_apartado,
+                    impresion_apartado, ft.Divider(),
+                    api_apartado,
                 ],
                 spacing=18, tight=True, width=_ANCHO, scroll=ft.ScrollMode.AUTO,
             ),
@@ -161,11 +200,38 @@ class SeccionConfiguracion:
         ).abrir()
 
     def _guardar(self, _e=None) -> None:
-        """Guarda las credenciales (la contraseña, cifrada)."""
+        """Guarda credenciales (contraseña cifrada) y ajustes de la API (URL como
+        preferencia; token cifrado con DPAPI solo si se capturó uno nuevo)."""
         usuario, contrasena = self.credenciales()
         credenciales.guardar(usuario, contrasena)
+        ajustes_api.guardar_base_url(self.tf_api_url.value or "")
+        token = (self.tf_api_token.value or "").strip()
+        if token:  # vacío -> se conserva el token guardado (no se borra al guardar)
+            ajustes_api.guardar_token(token)
         self._cerrar()
         self.app.avisar("Configuración guardada.", VERDE)
+
+    # -------------------------------------------------- integración (API)
+    def _cargar_ajustes_api(self) -> None:
+        """Precarga la URL base guardada (el token NO se muestra por seguridad)."""
+        self.tf_api_url.value = ajustes_api.base_url() or ""
+
+    def _actualizar_estado_token(self) -> None:
+        """Refleja si hay un token guardado localmente (sin mostrarlo)."""
+        if ajustes_api.hay_token_local():
+            self.txt_api_token_estado.value = "Token guardado ✓"
+            self.txt_api_token_estado.color = VERDE
+        else:
+            self.txt_api_token_estado.value = "Sin token guardado."
+            self.txt_api_token_estado.color = GRIS
+
+    def _quitar_token(self, _e=None) -> None:
+        """Elimina el token guardado localmente."""
+        ajustes_api.borrar_token()
+        self.tf_api_token.value = ""
+        self._actualizar_estado_token()
+        self.page.update()
+        self.app.avisar("Token de la API eliminado.", VERDE)
 
     # ----------------------------------------------- catálogo de cuentas
     def _actualizar_estado_cuentas(self) -> None:
