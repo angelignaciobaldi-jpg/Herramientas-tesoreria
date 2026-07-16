@@ -29,14 +29,26 @@ _CLAVE_URL = "api_base_url"
 # Archivo con el token cifrado con DPAPI (por usuario/máquina, fuera del repo).
 _RUTA_TOKEN = os.path.join(rutas.DATOS, "token_api.json")
 
+# URL base QUEMADA por defecto. La URL no es secreta (se ve en el tráfico), así
+# que se deja fija en el código para que la app funcione sin configurar nada. Es
+# solo el ÚLTIMO recurso: la preferencia local (Configuración) y la variable de
+# entorno la SOBRESCRIBEN, útil para apuntar a otro entorno (dev/staging/prod)
+# sin recompilar. Para cambiar el default de fábrica, se edita esta constante.
+_URL_POR_DEFECTO = (
+    "https://us-central1-soluciones-petroil.cloudfunctions.net/billing-toolkit-testing"
+)
+
 
 # --- URL base ------------------------------------------------------------
 def base_url(requerido: bool = False) -> str | None:
-    """URL base (sin '/' final): preferencia local -> variable de entorno. Lanza
-    entorno.FaltaVariableEntorno si `requerido` y no hay ninguna configurada."""
+    """URL base (sin '/' final): preferencia local -> variable de entorno -> URL
+    quemada por defecto. Lanza entorno.FaltaVariableEntorno solo si `requerido` y
+    no hay NINGUNA (incluida la de fábrica, que normalmente siempre está)."""
     url = (preferencias.cargar_valor(_CLAVE_URL) or "").strip()
     if not url:
         url = entorno.api_base_url() or ""
+    if not url:
+        url = _URL_POR_DEFECTO
     url = url.rstrip("/")
     if requerido and not url:
         raise entorno.FaltaVariableEntorno(entorno.VAR_API_BASE_URL)

@@ -65,3 +65,5 @@ _cuentas_dispersion_cache.json
 
 #descargas del rpa
 descargas/
+# Token de la API cifrado con DPAPI (por maquina; NUNCA al repo)
+token_api.json

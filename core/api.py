@@ -89,16 +89,21 @@ def _construir_url(ruta: str, params: dict | None, base_url: str | None) -> str:
     return url
 
 
+# Nombre del header de autenticación que espera el servicio. El token va tal cual
+# (sin prefijo 'Bearer'), no en Authorization.
+_HEADER_TOKEN = "x-auth-token"
+
+
 def _cabeceras(json_body: Any, headers: dict | None,
                token: str | None) -> dict[str, str]:
     """Cabeceras por defecto (Accept/User-Agent, Content-Type si hay cuerpo JSON,
-    Authorization si hay token), fusionadas con las que pase quien llama."""
+    x-auth-token si hay token), fusionadas con las que pase quien llama."""
     cab = {"Accept": "application/json", "User-Agent": _UA}
     if json_body is not None:
         cab["Content-Type"] = "application/json"
     tok = token if token is not None else ajustes_api.token()
     if tok:
-        cab["Authorization"] = f"Bearer {tok}"
+        cab[_HEADER_TOKEN] = tok
     if headers:
         cab.update(headers)
     return cab
@@ -181,7 +186,46 @@ def delete(ruta: str, **kwargs) -> Any:
 
 
 # --- Endpoints concretos -------------------------------------------------
-# A medida que se definan los microservicios, sus funciones específicas van aquí
-# (p. ej. `def proveedores(empresa): return get("/proveedores", params={...})`),
-# de modo que las pantallas llamen a una función con nombre en vez de a una ruta
-# suelta. Por ahora solo está lista la mecánica (get/post/...).
+# Rutas QUEMADAS de los microservicios (relativas a la base de ajustes_api). Se
+# fijan aquí para que las pantallas llamen a una función con NOMBRE en vez de
+# andar con rutas sueltas; si el backend cambia una ruta, se toca solo esta
+# constante. La base la resuelve api._construir_url (ver ajustes_api.base_url).
+
+# Solicitudes de devolución de clientes (para la dispersión de devoluciones).
+RUTA_SOLICITUDES_DEVOLUCION = "/api/clientes/pagos/solicitudes/devoluciones"
+
+
+def solicitudes_devolucion(
+    id_empresa: int | str,
+    *,
+    fecha_inicio: str | None = None,
+    fecha_fin: str | None = None,
+    page: int | None = None,
+    page_size: int | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Consulta las solicitudes de devolución autorizadas del SIPP.
+
+    Query params (se mapean a los nombres que espera el servicio):
+      - `id_empresa`  -> idEmpresa   : identificador de la empresa (REQUERIDO).
+      - `fecha_inicio`-> fechaInicio : fecha 'YYYY-MM-DD' (opcional).
+      - `fecha_fin`   -> fechaFin    : fecha 'YYYY-MM-DD' (opcional).
+      - `page`        -> page        : número de página (opcional).
+      - `page_size`   -> pageSize    : tamaño de página (opcional).
+
+    Los opcionales en None se omiten de la URL. Devuelve el cuerpo ya parseado;
+    el mapeo del JSON a `core.solicitudes_devolucion.SolicitudDevolucion` se hará
+    al conectar de verdad, cuando se conozca el formato exacto de la respuesta.
+
+    TODO(SIPP): confirmar la forma del JSON de respuesta al hacer las pruebas.
+    """
+    if id_empresa is None or str(id_empresa).strip() == "":
+        raise ValueError("idEmpresa es requerido para consultar las solicitudes.")
+    params = {
+        "idEmpresa": id_empresa,
+        "fechaInicio": fecha_inicio,
+        "fechaFin": fecha_fin,
+        "page": page,
+        "pageSize": page_size,
+    }
+    return get(RUTA_SOLICITUDES_DEVOLUCION, params=params, **kwargs)
