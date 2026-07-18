@@ -68,6 +68,26 @@ class AppTesoreria:
         except Exception:  # noqa: BLE001 — el traer-al-frente no es crítico
             pass
 
+    def abrir_en_sistema(self, ruta: str) -> None:
+        """Abre un archivo o carpeta en el programa predeterminado (Explorador/visor)
+        y lo trae AL FRENTE de la app. En Windows, una ventana recién lanzada no puede
+        robar el foco por el 'foreground lock'; además, si la app quedó 'siempre
+        encima', el Explorador saldría detrás. Por eso: (1) se quita el topmost y (2)
+        se autoriza a la ventana que se abre a tomar el foco (AllowSetForegroundWindow).
+        Best-effort: si algo falla, se abre igual con os.startfile."""
+        self._fijar_topmost(False)  # por si un diálogo previo lo dejó activo
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                # ASFW_ANY (-1): permite que el próximo proceso lanzado tome el foco.
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)
+            except Exception:  # noqa: BLE001 — el traer-al-frente no es crítico
+                pass
+        try:
+            os.startfile(ruta)  # noqa: S606 — abre en el visor/Explorador predeterminado
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self.avisar(f"No se pudo abrir: {exc}", ft.Colors.RED_700)
+
     # Servicio compartido por todas las pantallas: aviso tipo snackbar. Opcional:
     # un botón de acción (p. ej. "Abrir") con su callback, y una duración mayor
     # para dar tiempo a hacer clic.
@@ -532,6 +552,15 @@ def _vigilar_ventana(page: ft.Page) -> None:
 
 async def main(page: ft.Page) -> None:
     page.title = "Herramienta Integral de Tesorería"
+    # Localización en español (México): los textos internos de los controles nativos
+    # de Material (p. ej. el diálogo del DatePicker: título, OK/Cancelar, meses y
+    # días) los pone la localización de Flutter según el locale de la página. Sin
+    # esto salen en inglés y no concuerdan con el resto de la interfaz.
+    page.locale_configuration = ft.LocaleConfiguration(
+        supported_locales=[ft.Locale("es", "MX"), ft.Locale("es", "ES"),
+                           ft.Locale("en", "US")],
+        current_locale=ft.Locale("es", "MX"),
+    )
     # Icono de la ventana / barra de tareas (mismo que el del escritorio).
     # Ruta relativa al assets_dir (rutas.BUNDLE), igual que el logo del encabezado.
     page.window.icon = "Imagenes/icon.ico"

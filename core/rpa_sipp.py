@@ -308,8 +308,10 @@ _JS_VALOR_CUENTA_ORIGEN = r"""(ngModel) => {
 # {items:[{prov, cuenta}], concepto, referencia}. Por cada item ubica la fila cuya
 # col0 (proveedor) coincide y cuyo select de col1 tiene seleccionada una cuenta que
 # CONTIENE la cuenta buscada; ahí, si el input de concepto (col2) está vacío escribe
-# el concepto (si no, lo respeta), e ídem referencia (col3). Devuelve
-# {llenados, faltantes:[...]}.
+# el concepto (si no, lo respeta), e ídem referencia (col3). Antes de escribir, LEE la
+# referencia que el portal trae precargada (col3) para devolverla como respaldo del
+# TXT en pesos. Devuelve {llenados, faltantes:[...], leidos:[...]} donde `leidos` va
+# alineado al orden de `items` (referencia del DOM por item, '' si estaba vacía).
 _JS_LLENAR_PAGOS = r"""(args) => {
     const {items, concepto, referencia} = args;
     """ + _JS_NORM + r"""
@@ -326,7 +328,7 @@ _JS_LLENAR_PAGOS = r"""(args) => {
         '[ng-repeat-start="sp in dispersion.pagosProductosProveedores"]')];
     const pend = items.map(it => ({
         prov: norm(it.prov), cuenta: norm(it.cuenta),
-        cuentaDig: soloDig(it.cuenta), ok: false,
+        cuentaDig: soloDig(it.cuenta), ok: false, refDom: '',
     }));
     for (const fila of filas) {
         if (!fila.offsetParent) continue;
@@ -350,6 +352,8 @@ _JS_LLENAR_PAGOS = r"""(args) => {
         if (!p) continue;
         const inpConc = tds[2].querySelector('input, textarea');
         const inpRef  = tds[3].querySelector('input, textarea');
+        // Referencia precargada (DOM) ANTES de escribir: respaldo para el TXT.
+        p.refDom = (inpRef && inpRef.value || '').trim();
         setVal(inpConc, concepto || '');
         setVal(inpRef, referencia || '');
         p.ok = true;
@@ -357,6 +361,7 @@ _JS_LLENAR_PAGOS = r"""(args) => {
     return {
         llenados: pend.filter(p => p.ok).length,
         faltantes: pend.filter(p => !p.ok).map(p => p.prov + ' / ' + p.cuenta),
+        leidos: pend.map(p => p.refDom || ''),
     };
 }"""
 
@@ -404,8 +409,8 @@ class SesionSipp:
     # --- URLs ---
     # Sistema productivo: nuestras actividades (consultar/descargar anexos) no
     # alteran registros reales, así que se opera directo sobre producción.
-    # BASE_URL = "https://dev.sipp.petroil.dev"
-    BASE_URL = "https://sipp.petroil.com.mx"
+    BASE_URL = "https://dev.sipp.petroil.dev"
+    # BASE_URL = "https://sipp.petroil.com.mx"
     URL_LOGIN = BASE_URL + "/login.html"
     URL_CONFIG_SESION = BASE_URL + "/index.cfm#/configuracionsession"
     URL_DASHBOARD_TESOR = BASE_URL + "/#/DashboardTesor"
@@ -689,6 +694,10 @@ class SesionSipp:
             self.URL_DASHBOARD_TESOR, wait_until="domcontentloaded", timeout=self.TIMEOUT_NAV,
         )
         await self.elegir_en_menu("Acciones", "Registrar Dispersión (No Pemex)")
+        # Productivo trae un chat flotante que se solapa sobre los botones; se
+        # oculta aquí para que no bloquee los clics de esta iteración (Aceptar,
+        # Guardar). Cada re-navegación lo recarga, así que se re-oculta por vuelta.
+        await self._ocultar_flotantes()
 
     async def elegir_en_menu(self, menu: str, opcion: str) -> None:
         """Abre un menú desplegable de la navbar (por su texto) y elige una de
@@ -1784,11 +1793,12 @@ class SesionSipp:
 
     async def llenar_pagos_proveedores(
         self, items: list[tuple[str, str]], concepto: str, referencia: str,
-    ) -> int:
+    ) -> dict[tuple[str, str], str]:
         """Por cada (proveedor, cuenta_bancaria) de `items`, ubica su fila en la
         tabla de pagos de la dispersión y escribe concepto/referencia (respetando
-        los que ya vengan precargados). Devuelve cuántas filas llenó. Lanza
-        ErrorSipp si alguna fila no se encontró."""
+        los que ya vengan precargados). Devuelve un mapa {(proveedor, cuenta):
+        referencia_precargada_en_el_DOM} (cadena vacía si venía vacía), que sirve de
+        respaldo para el TXT en pesos. Lanza ErrorSipp si alguna fila no se encontró."""
         page = self._exigir_pagina()
         # Espera a que carguen las cuentas del proveedor (llegan por AJAX).
         await self._esperar_cuentas_proveedores()
@@ -1805,20 +1815,27 @@ class SesionSipp:
                 "No se encontró la fila de pago de %d proveedor(es)/cuenta(s): %s"
                 % (len(faltantes), muestra)
             )
-        return int(res.get("llenados", 0))
+        # `leidos` viene alineado al orden de `items`: se rearma como mapa por par.
+        leidos = res.get("leidos") or []
+        referencias_dom: dict[tuple[str, str], str] = {}
+        for (prov, cuenta), ref in zip(items, leidos):
+            referencias_dom[(prov, cuenta)] = str(ref or "").strip()
+        return referencias_dom
 
     async def guardar_dispersion(self) -> int | None:
         """Pulsa 'Guardar' (ng-click guardarDispersionProveedoresNoPemex()) y espera
         la respuesta del backend, de la que toma QUERY.DATA[0] = el folio nuevo
         generado. Devuelve ese folio (int) o None si no se pudo leer."""
         page = self._exigir_pagina()
+        await self._ocultar_flotantes()  # el chat de productivo tapa 'Guardar'
         boton = page.locator(
             f'[ng-click="{self._NG_GUARDAR_DISPERSION}"]:visible').first
         try:
             async with page.expect_response(
                 lambda r: self._FUNC_GUARDAR in r.url, timeout=self.TIMEOUT_NAV,
             ) as info:
-                await boton.click(timeout=self.TIMEOUT_ELEMENTO)
+                # Clic robusto: si un overlay lo intercepta, cae a clic DOM.
+                await self._click_seguro(boton)
                 # Algunos guardados piden confirmar un aviso; si aparece, se acepta
                 # (es lo que dispara el XHR). Si no hay aviso, no espera de más.
                 await self._confirmar_aviso_si_hay(timeout=2_000)
@@ -1966,7 +1983,7 @@ class SesionSipp:
         except PlaywrightTimeoutError:
             return False
         try:
-            await aceptar.first.click(timeout=self.TIMEOUT_ELEMENTO)
+            await self._click_seguro(aceptar.first)  # a prueba del chat flotante
             return True
         except PlaywrightTimeoutError:
             return False
@@ -1983,7 +2000,7 @@ class SesionSipp:
             ],
             "botón 'Aceptar' del aviso de confirmación",
         )
-        await aceptar.click(timeout=self.TIMEOUT_ELEMENTO)
+        await self._click_seguro(aceptar)  # a prueba del chat flotante
 
     # --------------------------------------------------------- utilidades
     async def _primer_visible(
@@ -2003,6 +2020,41 @@ class SesionSipp:
             if asyncio.get_event_loop().time() >= fin:
                 raise ErrorSipp("No se encontró %s en la página." % descripcion)
             await asyncio.sleep(0.25)
+
+    # Widgets flotantes de productivo (chat de Voiceflow, #voiceflow-button, etc.)
+    # que se solapan sobre los botones y bloquean los clics del RPA. Se inyecta un
+    # <style> idempotente que los oculta y les quita la captura de eventos.
+    _JS_OCULTAR_FLOTANTES = """() => {
+        let st = document.getElementById('rpa-ocultar-flotantes');
+        if (!st) {
+            st = document.createElement('style');
+            st.id = 'rpa-ocultar-flotantes';
+            document.head.appendChild(st);
+        }
+        st.textContent =
+            '#voiceflow-button{display:none!important;pointer-events:none!important}';
+    }"""
+
+    async def _ocultar_flotantes(self) -> None:
+        """Oculta los widgets flotantes (chat de Voiceflow) que en productivo se
+        solapan sobre los botones y bloquean los clics. Best-effort: si algo falla,
+        no interrumpe el flujo."""
+        if self.page is None:
+            return
+        try:
+            await self.page.evaluate(self._JS_OCULTAR_FLOTANTES)
+        except Exception:  # noqa: BLE001 — cosmético, nunca debe abortar
+            pass
+
+    async def _click_seguro(self, locator: "Locator",
+                            timeout: int | None = None) -> None:
+        """Clic robusto a prueba de overlays: intenta el clic normal y, si algo lo
+        intercepta (timeout), cae a un clic a nivel DOM (`el.click()`), que dispara
+        el ng-click ignorando lo que esté encima (p. ej. el chat flotante)."""
+        try:
+            await locator.click(timeout=timeout or self.TIMEOUT_ELEMENTO)
+        except PlaywrightTimeoutError:
+            await locator.evaluate("el => el.click()")
 
     async def _ir_a_ruta_spa(
         self, url: str, ancla: Locator, error: str, diagnostico: str,
