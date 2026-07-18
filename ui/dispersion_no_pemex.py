@@ -19,6 +19,7 @@ cuando exista el proceso de dispersión que se pueda pausar.
 from __future__ import annotations
 
 import asyncio
+import calendar
 import datetime
 import os
 import re
@@ -44,6 +45,10 @@ from core.rpa_sipp import (
 )
 from ui.comun import (CENTRO, EMPRESAS, GRIS, ID_POR_EMPRESA, NARANJA,
                       NOMBRES_EMPRESAS, ROJO, ROJO_BOTON, VERDE, encabezado_col)
+from ui.tabla_responsiva import (Cabecera, ColumnaTabla, FilaDatos,
+                                 SegmentoCabecera, TablaResponsiva)
+from ui.tabla_responsiva import DER as _TDER
+from ui.tabla_responsiva import IZQ as _TIZQ
 
 # Formato de fecha que pide el modal del SIPP.
 _RE_FECHA = re.compile(r"^\d{2}/\d{2}/\d{4}$")
@@ -51,6 +56,10 @@ _RE_FECHA = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 # Alineaciones para las celdas de la tabla.
 _IZQ = ft.Alignment(-1, 0)
 _DER = ft.Alignment(1, 0)
+
+# Margen ("canalón") reservado para que las barras de scroll (que Flet dibuja
+# ENCIMA del contenido) no se solapen con las tablas y obstruyan la información.
+_GUTTER_SCROLL = 14
 
 # Anchos de columna de la tabla de solicitudes (encabezado y celdas).
 _W_CHK = 40
@@ -101,7 +110,14 @@ _FILAS_POR_PAGINA = 100
 
 # Texto de ayuda del ícono de interrogante junto a "Solicitudes a pagar".
 _AYUDA_SOLICITUDES = (
-    "Se generarán las dispersiones en SIPP, el proceso de pago en el banco NO se verá intervenido."
+    "Para dispersar:\n"
+    "1) Marca las solicitudes a pagar (usa el check del encabezado de cada grupo "
+    "para seleccionar todo un proveedor de una vez).\n"
+    "2) Elige la 'Cuenta Bancaria Origen' (obligatoria).\n"
+    "3) Si vas a pagar en pesos a un proveedor en USD, márcalo y elige la CLABE de "
+    "origen del pago en pesos.\n\n"
+    "Se generarán las dispersiones en SIPP; el proceso de pago en el banco NO se "
+    "verá intervenido."
 )
 
 # Texto de ayuda del ícono de interrogante junto a "Buscar solicitudes de pago".
@@ -114,6 +130,12 @@ _AYUDA_BUSCAR = (
 def _fmt_moneda(valor: float | None) -> str:
     """Formatea un monto como moneda con 2 decimales (p. ej. $1,234.50)."""
     return f"${(valor or 0):,.2f}"
+
+
+def _fmt_tc(valor: float | None) -> str:
+    """Formatea el tipo de cambio con 4 decimales (p. ej. $17.5993), tal como lo
+    publica el DOF, para que coincida con el valor usado en el cálculo."""
+    return f"${(valor or 0):,.4f}"
 
 
 # --- Colores de fila por tipo de solicitud -------------------------------
@@ -159,8 +181,57 @@ def _color_fila(f: FilaSolicitud) -> str | None:
     return ft.Colors.with_opacity(_OPACIDAD_FILA, base) if base else None
 
 
+# Columnas de la tabla de solicitudes, definidas por PORCENTAJE del ancho de la
+# tarjeta (la clase TablaResponsiva las convierte a px según el tamaño de ventana).
+# La col 0 es el check (sin extractor). NO se muestran Proveedor/Cuenta (van en la
+# banda de grupo) ni Moneda (va en la pestaña empresa-moneda): es solo VISUAL,
+# FilaSolicitud conserva todos sus campos. Suma de porcentajes ≈ 100 (llena la
+# tarjeta sin scroll; si algún día se suben para pasar de 100, aparece scroll).
+# Cada entrada: (etiqueta, pct, alineación, extractor|None).
+_COLS_PCT = [
+    ("", 3, CENTRO, None),                                    # check
+    ("Folio", 4, CENTRO, lambda f: f.folio),
+    ("Folio Factura", 7, CENTRO, lambda f: f.folio_factura),
+    ("Tipo Solicitud", 13, CENTRO, lambda f: f.tipo_solicitud),
+    ("Total Fact.", 9, _TDER, lambda f: _fmt_moneda(f.total_factura)),
+    ("Saldo Fact.", 9, _TDER, lambda f: _fmt_moneda(f.saldo_factura)),
+    ("Saldo Prog.", 9, _TDER, lambda f: _fmt_moneda(f.saldo_programado)),
+    ("Tipo", 3, CENTRO, lambda f: f.tipo),
+    ("Fh. Fact.", 9, CENTRO, lambda f: f.fecha_factura),
+    ("Fh. Ven.", 9, CENTRO, lambda f: f.fecha_vencimiento),
+    ("Producto", 24, _TIZQ, lambda f: f.producto),
+]
+
+
 def _fmt_fecha(d: datetime.date) -> str:
     return d.strftime("%d/%m/%Y")
+
+
+def _fechas_defecto(hoy: "datetime.date | None" = None) -> tuple[datetime.date, datetime.date]:
+    """Rango por defecto de los filtros de fecha, pensado para el cierre mensual:
+
+    - Fecha inicio: día 1 del MES ANTERIOR.
+    - Fecha fin: último día del MES EN CURSO; salvo que HOY ya sea el último día del
+      mes, en cuyo caso se extiende al día 10 del MES SIGUIENTE (para alcanzar las
+      solicitudes que caen a inicios del mes que entra).
+    """
+    hoy = hoy or datetime.date.today()
+    # Día 1 del mes anterior.
+    if hoy.month == 1:
+        inicio = datetime.date(hoy.year - 1, 12, 1)
+    else:
+        inicio = datetime.date(hoy.year, hoy.month - 1, 1)
+    # Último día del mes en curso.
+    ultimo_dia = calendar.monthrange(hoy.year, hoy.month)[1]
+    if hoy.day == ultimo_dia:
+        # Hoy es fin de mes: extender al 10 del mes siguiente.
+        if hoy.month == 12:
+            fin = datetime.date(hoy.year + 1, 1, 10)
+        else:
+            fin = datetime.date(hoy.year, hoy.month + 1, 10)
+    else:
+        fin = datetime.date(hoy.year, hoy.month, ultimo_dia)
+    return inicio, fin
 
 
 def _parse_fecha(texto) -> "datetime.date | None":
@@ -349,13 +420,16 @@ class _Multiseleccion:
 
 
 class _TablaSolicitudes:
-    """Tabla de solicitudes de UNA empresa.
+    """Tabla de solicitudes de UNA empresa (render por "secciones").
 
-    Agrupa las filas por cuenta bancaria y agrega, tras cada grupo, una fila
-    'TOTAL PROGRAMADO' con la suma del saldo programado del grupo. Colorea cada
-    fila (verde si Saldo Factura == Saldo Programado, rojo si difieren) y ofrece
-    un check por fila con 'seleccionar todas' en el encabezado. Al agregar nuevos
-    reportes evita duplicar filas ya presentes (por su 'clave')."""
+    Agrupa las filas por cuenta bancaria y muestra cada grupo como una BANDA de
+    cabecera (Proveedor + Cuenta + Total Programado + check que selecciona todo el
+    grupo) seguida de sus filas de detalle COMPACTAS (sin Proveedor/Cuenta/Moneda:
+    ya van en la banda y en la pestaña empresa-moneda; solo se ocultan, el objeto
+    conserva sus campos). Colorea cada fila (verde si Saldo Factura == Saldo
+    Programado, rojo si difieren) y ofrece un check por fila con 'seleccionar todas'
+    en el encabezado. Al agregar nuevos reportes evita duplicar filas ya presentes
+    (por su 'clave')."""
 
     def __init__(self, page, empresa: str = "", cuentas=None,
                  fecha_venc_default: "datetime.date | None" = None,
@@ -367,8 +441,13 @@ class _TablaSolicitudes:
         # Moneda del grupo (p. ej. 'USD' o 'MXN'). En tablas USD se ofrece marcar
         # proveedores para 'pagar en pesos' (se les genera un TXT aparte en pesos).
         self.moneda = (moneda or "").strip().upper()
-        # Proveedores marcados para pagar en pesos (solo aplica en tablas USD).
-        self._pagar_pesos: set[str] = set()
+        # Pago en pesos POR PAR (proveedor, cuenta_bancaria) — cada grupo de la tabla
+        # es un par. Solo aplica en tablas USD. Persisten entre re-renders de la barra.
+        # Solo alimentan el TXT en pesos; no se escriben en el formulario de SIPP.
+        self._pagar_pesos: set[tuple] = set()          # pares marcados
+        self._concepto_prov: dict[tuple, str] = {}     # {(prov, cuenta): concepto}
+        self._ref_prov: dict[tuple, str] = {}          # {(prov, cuenta): referencia}
+        self._clabe_prov: dict[tuple, str] = {}        # {(prov, cuenta): clabe origen}
         self._cuentas = list(cuentas or [])
         # Pares (cuenta, clabe) de la empresa: se MUESTRA la cuenta y se OPERA con la
         # CLABE (cuenta origen del TXT en pesos). Solo CLABEs válidas.
@@ -391,36 +470,19 @@ class _TablaSolicitudes:
         # cuentas por página (se recalcula en _reconstruir).
         self._pagina = 0
         self._paginas: list[list[str]] = [[]]
-        self.tabla = ft.DataTable(
-            columns=[
-                ft.DataColumn(label=ft.Container(self.chk_todos, width=_W_CHK, alignment=CENTRO)),
-                ft.DataColumn(label=encabezado_col("Folio", _W_FOLIO), ),
-                ft.DataColumn(label=encabezado_col("Folio Factura", _W_FOLIO_FAC)),
-                ft.DataColumn(label=encabezado_col("Tipo Solicitud", _W_TSOL)),
-                ft.DataColumn(label=encabezado_col("Proveedor", _W_PROV)),
-                ft.DataColumn(label=encabezado_col("Cuenta Bancaria", _W_CTA)),
-                ft.DataColumn(label=encabezado_col("Total Fact.", _W_MONTO),numeric=True),
-                ft.DataColumn(label=encabezado_col("Saldo Fact.", _W_MONTO),numeric=True),
-                ft.DataColumn(label=encabezado_col("Saldo Prog.", _W_MONTO),numeric=True),
-                ft.DataColumn(label=encabezado_col("Tipo", _W_TIPO)),
-                ft.DataColumn(label=encabezado_col("Fh. Fact.", _W_FECHA)),
-                ft.DataColumn(label=encabezado_col("Fh. Ven.", _W_FECHA)),
-                ft.DataColumn(label=encabezado_col("Moneda", _W_MONEDA)),
-                ft.DataColumn(label=encabezado_col("Producto", _W_PRODUCTO)),
-            ],
-            rows=[],
-            column_spacing=_COL_SPACING,
-            horizontal_margin=_MARGEN_H,  # sin el margen por defecto (24) que empujaba el check
-            heading_row_color=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            heading_row_height=46,
-            data_row_min_height=_ALTO_FILA,
-            data_row_max_height=_ALTO_FILA,
-            divider_thickness=1,
-            border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
-            border_radius=10,
-            vertical_lines=ft.BorderSide(
-                1, ft.Colors.with_opacity(0.4, ft.Colors.OUTLINE_VARIANT)),
-        )
+        # Render con TablaResponsiva: columnas por PORCENTAJE del ancho de la tarjeta
+        # (se adaptan al tamaño de ventana; scroll horizontal si superan el 100%). El
+        # check 'seleccionar todas' va en la columna 0 del encabezado. Las bandas de
+        # grupo se pasan como filas-cabecera al reconstruir.
+        columnas = [
+            ColumnaTabla(
+                etiqueta, pct, alineacion,
+                encabezado_control=(self.chk_todos if i == 0 else None))
+            for i, (etiqueta, pct, alineacion, _fn) in enumerate(_COLS_PCT)
+        ]
+        self._tabla = TablaResponsiva(
+            self.page, columnas,
+            ancho_inicial=(getattr(self.page, "width", None) or 1200) - 90)
         # Paginador (solo visible con más de una página).
         self._btn_prev = ft.IconButton(
             icon=ft.Icons.CHEVRON_LEFT, tooltip="Página anterior",
@@ -478,16 +540,9 @@ class _TablaSolicitudes:
             options=[ft.dropdown.Option(key=c, text=c) for c in self._cuentas],
             on_select=self._elegir_cuenta,
         )
-        # Selector de la CLABE interbancaria de origen para el pago en pesos (solo
-        # se muestra en tablas USD, junto al check; mismo estilo que dd_cuenta).
-        self.clabe_elegida = None
-        self.dd_clabe_origen = ft.Dropdown(
-            label="Cuenta Origen (pago en pesos)",
-            width=340, enable_filter=True, editable=True,
-            # Se muestra la cuenta (banco/empresa) pero el valor (key) es la CLABE.
-            options=[ft.dropdown.Option(key=cl, text=cta) for cta, cl in self._clabes],
-            on_select=self._elegir_clabe,
-        )
+        # La Cuenta Origen del pago en pesos ya NO es única por grupo: cada par
+        # (proveedor, cuenta beneficiario) tiene su propio selector, creado en
+        # _reconstruir_pesos (con opciones de self._clabes y valor en self._clabe_prov).
         self.tf_concepto = ft.TextField(
             label="Concepto de Pago", width=200)
         self.tf_referencia = ft.TextField(
@@ -496,15 +551,8 @@ class _TablaSolicitudes:
             [self.tf_venc, self.dd_cuenta, self.tf_concepto, self.tf_referencia],
             spacing=8, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        # La tabla solo necesita scroll HORIZONTAL: su alto es natural (las filas
-        # de la PÁGINA actual) y el scroll VERTICAL lo hace la pantalla completa
-        # (ver _construir). El Row queda acotado al ancho del viewport (la columna
-        # contenedora estira sus hijos) y desborda a lo ancho con su barra.
-        self._tabla_scroll = ft.Row([self.tabla], scroll=ft.ScrollMode.AUTO)
         # Mensaje que sustituye a las filas cuando el filtro de Fecha Vencimiento
-        # oculta TODAS las solicitudes. El DataTable de Flet no soporta 'colspan',
-        # así que se muestra a todo lo ancho, debajo del encabezado (equivale a una
-        # fila que abarca toda la tabla). Visible solo cuando no hay filas visibles.
+        # oculta TODAS las solicitudes. Visible solo cuando no hay filas visibles.
         self._msg_vacio_filtro = ft.Container(
             content=ft.Text(
                 "No hay solicitudes cuya fecha de vencimiento sea menor o igual a "
@@ -518,10 +566,12 @@ class _TablaSolicitudes:
         # Barra de "Pagar en pesos" (solo en tablas USD): un check por proveedor.
         # Se llena en _reconstruir_pesos según los proveedores presentes.
         self._pesos_holder = ft.Container(visible=False)
+        # STRETCH: estira la tabla a lo ancho de la tarjeta para que TablaResponsiva
+        # mida el ancho REAL disponible (y las columnas se dimensionen por %).
         self.control = ft.Column(
             [self._filtro_row, self._pesos_holder, self._pager,
-             self._tabla_scroll, self._msg_vacio_filtro],
-            spacing=8)
+             self._tabla.control, self._msg_vacio_filtro],
+            spacing=8, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
 
     # ------------------------------------------- cuenta / concepto / referencia
     def _elegir_cuenta(self, _e=None) -> None:
@@ -546,39 +596,36 @@ class _TablaSolicitudes:
         """Cuenta elegida en el selector, o None si no se ha elegido."""
         return self.cuenta_elegida
 
-    def _elegir_clabe(self, _e=None) -> None:
-        self.clabe_elegida = self.dd_clabe_origen.value or None
-
     def set_clabes(self, clabes) -> None:
-        """Reemplaza los pares (cuenta, clabe) del selector de origen para pago en
-        pesos (p. ej. tras recargar el catálogo). Se muestra la cuenta y se opera con
-        la CLABE. Conserva la selección (por CLABE) si sigue existiendo."""
+        """Reemplaza los pares (cuenta, clabe) de ORIGEN (opciones de los selectores de
+        pago en pesos, p. ej. tras recargar el catálogo). Descarta selecciones por par
+        cuya CLABE ya no exista y reconstruye la barra."""
         self._clabes = list(clabes or [])
-        self.dd_clabe_origen.options = [
-            ft.dropdown.Option(key=cl, text=cta) for cta, cl in self._clabes
-        ]
         claves = {cl for _cta, cl in self._clabes}
-        if self.dd_clabe_origen.value not in claves:
-            self.dd_clabe_origen.value = None
-            self.clabe_elegida = None
-        try:
-            self.dd_clabe_origen.update()
-        except (RuntimeError, AssertionError):
-            pass
+        self._clabe_prov = {
+            par: cl for par, cl in self._clabe_prov.items() if cl in claves}
+        self._reconstruir_pesos()
+        self._repintar()
 
-    def clabe_origen_pesos(self) -> str:
-        """CLABE de origen elegida para el TXT en pesos ('' si no se eligió). Es el
-        VALOR (key) del selector: la CLABE, aunque se muestre la cuenta."""
-        return (self.clabe_elegida or "").strip()
-
-    def cuenta_pesos_texto(self) -> str:
-        """Texto (cuenta con banco/empresa) de la CLABE elegida en el selector de
-        pago en pesos ('' si no se eligió). Sirve para determinar el banco/formato."""
-        cl = self.clabe_elegida
-        for cuenta, clabe in self._clabes:
-            if clabe == cl:
+    def _cuenta_texto_de_clabe(self, clabe: str) -> str:
+        """Texto (cuenta con banco/empresa) de una CLABE de origen ('' si no está).
+        Sirve para determinar el banco/formato del TXT en pesos."""
+        for cuenta, cl in self._clabes:
+            if cl == clabe:
                 return cuenta
         return ""
+
+    def clabes_pesos(self) -> dict[tuple, str]:
+        """CLABE de origen elegida por par (proveedor, cuenta) marcado 'pagar en
+        pesos' (solo pares con clabe elegida)."""
+        pares = self.pares_pagar_pesos()
+        return {par: cl for par, cl in self._clabe_prov.items()
+                if par in pares and cl}
+
+    def cuentas_pesos_texto(self) -> dict[tuple, str]:
+        """Texto de la cuenta origen elegida por par (para decidir banco/formato)."""
+        return {par: self._cuenta_texto_de_clabe(cl)
+                for par, cl in self.clabes_pesos().items()}
 
     def concepto(self) -> str:
         return (self.tf_concepto.value or "").strip()
@@ -604,78 +651,115 @@ class _TablaSolicitudes:
     def es_usd(self) -> bool:
         return self.moneda == "USD"
 
-    def proveedores_pagar_pesos(self) -> set[str]:
-        """Proveedores (de esta tabla USD) marcados para pagar en pesos. Solo se
-        consideran los que además tienen alguna solicitud SELECCIONADA."""
+    def pares_pagar_pesos(self) -> set[tuple]:
+        """Pares (proveedor, cuenta_bancaria) de esta tabla USD marcados para pagar en
+        pesos. Solo se consideran los que además tienen alguna solicitud SELECCIONADA."""
         if not self.es_usd():
             return set()
-        provs_sel = {f.proveedor for f in self.seleccionadas()}
-        return {p for p in self._pagar_pesos if p in provs_sel}
+        pares_sel = {(f.proveedor, f.cuenta_bancaria) for f in self.seleccionadas()}
+        return {par for par in self._pagar_pesos if par in pares_sel}
 
-    def _proveedores(self) -> list[str]:
-        """Proveedores distintos presentes en la tabla, en orden de aparición."""
-        vistos: list[str] = []
+    def conceptos_pesos(self) -> dict[tuple, str]:
+        """Concepto de Pago por par marcado 'pagar en pesos' (solo con valor)."""
+        pesos = self.pares_pagar_pesos()
+        return {par: v for par, v in self._concepto_prov.items() if par in pesos and v}
+
+    def referencias_pesos(self) -> dict[tuple, str]:
+        """Referencia de Pago por par marcado 'pagar en pesos' (solo con valor)."""
+        pesos = self.pares_pagar_pesos()
+        return {par: v for par, v in self._ref_prov.items() if par in pesos and v}
+
+    def _pares_prov_cuenta(self) -> list[tuple]:
+        """Pares (proveedor, cuenta_bancaria) DISTINTOS presentes en la tabla, en orden
+        de aparición (equivalen a los grupos de la tabla)."""
+        vistos: list[tuple] = []
         for f in self.filas:
-            if f.proveedor and f.proveedor not in vistos:
-                vistos.append(f.proveedor)
+            par = (f.proveedor, f.cuenta_bancaria)
+            if f.proveedor and par not in vistos:
+                vistos.append(par)
         return vistos
 
     def _reconstruir_pesos(self) -> None:
-        """(Re)arma la barra de 'Pagar en pesos' con un check por proveedor. Solo
-        visible en tablas USD; oculta si no hay proveedores."""
-        provs = self._proveedores() if self.es_usd() else []
-        if not provs:
+        """(Re)arma la barra de 'Pagar en pesos': una fila por cada par (proveedor,
+        cuenta beneficiario) de la tabla, con su check y —cuando está marcado— su
+        propia Cuenta Origen, Concepto y Referencia (habilitados solo si está marcado;
+        al desmarcar se limpian). Solo visible en tablas USD; oculta si no hay pares."""
+        pares = self._pares_prov_cuenta() if self.es_usd() else []
+        if not pares:
             self._pesos_holder.visible = False
             self._pesos_holder.content = None
             return
-        # Limpia marcas de proveedores que ya no están.
-        self._pagar_pesos &= set(provs)
+        # Limpia marcas y valores de pares que ya no están en la tabla.
+        vigentes = set(pares)
+        self._pagar_pesos &= vigentes
+        self._concepto_prov = {
+            k: v for k, v in self._concepto_prov.items() if k in vigentes}
+        self._ref_prov = {k: v for k, v in self._ref_prov.items() if k in vigentes}
+        self._clabe_prov = {
+            k: v for k, v in self._clabe_prov.items() if k in vigentes}
 
-        def _toggle(e, prov):
-            (self._pagar_pesos.add if e.control.value
-             else self._pagar_pesos.discard)(prov)
-            self._actualizar_estado_clabe()
+        def _toggle(e, par):
+            if e.control.value:
+                self._pagar_pesos.add(par)
+            else:
+                # Al desmarcar el par se limpia la info de sus inputs (Cuenta,
+                # Concepto, Referencia), como el selector al deshabilitarse.
+                self._pagar_pesos.discard(par)
+                self._concepto_prov.pop(par, None)
+                self._ref_prov.pop(par, None)
+                self._clabe_prov.pop(par, None)
+            # Re-render de la barra: habilita/deshabilita los inputs del par.
+            self._reconstruir_pesos()
+            self._repintar()
 
-        checks = [
-            ft.Checkbox(
-                label=prov, value=prov in self._pagar_pesos,
-                on_change=lambda e, p=prov: _toggle(e, p))
-            for prov in provs
-        ]
-        # El selector de origen va a la DERECHA de los checks. Sin 'expand' (inflaba
-        # el contenedor); los checks se envuelven en su propia fila a la izquierda.
+        def _fila_par(par: tuple) -> ft.Control:
+            prov, cuenta = par
+            marcado = par in self._pagar_pesos
+            etiqueta = f"{prov} · {cuenta}" if cuenta else str(prov)
+            chk = ft.Checkbox(
+                label=etiqueta, value=marcado,
+                on_change=lambda e, p=par: _toggle(e, p))
+            # Cuenta Origen / Concepto / Referencia SIEMPRE se muestran; habilitados
+            # solo si el par está marcado. Sin 'dense' (altura estándar de Material).
+            dd_origen = ft.Dropdown(
+                label="Cuenta Origen (pago en pesos)", width=340,
+                enable_filter=True, editable=True, disabled=not marcado,
+                value=self._clabe_prov.get(par),
+                options=[ft.dropdown.Option(key=cl, text=cta)
+                         for cta, cl in self._clabes],
+                on_select=lambda e, p=par: self._clabe_prov.__setitem__(
+                    p, e.control.value or ""))
+            tf_concepto = ft.TextField(
+                label="Concepto de Pago", width=200, disabled=not marcado,
+                value=self._concepto_prov.get(par, ""),
+                on_change=lambda e, p=par: self._concepto_prov.__setitem__(
+                    p, (e.control.value or "").strip()))
+            tf_ref = ft.TextField(
+                label="Referencia de Pago", width=200, disabled=not marcado,
+                value=self._ref_prov.get(par, ""),
+                on_change=lambda e, p=par: self._ref_prov.__setitem__(
+                    p, (e.control.value or "").strip()))
+            # Orden pedido: Cuenta · Concepto · Referencia (tras el check del par).
+            return ft.Row(
+                [chk, dd_origen, tf_concepto, tf_ref],
+                spacing=12, wrap=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER)
+
+        filas = ft.Column([_fila_par(p) for p in pares], spacing=10, tight=True)
         self._pesos_holder.content = ft.Container(
             ft.Column(
                 [
                     ft.Text(
-                        "Pagar en pesos (por proveedor): se genera un TXT aparte "
-                        "en pesos al finalizar.", size=12, color=GRIS),
-                    ft.Row(
-                        [ft.Row(checks, wrap=True, spacing=16, run_spacing=6),
-                         self.dd_clabe_origen],
-                        spacing=16,
-                        vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                        "Pagar en pesos (por proveedor y cuenta): se genera un TXT "
+                        "aparte en pesos al finalizar. Cuenta Origen es requerida; "
+                        "Concepto y Referencia son opcionales.",
+                        size=12, color=GRIS),
+                    filas,
                 ],
                 spacing=6, tight=True),
             padding=ft.Padding.symmetric(horizontal=8, vertical=6),
             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST, border_radius=8)
         self._pesos_holder.visible = True
-        # Estado inicial del selector: activo solo si hay algún proveedor marcado.
-        self._actualizar_estado_clabe(refrescar=False)
-
-    def _actualizar_estado_clabe(self, refrescar: bool = True) -> None:
-        """Activa el selector de origen solo si hay algún proveedor marcado para
-        pagar en pesos; si no, lo deshabilita y lo vacía."""
-        activo = bool(self._pagar_pesos)
-        self.dd_clabe_origen.disabled = not activo
-        if not activo:
-            self.dd_clabe_origen.value = None
-            self.clabe_elegida = None
-        if refrescar:
-            try:
-                self.dd_clabe_origen.update()
-            except (RuntimeError, AssertionError):
-                pass
 
     def quitar(self, claves: set) -> int:
         """Quita las filas cuya clave esté en `claves` (p. ej. las ya dispersadas),
@@ -726,20 +810,26 @@ class _TablaSolicitudes:
         self._pagina = max(0, min(self._pagina, len(self._paginas) - 1))
 
         self._checks_filas = []
-        renglones: list[ft.DataRow] = []
+        filas_tabla: list = []
         for cuenta in self._paginas[self._pagina]:
             grupo = grupos[cuenta]
             total = sum((f.saldo_programado or 0) for f in grupo)
+            # Banda del grupo (proveedor+cuenta+total) con un check que selecciona/
+            # deselecciona TODAS las solicitudes de ese grupo de una sola vez; debajo
+            # sus filas de detalle.
+            proveedor = grupo[0].proveedor if grupo else ""
+            filas_tabla.append(self._banda_grupo(
+                proveedor, cuenta, {f.clave() for f in grupo}, total))
             for f in grupo:
-                renglones.append(self._fila_datos(f))
-            renglones.append(self._fila_total(total))
-        self.tabla.rows = renglones
-        # Si hay filas pero el filtro de vencimiento las oculta TODAS, se muestra el
-        # mensaje a todo lo ancho (la tabla queda solo con su encabezado).
-        self._msg_vacio_filtro.visible = bool(self.filas) and not visibles
-        # 'Seleccionar todas' refleja las filas VISIBLES seleccionadas.
+                filas_tabla.append(self._fila_detalle(f))
+        # 'Seleccionar todas' refleja las filas VISIBLES seleccionadas (se fija ANTES
+        # de pintar, porque el check vive en el encabezado que reconstruye la tabla).
         self.chk_todos.value = bool(visibles) and all(
             f.clave() in self._sel for f in visibles)
+        self._tabla.set_contenido(filas_tabla)
+        # Si hay filas pero el filtro de vencimiento las oculta TODAS, se muestra el
+        # mensaje a todo lo ancho.
+        self._msg_vacio_filtro.visible = bool(self.filas) and not visibles
         # Barra de 'pagar en pesos' (solo tablas USD).
         self._reconstruir_pesos()
         self._actualizar_pager(len(visibles))
@@ -816,35 +906,64 @@ class _TablaSolicitudes:
         except (RuntimeError, AssertionError):
             pass  # aún no montada; se reflejará al renderizar
 
-    def _celda(self, texto: str, ancho: int, alineacion=CENTRO) -> ft.DataCell:
-        """Celda de una línea: si el texto no cabe se recorta con '…' y el valor
-        completo queda en el tooltip. Centrada salvo que se pida a la derecha.
-
-        El tooltip solo se agrega cuando el texto es lo bastante largo como para
-        recortarse (estimado por ancho); así se evita crear un MouseRegion por
-        cada celda corta (montos, folios, fechas), lo que aligera el render."""
-        texto = str(texto or "")
-        if alineacion is _DER:
-            align_txt = ft.TextAlign.RIGHT
-        elif alineacion is _IZQ:
-            align_txt = ft.TextAlign.LEFT
+    def _banda_grupo(self, proveedor: str, cuenta: str, claves: set,
+                     total: float) -> Cabecera:
+        """Fila-cabecera (banda) de un grupo (proveedor+cuenta) con su Total Programado
+        y un check tri-estado que selecciona/deselecciona TODAS sus solicitudes a la vez
+        (marcado=todas, vacío=ninguna, indeterminado=algunas). Devuelve una `Cabecera`:
+        el 1er segmento (col del check) lleva el check; el 2º abarca el resto con
+        'proveedor · cuenta ……… TOTAL PROG. $X'."""
+        seleccionadas = claves & self._sel
+        if not seleccionadas:
+            estado = False
+        elif seleccionadas == claves:
+            estado = True
         else:
-            align_txt = ft.TextAlign.CENTER
-        # Tooltip solo si probablemente se recorta (texto más ancho que la celda).
-        tip = texto if len(texto) * _PX_POR_CHAR > ancho else None
-        return ft.DataCell(
-            ft.Container(
-                ft.Text(
-                    texto, size=12, text_align=align_txt, width=ancho,
-                    max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
-                ),
-                width=ancho, alignment=alineacion, tooltip=tip,
-            )
-        )
+            estado = None  # indeterminado
 
-    def _fila_datos(self, f: FilaSolicitud) -> ft.DataRow:
-        # value inicial desde la selección persistente; al marcar/desmarcar se
-        # actualiza self._sel (así sobrevive al cambio de página).
+        def _toggle(_e, claves=claves):
+            if claves & self._sel == claves:
+                self._sel -= claves
+            else:
+                self._sel |= claves
+            self._reconstruir()
+            self._repintar()  # repinta tabla + barra de pesos (dependen de _sel)
+
+        chk = ft.Checkbox(value=estado, tristate=True, on_change=_toggle)
+        # Izquierda: proveedor (fuerte) · cuenta (tenue), ocupa el hueco (expand).
+        prov_txt = str(proveedor or "—")
+        cta_txt = str(cuenta or "")
+        izq = ft.Row(
+            [
+                ft.Text(prov_txt, size=13, weight=ft.FontWeight.BOLD,
+                        max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+                        tooltip=prov_txt if len(prov_txt) > 40 else None),
+                ft.Text("·", size=13, color=GRIS),
+                ft.Text(cta_txt, size=12, weight=ft.FontWeight.BOLD, color=GRIS,
+                        max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+                        tooltip=cta_txt if len(cta_txt) > 34 else None),
+            ],
+            spacing=8, tight=True, expand=True,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        der = ft.Row(
+            [
+                ft.Text("TOTAL PROG.", size=11, weight=ft.FontWeight.BOLD, color=GRIS),
+                ft.Text(_fmt_moneda(total), size=13, weight=ft.FontWeight.BOLD),
+            ],
+            spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        # alineacion=None -> el Row llena el ancho del segmento y el total queda a la
+        # derecha (izq expande). El check va centrado en su columna (col 0).
+        info = ft.Row([izq, der], vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        return Cabecera([
+            SegmentoCabecera(1, chk, alineacion=CENTRO),
+            SegmentoCabecera(len(_COLS_PCT) - 1, info, alineacion=None,
+                             padding=ft.Padding.only(right=10)),
+        ])
+
+    def _fila_detalle(self, f: FilaSolicitud) -> FilaDatos:
+        """Fila de detalle (sin Proveedor/Cuenta/Moneda, que ya van en la banda / la
+        pestaña). El check por fila persiste la selección en self._sel. Devuelve una
+        `FilaDatos`: celda 0 = check (control); resto = textos de `_COLS_PCT`."""
         chk = ft.Checkbox(value=f.clave() in self._sel)
 
         def _al_check(_e, f=f, c=chk):
@@ -853,86 +972,22 @@ class _TablaSolicitudes:
         chk.on_change = _al_check
         self._checks_filas.append(chk)
 
-        # Todas las celdas son TEXTO PLANO (no editables): 'Cuenta Bancaria' y
-        # 'Saldo Programado' se muestran como los demás campos. Saldo Programado
-        # usa el mismo formato de moneda y alineación derecha que Total/Saldo
-        # Fact., para que la columna luzca uniforme con los demás totales.
-        return ft.DataRow(
-            color=_color_fila(f),
-            cells=[
-                ft.DataCell(ft.Container(chk, width=_W_CHK, alignment=CENTRO)),
-                self._celda(f.folio, _W_FOLIO),
-                self._celda(f.folio_factura, _W_FOLIO_FAC),
-                self._celda(f.tipo_solicitud, _W_TSOL),
-                self._celda(f.proveedor, _W_PROV),
-                self._celda(f.cuenta_bancaria, _W_CTA),
-                self._celda(_fmt_moneda(f.total_factura), _W_MONTO, _DER),
-                self._celda(_fmt_moneda(f.saldo_factura), _W_MONTO, _DER),
-                self._celda(_fmt_moneda(f.saldo_programado), _W_MONTO, _DER),
-                self._celda(f.tipo, _W_TIPO),
-                self._celda(f.fecha_factura, _W_FECHA),
-                self._celda(f.fecha_vencimiento, _W_FECHA),
-                self._celda(f.moneda, _W_MONEDA),
-                self._celda(f.producto, _W_PRODUCTO, _IZQ),
-            ],
-        )
-
-    def _fila_total(self, total: float) -> ft.DataRow:
-        def vacia(ancho):
-            return ft.DataCell(ft.Container(width=ancho))
-
-        etiqueta = ft.DataCell(
-            ft.Container(
-                ft.Text("TOTAL PROGRAMADO", size=12, weight=ft.FontWeight.BOLD,
-                        text_align=ft.TextAlign.RIGHT),
-                width=_W_MONTO, alignment=_DER,
-            )
-        )
-        # El total del grupo ya no se edita en vivo (Saldo Prog. es texto): se
-        # calcula una vez y se muestra con el mismo formato de moneda.
-        total_text = ft.Text(
-            _fmt_moneda(total), size=12, weight=ft.FontWeight.BOLD,
-            text_align=ft.TextAlign.RIGHT, width=_W_MONTO,
-        )
-        valor = ft.DataCell(ft.Container(total_text, width=_W_MONTO, alignment=_DER))
-        # IMPORTANTE: este orden debe coincidir con el de las columnas y el de
-        # _fila_datos (Check, Folio, Folio Factura, Tipo Solicitud, Proveedor,
-        # Cuenta Bancaria, Total Fact., Saldo Fact., Saldo Prog., Tipo, Fh. Fact.,
-        # Fh. Ven., Moneda, Producto). Si no, celdas vacías anchas ensanchan
-        # columnas equivocadas.
-        return ft.DataRow(
-            color=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            cells=[
-                vacia(_W_CHK), vacia(_W_FOLIO), vacia(_W_FOLIO_FAC),
-                vacia(_W_TSOL),   # Tipo Solicitud
-                vacia(_W_PROV),   # Proveedor
-                vacia(_W_CTA),    # Cuenta Bancaria
-                vacia(_W_MONTO),  # Total Fact.
-                etiqueta,         # bajo 'Saldo Fact.'
-                valor,            # bajo 'Saldo Prog.'
-                vacia(_W_TIPO),   # Tipo
-                vacia(_W_FECHA),  # Fh. Fact.
-                vacia(_W_FECHA),  # Fh. Ven.
-                vacia(_W_MONEDA),    # Moneda
-                vacia(_W_PRODUCTO),  # Producto
-            ],
-        )
+        celdas: list = [chk]
+        for _etiqueta, _pct, _alin, fn in _COLS_PCT[1:]:
+            celdas.append(fn(f))
+        return FilaDatos(celdas, bgcolor=_color_fila(f))
 
     def _marcar_todas(self, _e) -> None:
         # Selecciona/deselecciona todas las filas VISIBLES (de todas las páginas,
-        # respetando el filtro de vencimiento) y refleja el cambio en los
-        # checkboxes de la página actual. Las ocultas no se seleccionan.
+        # respetando el filtro de vencimiento) y reconstruye para reflejar los checks
+        # por fila y las bandas. Las ocultas no se seleccionan.
         claves_visibles = {f.clave() for f in self._filas_visibles()}
         if self.chk_todos.value:
             self._sel |= claves_visibles
         else:
             self._sel -= claves_visibles
-        for chk in self._checks_filas:
-            chk.value = self.chk_todos.value
-        try:
-            self.tabla.update()  # dirigido a esta tabla, no a toda la página
-        except (RuntimeError, AssertionError):
-            pass
+        self._reconstruir()
+        self._repintar()
 
 
 class SeccionDispersionNoPemex:
@@ -1004,12 +1059,18 @@ class SeccionDispersionNoPemex:
         # Resultado de la descarga de layouts (TXT) y su carpeta (para el resumen).
         self._disp_resultados_txt: list[dict] = []
         self._disp_carpeta_txt: str | None = None
-        # 'Pagar en pesos': proveedores marcados por grupo y la CLABE de origen
-        # elegida por grupo (se capturan al generar la dispersión), TXT en pesos
-        # generados, tipo de cambio y posible error.
+        # 'Pagar en pesos': por grupo, los PARES (proveedor, cuenta beneficiario)
+        # marcados y, por par, la clabe origen / texto de cuenta / concepto /
+        # referencia (se capturan al generar la dispersión, porque las tablas se
+        # vacían). Más: TXT en pesos generados, tipo de cambio y posible error.
+        # Clave interna de cada dict interno: la tupla (proveedor, cuenta_bancaria).
         self._pesos_por_grupo: dict[str, set] = {}
-        self._clabe_pesos_por_grupo: dict[str, str] = {}
-        self._cuenta_pesos_por_grupo: dict[str, str] = {}
+        self._clabe_pesos_por_grupo: dict[str, dict[tuple, str]] = {}
+        self._cuenta_pesos_por_grupo: dict[str, dict[tuple, str]] = {}
+        self._concepto_prov_por_grupo: dict[str, dict[tuple, str]] = {}
+        self._ref_prov_por_grupo: dict[str, dict[tuple, str]] = {}
+        # Referencia leída del DOM por el RPA (respaldo), por par.
+        self._ref_dom_por_grupo: dict[str, dict[tuple, str]] = {}
         self._pesos_generados: list[dict] = []
         self._tipo_cambio: float | None = None
         self._pesos_error: str | None = None
@@ -1035,10 +1096,11 @@ class SeccionDispersionNoPemex:
             "Tipo de Solicitud", self.TIPOS_SOLICITUD, self.page)
 
         # Fechas: requeridas. Selectores tipo calendario (DatePicker), igual que en
-        # Alta de beneficiarios: el campo es de solo lectura y abre el calendario
-        # al hacer clic; el RPA lee su texto. Inicio = hace 20 días; Fin = hoy.
-        hoy = datetime.date.today()
-        inicio_defecto = hoy - datetime.timedelta(days=20)
+        # El campo es de solo lectura y abre el calendario al hacer clic; el RPA lee
+        # su texto. Defaults pensados para el cierre mensual: Inicio = día 1 del mes
+        # anterior; Fin = último día del mes en curso (o el 10 del siguiente si hoy
+        # es fin de mes). Ver _fechas_defecto().
+        inicio_defecto, fin_defecto = _fechas_defecto()
         self.dp_fecha_ini = ft.DatePicker(
             value=inicio_defecto,
             first_date=datetime.date(2020, 1, 1),
@@ -1048,7 +1110,7 @@ class SeccionDispersionNoPemex:
                 self.tf_fecha_ini, self.dp_fecha_ini),
         )
         self.dp_fecha_fin = ft.DatePicker(
-            value=hoy,
+            value=fin_defecto,
             first_date=datetime.date(2020, 1, 1),
             last_date=datetime.date(2035, 12, 31),
             help_text="Fecha Fin",
@@ -1070,7 +1132,7 @@ class SeccionDispersionNoPemex:
             on_click=lambda e: self.page.show_dialog(self.dp_fecha_ini),
         )
         self.tf_fecha_fin = ft.TextField(
-            label=_label_requerido("Fecha Fin"), value=_fmt_fecha(hoy),
+            label=_label_requerido("Fecha Fin"), value=_fmt_fecha(fin_defecto),
             hint_text="DD/MM/AAAA", read_only=True,
             suffix_icon=ft.Icons.CALENDAR_MONTH,
             on_click=lambda e: self.page.show_dialog(self.dp_fecha_fin),
@@ -1247,9 +1309,16 @@ class SeccionDispersionNoPemex:
         # Scroll de TODA la pantalla: el Column externo (expand) llena el área de
         # la sección y hace scroll vertical para recorrer panel + tabla. El panel
         # tiene altura fija y la tabla toma su alto natural (solo scroll horizontal).
-        return ft.Column(
+        # El contenido va dentro de un contenedor con padding derecho (gutter) para
+        # que la barra de scroll vertical (que Flet dibuja encima) no se solape con
+        # las tarjetas (mismo criterio que el modal de solicitudes a dispersar).
+        contenido = ft.Column(
             [panel, panel_tabla],
-            spacing=14, expand=True, scroll=ft.ScrollMode.AUTO,
+            spacing=14, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        )
+        return ft.Column(
+            [ft.Container(contenido, padding=ft.Padding.only(right=_GUTTER_SCROLL))],
+            expand=True, scroll=ft.ScrollMode.AUTO,
             horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
 
@@ -1277,7 +1346,7 @@ class SeccionDispersionNoPemex:
         # no re-renderiza bien al reusar instancias). Las tablas se van agregando.
         self._contenedor_tablas = ft.Column(
             [self._cargando, self.txt_tabla_vacia, self._tira_holder],
-            spacing=12,
+            spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
         # Botón que concilia la selección y (a futuro) dispara la dispersión.
         self.btn_dispersar = ft.FilledButton(
@@ -1339,7 +1408,7 @@ class SeccionDispersionNoPemex:
                 self._leyenda(),
                 self._contenedor_tablas,
             ],
-            spacing=10,
+            spacing=10, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
         )
         return ft.Card(
             content=ft.Container(content=cuerpo, padding=16),
@@ -1418,6 +1487,15 @@ class SeccionDispersionNoPemex:
                 resultado[empresa] = seleccionadas
         return resultado
 
+    def _todas_por_empresa(self) -> dict[str, list[FilaSolicitud]]:
+        """TODAS las solicitudes encontradas por empresa (no solo las seleccionadas),
+        para el reporte 'Todas las solicitudes'. Una tabla por empresa."""
+        resultado: dict[str, list[FilaSolicitud]] = {}
+        for empresa, tabla in self._tablas_por_empresa.items():
+            if tabla.filas:
+                resultado[empresa] = list(tabla.filas)
+        return resultado
+
     def _texto_tipo_solicitud(self) -> str:
         """Valor para el filtro 'Tipo Solicitud' del reporte: 'Todos' si están
         todos (o ninguno) seleccionados; si no, los tipos elegidos unidos por ', '."""
@@ -1426,13 +1504,43 @@ class SeccionDispersionNoPemex:
             return "Todos"
         return ", ".join(tipos)
 
-    async def _generar_reporte(self, _e=None) -> None:
-        """Exporta a Excel las solicitudes SELECCIONADAS (una hoja por empresa),
-        con el mismo formato del reporte que se lee del SIPP. Los datos de cada
-        celda del bloque de filtros (B3:G6) se toman del filtro principal."""
-        seleccion = self._seleccion_por_empresa()
+    def _generar_reporte(self, _e=None) -> None:
+        """Al presionar 'Generar Reporte' pregunta QUÉ reporte generar: todas las
+        solicitudes encontradas o solo las seleccionadas (o cancelar). Cada opción
+        exporta con el mismo formato del reporte del SIPP (_exportar_reporte)."""
+        async def _todas(_e=None):
+            self.page.pop_dialog()
+            await self._exportar_reporte(
+                self._todas_por_empresa(), "Todas las Solicitudes")
+
+        async def _seleccionadas(_e=None):
+            self.page.pop_dialog()
+            await self._exportar_reporte(
+                self._seleccion_por_empresa(), "Solicitudes Seleccionadas")
+
+        dialogo = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Generar Reporte"),
+            content=ft.Text("Seleccione qué tipo de reporte quiere generar."),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _e: self.page.pop_dialog()),
+                ft.OutlinedButton("Todas las solicitudes", on_click=_todas),
+                ft.FilledButton("Solicitudes seleccionadas", on_click=_seleccionadas),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self.page.show_dialog(dialogo)
+
+    async def _exportar_reporte(
+        self, seleccion: dict, etiqueta: str) -> None:
+        """Exporta a Excel el `seleccion` dado (una hoja por empresa), con el mismo
+        formato del reporte que se lee del SIPP. `etiqueta` distingue el tipo en el
+        nombre de archivo y los avisos. Los datos del bloque de filtros (B3:G6) se
+        toman del filtro principal."""
         if not seleccion:
-            self.app.avisar("Selecciona al menos un movimiento en la tabla.", NARANJA)
+            self.app.avisar(
+                "No hay solicitudes para el reporte "
+                f"'{etiqueta.lower()}'.", NARANJA)
             return
         venc = (self.tf_fecha_venc.value or "").strip()
         folio = (self.tf_folio.value or "").strip()
@@ -1444,8 +1552,8 @@ class SeccionDispersionNoPemex:
             "tipo_solicitud": self._texto_tipo_solicitud(),
         }
         ruta = await self.app.picker.save_file(
-            dialog_title="Guardar reporte de solicitudes seleccionadas",
-            file_name="Reporte Solicitudes Seleccionadas.xlsx",
+            dialog_title=f"Guardar reporte de {etiqueta.lower()}",
+            file_name=f"Reporte {etiqueta}.xlsx",
             allowed_extensions=["xlsx"],
         )
         if not ruta:
@@ -1472,11 +1580,9 @@ class SeccionDispersionNoPemex:
             duracion=ft.Duration(seconds=12))
 
     def _abrir_archivo(self, ruta: str) -> None:
-        """Abre un archivo en el programa predeterminado del sistema (Windows)."""
-        try:
-            os.startfile(ruta)  # noqa: S606 — abre en el visor predeterminado
-        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
-            self.app.avisar(f"No se pudo abrir el archivo: {exc}", ROJO)
+        """Abre un archivo o la carpeta de resultados en el sistema, trayéndolo al
+        frente de la app (ver AppTesoreria.abrir_en_sistema)."""
+        self.app.abrir_en_sistema(ruta)
 
     async def _generar_dispersiones(self, _e=None) -> None:
         """Valida la selección y la cuenta, concilia el payload y abre el diálogo
@@ -1507,33 +1613,46 @@ class SeccionDispersionNoPemex:
                 "concepto_pago": tabla.concepto(),
                 "referencia_pago": tabla.referencia(),
             }
-        # Proveedores marcados 'pagar en pesos' por grupo USD (se capturan ahora,
-        # porque después de dispersar las tablas se vacían). Solo cuentan los que
-        # tienen alguna solicitud seleccionada.
+        # Pares (proveedor, cuenta beneficiario) marcados 'pagar en pesos' por grupo
+        # USD (se capturan ahora, porque después de dispersar las tablas se vacían).
+        # Solo cuentan los pares con alguna solicitud seleccionada.
         self._pesos_por_grupo = {
-            grupo: self._tablas_por_empresa[grupo].proveedores_pagar_pesos()
+            grupo: self._tablas_por_empresa[grupo].pares_pagar_pesos()
             for grupo in seleccion
-            if self._tablas_por_empresa[grupo].proveedores_pagar_pesos()
+            if self._tablas_por_empresa[grupo].pares_pagar_pesos()
         }
-        # La CLABE de origen del pago en pesos es REQUERIDA si el grupo tiene
-        # proveedores marcados (es la cuenta origen del TXT en pesos).
+        # La Cuenta Origen del pago en pesos es REQUERIDA por CADA par marcado (es la
+        # cuenta origen del TXT en pesos). Se reúnen los pares sin clabe para avisar.
+        self._clabe_pesos_por_grupo = {
+            grupo: self._tablas_por_empresa[grupo].clabes_pesos()
+            for grupo in self._pesos_por_grupo
+        }
         sin_clabe = [
-            grupo for grupo in self._pesos_por_grupo
-            if not self._tablas_por_empresa[grupo].clabe_origen_pesos()
+            f"{prov} · {cuenta}"
+            for grupo, pares in self._pesos_por_grupo.items()
+            for (prov, cuenta) in pares
+            if (prov, cuenta) not in self._clabe_pesos_por_grupo.get(grupo, {})
         ]
         if sin_clabe:
             self.app.avisar(
-                "Falta elegir la CLABE de origen (pago en pesos) en: "
+                "Falta elegir la Cuenta Origen (pago en pesos) en: "
                 + ", ".join(sin_clabe) + ".", NARANJA)
             return
-        self._clabe_pesos_por_grupo = {
-            grupo: self._tablas_por_empresa[grupo].clabe_origen_pesos()
+        # Texto de la cuenta origen elegida por par (para saber el banco/formato del
+        # layout en pesos: Banregio vs Bancomer).
+        self._cuenta_pesos_por_grupo = {
+            grupo: self._tablas_por_empresa[grupo].cuentas_pesos_texto()
             for grupo in self._pesos_por_grupo
         }
-        # Texto de la cuenta origen elegida por grupo (para saber el banco/formato
-        # del layout en pesos: Banregio vs Bancomer).
-        self._cuenta_pesos_por_grupo = {
-            grupo: self._tablas_por_empresa[grupo].cuenta_pesos_texto()
+        # Concepto/Referencia POR PAR (pago en pesos), capturados en la UI. Solo
+        # alimentan el TXT en pesos. La referencia final se resuelve en el RPA con el
+        # respaldo del DOM (ver _ejecutar_dispersion / _generar_txts_pesos).
+        self._concepto_prov_por_grupo = {
+            grupo: self._tablas_por_empresa[grupo].conceptos_pesos()
+            for grupo in self._pesos_por_grupo
+        }
+        self._ref_prov_por_grupo = {
+            grupo: self._tablas_por_empresa[grupo].referencias_pesos()
             for grupo in self._pesos_por_grupo
         }
         # Tipo de cambio (DOF) para mostrarlo en el modal 'Solicitudes a dispersar'
@@ -1767,6 +1886,7 @@ class SeccionDispersionNoPemex:
         self._pesos_generados = []
         self._tipo_cambio = None
         self._pesos_error = None
+        self._ref_dom_por_grupo = {}  # {grupo: {proveedor: referencia_DOM}}
         # (self._pesos_por_grupo y self._clabe_pesos_por_grupo se fijan en
         # _generar_dispersiones y se conservan para el TXT en pesos.)
         validas = self._conc_dispersion.validas if self._conc_dispersion else []
@@ -1816,10 +1936,17 @@ class SeccionDispersionNoPemex:
                 #    Devuelve el texto de la cuenta elegida (banco + cuenta) para el
                 #    nombre del TXT y el resumen.
                 cuenta_origen = await self._elegir_cuenta_origen(sesion, ctrl, emp.cuenta)
-                # 5) Concepto/referencia por proveedor+cuenta (obj. 6/7).
-                await sesion.llenar_pagos_proveedores(
+                # 5) Concepto/referencia por proveedor+cuenta (obj. 6/7). Devuelve la
+                #    referencia que el portal traía precargada (DOM) por proveedor+
+                #    cuenta: se guarda como respaldo del TXT en pesos (obj. 4.2).
+                referencias_dom = await sesion.llenar_pagos_proveedores(
                     _pares_proveedor_cuenta(emp),
                     emp.concepto_pago, emp.referencia_pago)
+                if emp.empresa in self._pesos_por_grupo:
+                    # referencias_dom ya viene por par {(prov,cuenta): ref}; se guarda
+                    # tal cual (solo las no vacías) como respaldo del TXT en pesos.
+                    self._ref_dom_por_grupo[emp.empresa] = {
+                        par: ref for par, ref in referencias_dom.items() if ref}
                 # 6) Guardar y capturar el folio nuevo generado (obj. 8).
                 folio = await sesion.guardar_dispersion()
                 monto = sum((m.saldo_programado or 0) for m in emp.movimientos)
@@ -1901,21 +2028,22 @@ class SeccionDispersionNoPemex:
         self._disp_resultados_txt = resultados
 
     def _generar_txts_pesos(self) -> None:
-        """Genera, en la carpeta de descargas, un TXT en PESOS por cada grupo USD
-        dispersado con proveedores marcados 'pagar en pesos'. El importe = (total
-        dispersado por proveedor en USD) × tipo de cambio del DOF (cacheado por
-        sesión). El FORMATO del layout depende del banco de la cuenta de origen
-        elegida (Banregio o BBVA/Bancomer). No tumba la operación si algo falla."""
+        """Genera, en la carpeta de descargas, los TXT en PESOS de los grupos USD
+        dispersados con pares (proveedor, cuenta beneficiario) marcados 'pagar en
+        pesos'. El importe = (saldo programado del par en USD) × tipo de cambio del
+        DOF. Como cada par elige su propia Cuenta Origen, se agrupan los registros por
+        cuenta origen y se genera UN ARCHIVO por cada una (su banco define el formato:
+        Banregio o BBVA/Bancomer). No tumba la operación si algo falla."""
         conc = self._conc_dispersion
         if conc is None or not self._pesos_por_grupo:
             return
         por_clave_folio = {
             d.get("clave"): d for d in self._folios_dispersados if d.get("clave")}
         por_clave_emp = {emp.empresa: emp for emp in conc.validas}
-        # Grupos USD efectivamente dispersados y con proveedores marcados.
+        # Grupos USD efectivamente dispersados y con pares marcados.
         pendientes = [
-            clave for clave, provs in self._pesos_por_grupo.items()
-            if provs and clave in por_clave_folio and clave in por_clave_emp
+            clave for clave, pares in self._pesos_por_grupo.items()
+            if pares and clave in por_clave_folio and clave in por_clave_emp
         ]
         if not pendientes:
             return
@@ -1928,46 +2056,67 @@ class SeccionDispersionNoPemex:
         carpeta = self._disp_carpeta_txt or self._carpeta_txt_dispersion()
         os.makedirs(carpeta, exist_ok=True)
         for clave in pendientes:
-            provs = self._pesos_por_grupo[clave]
+            pares = self._pesos_por_grupo[clave]
             emp = por_clave_emp[clave]
             folio_entry = por_clave_folio[clave]
             folio = folio_entry.get("folio")
-            # Un registro por proveedor marcado: (cuenta_prov, monto_pesos, nombre,
-            # concepto). El importe se convierte USD -> MXN con el tipo de cambio.
-            registros, total_pesos = [], 0.0
-            for prov in provs:
-                movs = [m for m in emp.movimientos if m.proveedor == prov]
+            # Concepto/Referencia por par (obj. 4). El layout tiene un solo campo de
+            # texto ("concepto"): lleva el Concepto y, si hay, se le anexa la
+            # Referencia (app o, en su defecto, la precargada en el DOM).
+            conceptos = self._concepto_prov_por_grupo.get(clave, {})
+            refs_app = self._ref_prov_por_grupo.get(clave, {})
+            refs_dom = self._ref_dom_por_grupo.get(clave, {})
+            clabes = self._clabe_pesos_por_grupo.get(clave, {})
+            cuentas_txt = self._cuenta_pesos_por_grupo.get(clave, {})
+            # Agrupa los registros por CUENTA ORIGEN (un archivo por origen).
+            por_origen: dict[str, dict] = {}
+            for par in pares:
+                prov, cuenta = par
+                clabe_origen = clabes.get(par, "")
+                if not clabe_origen:  # sin cuenta origen (validado antes; por si acaso)
+                    continue
+                movs = [m for m in emp.movimientos
+                        if m.proveedor == prov and m.cuenta_bancaria == cuenta]
                 usd = sum((m.saldo_programado or 0) for m in movs)
                 pesos = round(usd * tc, 2)
-                cuenta_prov = re.sub(r"\D", "", movs[0].cuenta_bancaria) if movs else ""
-                registros.append((cuenta_prov, pesos, prov, emp.concepto_pago))
-                total_pesos += pesos
-            if not registros:
-                continue
-            # CLABE de origen elegida en el selector del grupo (cuenta origen del
-            # TXT en pesos); respaldo: los dígitos del texto de la cuenta de origen.
-            clabe_sel = self._clabe_pesos_por_grupo.get(clave, "")
-            clabe_origen = re.sub(
-                r"\D", "", clabe_sel or folio_entry.get("cuenta_origen") or "")
-            # El formato del layout depende del banco de la cuenta origen elegida.
-            cuenta_texto = self._cuenta_pesos_por_grupo.get(clave, "")
-            if exportador_devoluciones.banco_formato(cuenta_texto) == "banregio":
-                # Banregio: separado por comas; usa la fecha (DDMMAAAA) de hoy.
-                hoy = datetime.date.today().strftime("%d%m%Y")
-                contenido = exportador_devoluciones.generar_banregio(registros, hoy)
-            else:  # BBVA / Bancomer (ancho fijo) — formato por defecto
-                contenido = exportador_devoluciones.generar_bancomer(
-                    registros, clabe_origen, str(folio or ""))
-            nombre = _sanear_archivo(self._nombre_txt(folio_entry) + " Pesos") + ".txt"
-            ruta = _ruta_unica(os.path.join(carpeta, nombre))
-            try:
-                with open(ruta, "w", encoding="latin-1", newline="") as fh:
-                    fh.write(contenido)
-            except Exception:  # noqa: BLE001 — un TXT que falle no aborta el resto
-                continue
-            self._pesos_generados.append({
-                "empresa": emp.empresa, "archivo": ruta,
-                "total_pesos": total_pesos, "proveedores": len(registros)})
+                cuenta_benef = re.sub(r"\D", "", cuenta or "")
+                concepto = (conceptos.get(par) or emp.concepto_pago or "").strip()
+                referencia = (refs_app.get(par) or refs_dom.get(par) or "").strip()
+                texto = f"{concepto} {referencia}".strip() if referencia else concepto
+                bucket = por_origen.setdefault(clabe_origen, {
+                    "cuenta_texto": cuentas_txt.get(par, ""),
+                    "registros": [], "total": 0.0})
+                bucket["registros"].append((cuenta_benef, pesos, prov, texto))
+                bucket["total"] += pesos
+            # Un TXT por cada cuenta origen.
+            for clabe_origen, bucket in por_origen.items():
+                registros = bucket["registros"]
+                if not registros:
+                    continue
+                clabe_dig = re.sub(
+                    r"\D", "", clabe_origen or folio_entry.get("cuenta_origen") or "")
+                cuenta_texto = bucket["cuenta_texto"]
+                if exportador_devoluciones.banco_formato(cuenta_texto) == "banregio":
+                    # Banregio: separado por comas; usa la fecha (DDMMAAAA) de hoy.
+                    hoy = datetime.date.today().strftime("%d%m%Y")
+                    contenido = exportador_devoluciones.generar_banregio(registros, hoy)
+                else:  # BBVA / Bancomer (ancho fijo) — formato por defecto
+                    contenido = exportador_devoluciones.generar_bancomer(
+                        registros, clabe_dig, str(folio or ""))
+                # Distintivo de la cuenta origen en el nombre (últimos 4 dígitos), para
+                # no colisionar cuando hay varias cuentas origen en el mismo grupo.
+                sufijo = f"Pesos {clabe_dig[-4:]}" if clabe_dig else "Pesos"
+                nombre = _sanear_archivo(
+                    self._nombre_txt(folio_entry) + " " + sufijo) + ".txt"
+                ruta = _ruta_unica(os.path.join(carpeta, nombre))
+                try:
+                    with open(ruta, "w", encoding="latin-1", newline="") as fh:
+                        fh.write(contenido)
+                except Exception:  # noqa: BLE001 — un TXT que falle no aborta el resto
+                    continue
+                self._pesos_generados.append({
+                    "empresa": emp.empresa, "archivo": ruta,
+                    "total_pesos": bucket["total"], "proveedores": len(registros)})
 
     @staticmethod
     def _carpeta_txt_dispersion() -> str:
@@ -2108,7 +2257,7 @@ class SeccionDispersionNoPemex:
         if usd:
             titulo = "Dispersiones generadas en USD"
             if tc:
-                titulo += f" (T.C. {_fmt_moneda(tc)} MXN)"
+                titulo += f" (T.C. {_fmt_tc(tc)} MXN)"
             cuerpo.append(ft.Text(titulo, size=13, weight=ft.FontWeight.BOLD))
             cuerpo.append(self._tabla_resumen_usd(usd, pesos_por_clave))
         cuerpo.append(ft.Divider())
@@ -2205,8 +2354,14 @@ class SeccionDispersionNoPemex:
                 if i:
                     secciones.append(ft.Divider())
                 secciones.append(self._seccion_datos_empresa(e))
+            # El contenido va dentro de un contenedor con padding derecho: así la
+            # barra de scroll vertical (que Flet dibuja encima) queda en ese margen y
+            # no se solapa con la última columna de las tablas.
             cuerpo = ft.Column(
-                secciones, scroll=ft.ScrollMode.AUTO, tight=True, spacing=14)
+                [ft.Container(
+                    ft.Column(secciones, tight=True, spacing=14),
+                    padding=ft.Padding.only(right=_GUTTER_SCROLL))],
+                scroll=ft.ScrollMode.AUTO, tight=True)
         dlg = ft.AlertDialog(
             modal=True,
             title=ft.Text("Solicitudes a dispersar", weight=ft.FontWeight.BOLD),
@@ -2225,7 +2380,7 @@ class SeccionDispersionNoPemex:
             return None
         if self._tc_preview is not None:
             icono, color = ft.Icons.CURRENCY_EXCHANGE, VERDE
-            texto = (f"Tipo de cambio (DOF): $ {_fmt_moneda(self._tc_preview)} MXN "
+            texto = (f"Tipo de cambio (DOF): {_fmt_tc(self._tc_preview)} MXN "
                      "por USD. Se usará para convertir a pesos los proveedores "
                      "marcados 'pagar en pesos'.")
         else:
@@ -2292,8 +2447,17 @@ class SeccionDispersionNoPemex:
             self, e: "conciliacion.EmpresaDispersion") -> ft.Control:
         """Tabla compacta de los movimientos a dispersar de una empresa: folio,
         folio factura, proveedor, cuenta bancaria destino y los importes (total y
-        saldo de factura + saldo programado), con sus totales."""
-        W_FOLIO, W_FOLIO_FAC, W_PROV, W_CTA, W_MONTO = 60, 90, 200, 200, 105
+        saldo de factura + saldo programado), con sus totales. Si el grupo es USD y
+        tiene proveedores marcados 'pagar en pesos', agrega una columna con la
+        equivalencia en pesos (Saldo Programado × T.C.) para esos proveedores."""
+        W_FOLIO, W_FOLIO_FAC, W_PROV, W_CTA, W_MONTO, W_PESOS = (
+            60, 90, 200, 200, 105, 115)
+
+        # Pares (proveedor, cuenta beneficiario) del grupo marcados 'pagar en pesos' y
+        # el tipo de cambio. La columna solo aparece si hay marcados y hay T.C.
+        pesos_set = self._pesos_por_grupo.get(e.empresa, set())
+        tc = self._tc_preview
+        mostrar_pesos = bool(pesos_set) and bool(tc)
 
         def celda(texto, ancho, derecha=False, bold=False):
             return ft.DataCell(ft.Container(
@@ -2308,9 +2472,10 @@ class SeccionDispersionNoPemex:
 
         filas: list[ft.DataRow] = []
         tot_prog = 0.0
+        tot_pesos = 0.0
         for m in e.movimientos:
             tot_prog += m.saldo_programado or 0
-            filas.append(ft.DataRow(cells=[
+            celdas = [
                 celda(m.folio, W_FOLIO),
                 celda(m.folio_factura, W_FOLIO_FAC),
                 celda(m.proveedor, W_PROV),
@@ -2318,34 +2483,56 @@ class SeccionDispersionNoPemex:
                 celda(_fmt_moneda(m.total_factura), W_MONTO, derecha=True),
                 celda(_fmt_moneda(m.saldo_factura), W_MONTO, derecha=True),
                 celda(_fmt_moneda(m.saldo_programado), W_MONTO, derecha=True),
-            ]))
-        # Solo se totaliza el Saldo Programado (la etiqueta va en la columna previa).
-        filas.append(ft.DataRow(cells=[
+            ]
+            if mostrar_pesos:
+                if (m.proveedor, m.cuenta_bancaria) in pesos_set:
+                    pesos = round((m.saldo_programado or 0) * tc, 2)
+                    tot_pesos += pesos
+                    celdas.append(celda(_fmt_moneda(pesos), W_PESOS, derecha=True))
+                else:  # (proveedor, cuenta) USD que NO se paga en pesos
+                    celdas.append(celda("—", W_PESOS, derecha=True))
+            filas.append(ft.DataRow(cells=celdas))
+        # Fila de totales (Saldo Programado y, si aplica, equivalencia en pesos).
+        total_celdas = [
             celda("", W_FOLIO), celda("", W_FOLIO_FAC), celda("", W_PROV),
             celda("", W_CTA), celda("", W_MONTO),
             celda("TOTAL PROGRAMADO", W_MONTO, derecha=True, bold=True),
             celda(_fmt_moneda(tot_prog), W_MONTO, derecha=True, bold=True),
-        ]))
+        ]
+        if mostrar_pesos:
+            total_celdas.append(
+                celda(_fmt_moneda(tot_pesos), W_PESOS, derecha=True, bold=True))
+        filas.append(ft.DataRow(cells=total_celdas))
+
+        columnas = [
+            ft.DataColumn(label=encabezado_col("Folio", W_FOLIO)),
+            ft.DataColumn(label=encabezado_col("Folio Factura", W_FOLIO_FAC)),
+            ft.DataColumn(label=encabezado_col("Proveedor", W_PROV)),
+            ft.DataColumn(label=encabezado_col("Cuenta Bancaria", W_CTA)),
+            ft.DataColumn(label=encabezado_col("Total Fact.", W_MONTO),
+                          numeric=True),
+            ft.DataColumn(label=encabezado_col("Saldo Fact.", W_MONTO),
+                          numeric=True),
+            ft.DataColumn(label=encabezado_col("Saldo Prog.", W_MONTO),
+                          numeric=True),
+        ]
+        if mostrar_pesos:
+            columnas.append(ft.DataColumn(
+                label=encabezado_col("Equiv. MXN", W_PESOS), numeric=True))
+
         tabla = ft.DataTable(
-            columns=[
-                ft.DataColumn(label=encabezado_col("Folio", W_FOLIO)),
-                ft.DataColumn(label=encabezado_col("Folio Factura", W_FOLIO_FAC)),
-                ft.DataColumn(label=encabezado_col("Proveedor", W_PROV)),
-                ft.DataColumn(label=encabezado_col("Cuenta Bancaria", W_CTA)),
-                ft.DataColumn(label=encabezado_col("Total Fact.", W_MONTO),
-                              numeric=True),
-                ft.DataColumn(label=encabezado_col("Saldo Fact.", W_MONTO),
-                              numeric=True),
-                ft.DataColumn(label=encabezado_col("Saldo Prog.", W_MONTO),
-                              numeric=True),
-            ],
+            columns=columnas,
             rows=filas,
             column_spacing=14, horizontal_margin=6,
             heading_row_height=34, data_row_min_height=30, data_row_max_height=30,
             divider_thickness=1,
             border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT), border_radius=8,
         )
-        return ft.Row([tabla], scroll=ft.ScrollMode.AUTO)
+        # Padding inferior: reserva sitio para la barra de scroll horizontal (que
+        # Flet dibuja encima) y evita que tape la fila TOTAL PROGRAMADO.
+        return ft.Row(
+            [ft.Container(tabla, padding=ft.Padding.only(bottom=_GUTTER_SCROLL))],
+            scroll=ft.ScrollMode.AUTO)
 
     def _cuentas_de_empresa(self, nombre_empresa: str) -> list[str]:
         """Cuentas de dispersión de una empresa: se emparejan por el ID de la
