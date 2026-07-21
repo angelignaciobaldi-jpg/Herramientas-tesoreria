@@ -229,3 +229,42 @@ def solicitudes_devolucion(
         "pageSize": page_size,
     }
     return get(RUTA_SOLICITUDES_DEVOLUCION, params=params, **kwargs)
+
+
+# Solicitudes de pago a dispersar (No Pemex), para la pantalla de dispersión.
+RUTA_DISPERSIONES_NO_PEMEX = "/api/dispersiones/no_pemex"
+
+
+def dispersiones_no_pemex(
+    empresa: int,
+    *,
+    fecha_inicio: str | None = None,
+    fecha_fin: str | None = None,
+    tipo_solicitud: int | None = None,
+    folio_solicitud: int | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Consulta las solicitudes de pago a dispersar (No Pemex).
+
+    Query params (se mapean a los nombres que espera el servicio):
+      - `empresa`        -> empresa        : id de la empresa, int (REQUERIDO).
+      - `fecha_inicio`   -> fechaInicio    : fecha 'YYYY-MM-DD' (opcional).
+      - `fecha_fin`      -> fechaFin       : fecha 'YYYY-MM-DD' (opcional).
+      - `tipo_solicitud` -> tipoSolicitud  : id del tipo de solicitud, int (opcional).
+      - `folio_solicitud`-> folioSolicitud : folio, int (opcional).
+
+    Los opcionales en None se omiten de la URL. Devuelve el cuerpo ya parseado.
+
+    TODO(SIPP): mapear el JSON de respuesta a `core.reporte_dispersion.FilaSolicitud`
+    cuando se conozca el formato exacto de la respuesta (aún no se cablea a la UI).
+    """
+    if empresa is None or str(empresa).strip() == "":
+        raise ValueError("empresa es requerido para consultar las dispersiones.")
+    params = {
+        "empresa": empresa,
+        "fechaInicio": fecha_inicio,
+        "fechaFin": fecha_fin,
+        "tipoSolicitud": tipo_solicitud,
+        "folioSolicitud": folio_solicitud,
+    }
+    return get(RUTA_DISPERSIONES_NO_PEMEX, params=params, **kwargs)
