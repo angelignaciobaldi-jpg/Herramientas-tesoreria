@@ -238,10 +238,15 @@ class SeccionDevoluciones:
             self.dd_origen.options = []
             self.dd_origen.value = None
             self.tf_num_cuenta.value = ""
-        try:
-            self.page.update()
-        except (RuntimeError, AssertionError):
-            pass  # aún no montada la página
+        # Update DIRIGIDO a los controles afectados (no page.update() de página
+        # completa): se recarga con el modal de Configuración encima, así que
+        # re-renderizar toda la app sería innecesario y podría congelar la UI.
+        for control in (self.dd_empresa, self.txt_sin_catalogo,
+                        self.dd_origen, self.tf_num_cuenta):
+            try:
+                control.update()
+            except (RuntimeError, AssertionError):
+                pass  # aún no montado; se reflejará al renderizar
 
     # ================================================================ UI
     def _construir_tabla(self) -> ft.Control:
