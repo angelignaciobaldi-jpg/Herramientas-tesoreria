@@ -336,6 +336,14 @@ class SeccionDevoluciones:
                                 on_click=self._quitar_asignacion,
                             ),
                             ft.OutlinedButton(
+                                content="Mover cuentas a alta de beneficiarios",
+                                icon=ft.Icons.MOVE_UP,
+                                on_click=self._mover_a_alta,
+                                tooltip="Copia las filas seleccionadas al módulo de Alta "
+                                        "de beneficiarios (CLABE, beneficiario, alias y "
+                                        "banco) para dar de alta las cuentas.",
+                            ),
+                            ft.OutlinedButton(
                                 content="Generar Excel", icon=ft.Icons.TABLE_VIEW,
                                 on_click=self._generar_excel,
                             ),
@@ -714,6 +722,46 @@ class SeccionDevoluciones:
         )
 
     # ------------------------------------------------------- asignación
+    def _mover_a_alta(self, _e=None) -> None:
+        """Copia las solicitudes SELECCIONADAS al módulo de Alta de beneficiarios
+        (para dar de alta las cuentas). Toma los valores actuales (editados) de
+        CLABE, beneficiario y monto; el alias sale igual al beneficiario y el banco
+        se deduce de la CLABE en el otro módulo. No las quita de devoluciones."""
+        seleccionadas = [f for f in self.filas if f.seleccionada]
+        if not seleccionadas:
+            self.app.avisar(
+                "Selecciona al menos una fila (marca las casillas).", ROJO)
+            return
+        registros, omitidos = [], 0
+        for f in seleccionadas:
+            clabe, monto_txt, cliente, _concepto, _empresa = f.valores()
+            if not clabe and not cliente:
+                omitidos += 1
+                continue
+            try:
+                monto = parse_monto(monto_txt)
+            except ValueError:
+                monto = None  # el monto es opcional/editable en el otro módulo
+            registros.append({"clabe": clabe, "beneficiario": cliente, "monto": monto})
+        if not registros:
+            self.app.avisar(
+                "Las filas seleccionadas no tienen CLABE ni beneficiario.", ROJO)
+            return
+        try:
+            agregados = self.app.alta.importar_desde_devoluciones(registros)
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self.app.avisar(f"No se pudieron mover las cuentas: {exc}", ROJO)
+            return
+        # Lleva al usuario a la pestaña de Alta para que vea lo importado (morado).
+        try:
+            self.app._seleccionar_nav(0)
+        except Exception:  # noqa: BLE001 — la navegación no debe romper el flujo
+            pass
+        extra = f" ({omitidos} sin datos, omitida(s))" if omitidos else ""
+        self.app.avisar(
+            f"{agregados} cuenta(s) movida(s) a Alta de beneficiarios{extra}. "
+            "Aparecen en morado.", VERDE)
+
     def _quitar_asignacion(self, _e=None) -> None:
         objetivo = [f for f in self.filas if f.seleccionada and f.asignacion]
         if not objetivo:
