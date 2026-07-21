@@ -26,8 +26,17 @@ import flet as ft
 # y, sobre todo, no impida que corra el auto-updater (que podría traer la corrección).
 from core import rutas
 
+# Colores de la barra de título nativa (DWM) según el tema. Coinciden con el fondo
+# (superficie) del tema de la app para que la barra de Windows combine con la
+# ventana: fondo de la barra + color del texto del título. En modo oscuro/claro,
+# respectivamente. (Windows 11; en versiones previas DWM lo ignora.)
+_BARRA_FONDO_CLARO = "#FEF7FF"
+_BARRA_TEXTO_CLARO = "#1D1B20"
+_BARRA_FONDO_OSCURO = "#141218"
+_BARRA_TEXTO_OSCURO = "#E6E0E9"
 
-class AppTesoreria: 
+
+class AppTesoreria:
     """Shell de la aplicación: ventana, encabezado, tema y pestañas."""
 
     def __init__(self, page: ft.Page):
@@ -35,7 +44,24 @@ class AppTesoreria:
         self.picker = ft.FilePicker()
         page.services.append(self.picker)
         self._picker_al_frente()
+        # Listeners de redimensionado (page.on_resize es un slot único): se despachan
+        # a todos desde _despachar_resize. Las pantallas se registran con registrar_on_resize.
+        self._on_resize_cbs: list = []
         self._construir()
+
+    # ------------------------------------------------ redimensionado
+    def registrar_on_resize(self, callback) -> None:
+        """Registra un listener para el evento de redimensionado de la ventana."""
+        self._on_resize_cbs.append(callback)
+
+    def _despachar_resize(self, e) -> None:
+        """Llama a todos los listeners registrados (best-effort: uno que falle no
+        impide a los demás)."""
+        for cb in self._on_resize_cbs:
+            try:
+                cb(e)
+            except Exception:  # noqa: BLE001 — un listener no debe tumbar el resize
+                pass
 
     # ------------------------------------------------ diálogos de archivo
     def _picker_al_frente(self) -> None:
@@ -68,6 +94,26 @@ class AppTesoreria:
         except Exception:  # noqa: BLE001 — el traer-al-frente no es crítico
             pass
 
+    def abrir_en_sistema(self, ruta: str) -> None:
+        """Abre un archivo o carpeta en el programa predeterminado (Explorador/visor)
+        y lo trae AL FRENTE de la app. En Windows, una ventana recién lanzada no puede
+        robar el foco por el 'foreground lock'; además, si la app quedó 'siempre
+        encima', el Explorador saldría detrás. Por eso: (1) se quita el topmost y (2)
+        se autoriza a la ventana que se abre a tomar el foco (AllowSetForegroundWindow).
+        Best-effort: si algo falla, se abre igual con os.startfile."""
+        self._fijar_topmost(False)  # por si un diálogo previo lo dejó activo
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                # ASFW_ANY (-1): permite que el próximo proceso lanzado tome el foco.
+                ctypes.windll.user32.AllowSetForegroundWindow(-1)
+            except Exception:  # noqa: BLE001 — el traer-al-frente no es crítico
+                pass
+        try:
+            os.startfile(ruta)  # noqa: S606 — abre en el visor/Explorador predeterminado
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self.avisar(f"No se pudo abrir: {exc}", ft.Colors.RED_700)
+
     # Servicio compartido por todas las pantallas: aviso tipo snackbar. Opcional:
     # un botón de acción (p. ej. "Abrir") con su callback, y una duración mayor
     # para dar tiempo a hacer clic.
@@ -87,6 +133,7 @@ class AppTesoreria:
         # pantalla estuviera rota, el error se contiene en _arrancar_app (que lo
         # muestra en una pantalla clara) en vez de tumbar todo el proceso.
         from ui.alta_beneficiarios import SeccionAltaBeneficiarios
+        from ui.cheques import SeccionCheques
         from ui.configuracion import SeccionConfiguracion
         from ui.devoluciones import SeccionDevoluciones
         from ui.dispersion_no_pemex import SeccionDispersionNoPemex
@@ -96,6 +143,7 @@ class AppTesoreria:
         self.alta = SeccionAltaBeneficiarios(self)
         self.devoluciones = SeccionDevoluciones(self)
         self.dispersion_no_pemex = SeccionDispersionNoPemex(self)
+        self.cheques = SeccionCheques(self)
 
         # Área de contenido: las tres pantallas viven aquí; solo se muestra la
         # activa (se alterna 'visible'), en vez de un TabBarView de Material.
@@ -103,6 +151,7 @@ class AppTesoreria:
             self.alta.contenido,
             self.devoluciones.contenido,
             self.dispersion_no_pemex.contenido,
+            self.cheques.contenido,
         ]
         for i, seccion in enumerate(self._secciones):
             seccion.visible = i == 0
@@ -161,8 +210,14 @@ class AppTesoreria:
         # splash y la app apilados, y evita un blanco intermedio).
         self.page.controls.clear()
         self.page.add(encabezado, self._area, pie)
-        # El redimensionado afecta la tabla de la pantalla de alta.
-        self.page.on_resize = self.alta._on_resize
+        # `page.on_resize` es un slot ÚNICO; para que varias pantallas reaccionen al
+        # cambio de tamaño se despacha a una lista de listeners (registrar_on_resize).
+        self.registrar_on_resize(self.alta._on_resize)     # tabla de 'Alta'
+        self.registrar_on_resize(self.config._on_resize)   # modal de Configuración
+        self.page.on_resize = self._despachar_resize
+        # Barra de título nativa con el color del tema actual (sondea el HWND en un
+        # hilo, pues la ventana la crea flet.exe de forma asíncrona).
+        self._pintar_barra_titulo(oscuro)
         # Ya con la página construida, se cargan los registros guardados.
         self.alta.cargar_desde_db()
 
@@ -177,6 +232,7 @@ class AppTesoreria:
             ("Alta de beneficiarios", ft.Icons.ACCOUNT_BALANCE),
             ("Generar dispersión devoluciones", ft.Icons.CURRENCY_EXCHANGE),
             ("Dispersión (No Pemex)", ft.Icons.PAYMENTS),
+            ("Cheques", ft.Icons.REQUEST_QUOTE),
         ]
         controles = []
         for idx, (texto, icono) in enumerate(definiciones):
@@ -245,6 +301,20 @@ class AppTesoreria:
         return ("Imagenes/Quetzaltic Texto Blanco .png" if oscuro
                 else "Imagenes/Quetzaltic Texto negro.png")
 
+    def _pintar_barra_titulo(self, oscuro: bool) -> None:
+        """Pinta la barra de título nativa de Windows con el color de fondo del
+        tema actual (claro/oscuro), para que combine con la ventana. Best-effort:
+        no-op fuera de Windows y en Windows 10 (DWM ignora los atributos)."""
+        try:
+            from core import win_titlebar
+
+            fondo = _BARRA_FONDO_OSCURO if oscuro else _BARRA_FONDO_CLARO
+            texto = _BARRA_TEXTO_OSCURO if oscuro else _BARRA_TEXTO_CLARO
+            win_titlebar.pintar_barra(
+                self.page.title, fondo, texto=texto, borde=fondo, oscuro=oscuro)
+        except Exception:  # noqa: BLE001 — el color de la barra no es crítico
+            pass
+
     def _alternar_tema(self, _e) -> None:
         """Cambia entre modo claro y oscuro (ajusta logo e ícono) y RECUERDA la
         elección para el próximo arranque."""
@@ -253,6 +323,7 @@ class AppTesoreria:
         self.logo.src = self._logo_src(oscuro)
         self.btn_tema.icon = ft.Icons.LIGHT_MODE if oscuro else ft.Icons.DARK_MODE
         self.btn_tema.tooltip = "Modo claro" if oscuro else "Modo oscuro"
+        self._pintar_barra_titulo(oscuro)
         _guardar_tema_oscuro(oscuro)
         self.page.update()
 
@@ -528,6 +599,15 @@ def _vigilar_ventana(page: ft.Page) -> None:
 
 async def main(page: ft.Page) -> None:
     page.title = "Herramienta Integral de Tesorería"
+    # Localización en español (México): los textos internos de los controles nativos
+    # de Material (p. ej. el diálogo del DatePicker: título, OK/Cancelar, meses y
+    # días) los pone la localización de Flutter según el locale de la página. Sin
+    # esto salen en inglés y no concuerdan con el resto de la interfaz.
+    page.locale_configuration = ft.LocaleConfiguration(
+        supported_locales=[ft.Locale("es", "MX"), ft.Locale("es", "ES"),
+                           ft.Locale("en", "US")],
+        current_locale=ft.Locale("es", "MX"),
+    )
     # Icono de la ventana / barra de tareas (mismo que el del escritorio).
     # Ruta relativa al assets_dir (rutas.BUNDLE), igual que el logo del encabezado.
     page.window.icon = "Imagenes/icon.ico"
