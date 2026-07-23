@@ -268,3 +268,40 @@ def dispersiones_no_pemex(
         "folioSolicitud": folio_solicitud,
     }
     return get(RUTA_DISPERSIONES_NO_PEMEX, params=params, **kwargs)
+
+
+# Pagos/devoluciones pendientes a deudores diversos (colaboradores u otros
+# deudores), para la pantalla de dispersión de devoluciones.
+RUTA_PAGOS_DEUDORES = "/api/pagos/deudores-diversos"
+
+
+def pagos_deudores_diversos(
+    id_empresa: int | str,
+    tipo: int | str,
+    *,
+    page: int | None = None,
+    page_size: int | None = None,
+    **kwargs: Any,
+) -> Any:
+    """Consulta pagos/devoluciones pendientes a deudores diversos.
+
+    Query params (verificados contra el servicio):
+      - `id_empresa` -> empresa    : id de la empresa (REQUERIDO). OJO: este
+                                     endpoint usa 'empresa' (no 'idEmpresa', como
+                                     sí hace el de solicitudes de clientes).
+      - `tipo`       -> devolucion : 1 = 'Devoluciones pendientes',
+                                     0 = 'Pagos pendientes' (REQUERIDO).
+      - `page`/`page_size` -> page/pageSize (opcionales).
+
+    Devuelve el cuerpo ya parseado. El mapeo del JSON a SolicitudDevolucion vive en
+    core.solicitudes_devolucion.consultar_deudores.
+    """
+    if id_empresa is None or str(id_empresa).strip() == "":
+        raise ValueError("empresa es requerido para consultar los deudores.")
+    params = {
+        "empresa": id_empresa,
+        "devolucion": tipo,
+        "page": page,
+        "pageSize": page_size,
+    }
+    return get(RUTA_PAGOS_DEUDORES, params=params, **kwargs)

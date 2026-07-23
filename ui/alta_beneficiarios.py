@@ -23,11 +23,26 @@ from core.rpa_sipp import (
     BucleRpa, ErrorSipp, SesionSipp, asegurar_navegador, necesita_navegador,
 )
 from ui.comun import (
-    EXTENSIONES, GRIS, NARANJA, ROJO, VERDE,
-    W_ACCIONES, W_BANCO, W_CLABE, W_ESTADO, W_MONTO, W_NOMBRE, W_TIPO,
-    celda_centrada, encabezado_col, fmt_monto, parse_monto, solo_digitos,
-    tarjeta, validar,
+    CENTRO, EXTENSIONES, GRIS, NARANJA, ROJO, VERDE,
+    fmt_monto, parse_monto, solo_digitos, tarjeta, validar,
 )
+from ui.tabla_responsiva import DER, IZQ, ColumnaTabla, FilaDatos, TablaResponsiva
+
+# Columnas de la tabla de beneficiarios, por PORCENTAJE del ancho disponible
+# (TablaResponsiva las adapta al tamaño de ventana; scroll horizontal si no caben).
+# Cada entrada: (etiqueta, pct, alineación, ancho_min_px). La col 0 es el check.
+_COLS = [
+    ("", 3, CENTRO, 44),
+    ("Estado", 4, CENTRO, 56),
+    ("CLABE", 13, CENTRO, 150),
+    ("Monto", 7, DER, 90),
+    ("Banco", 9, CENTRO, 90),
+    ("Tipo", 9, CENTRO, 90),
+    ("Beneficiario", 15, IZQ, 150),
+    ("Alias", 13, IZQ, 130),
+    ("Email de notificación", 16, IZQ, 150),
+    ("Acciones", 8, CENTRO, 118),
+]
 
 # Tipos de beneficiario que el RPA puede filtrar en el reporte del SIPP.
 # (etiqueta visible, clave de coincidencia que usa el RPA para marcar la opción).
@@ -91,15 +106,24 @@ class FilaBeneficiario:
         #   "nombre" -> CLABE sugerida porque el nombre coincide (fila ámbar)
         #   "sin"    -> no coincide ni por CLABE ni por nombre (fila roja)
         self.conciliacion: str | None = None
+        # Color de fondo actual (str|None) y contenedor renderizado en la tabla
+        # responsiva (para recolorear en vivo sin reconstruir; lo asigna la sección
+        # tras pintar la página). None mientras la fila no esté en la página visible.
+        self.color: str | None = None
+        self.contenedor = None
+        # Casilla de selección de la fila (col 0), reemplaza el check nativo del
+        # DataTable. La selección vive aquí (sin page.update por fila).
+        self.chk_sel = ft.Checkbox(value=False, on_change=self._al_seleccionar)
 
-        # Sin max_length (evita el contador "X/18" que desalineaba la fila); el
-        # límite de 18 dígitos se mantiene por código en _cambio_clabe.
+        # Sin anchos fijos: las celdas llenan el ancho que les da la columna
+        # responsiva. Sin max_length (evita el contador "X/18"); el límite de 18
+        # dígitos se mantiene por código en _cambio_clabe.
         self.tf_clabe = ft.TextField(
-            value=clabe, dense=True, width=W_CLABE, text_size=12,
+            value=clabe, dense=True, text_size=12,
             content_padding=8, text_align=ft.TextAlign.CENTER, on_change=self._cambio_clabe,
         )
         self.tf_monto = ft.TextField(
-            value=fmt_monto(monto), dense=True, width=W_MONTO, text_size=12,
+            value=fmt_monto(monto), dense=True, text_size=12,
             content_padding=8, text_align=ft.TextAlign.RIGHT, hint_text="0.00",
             on_change=self._cambio,
         )
@@ -110,61 +134,66 @@ class FilaBeneficiario:
         # Tipo de beneficiario: se llena al conciliar con el reporte ('—' si no).
         self.txt_tipo = ft.Text("—", size=12, text_align=ft.TextAlign.CENTER)
         self.tf_benef = ft.TextField(
-            value=beneficiario, dense=True, width=W_NOMBRE, text_size=12,
+            value=beneficiario, dense=True, text_size=12,
             content_padding=8, on_change=self._cambio,
         )
         self.tf_alias = ft.TextField(
-            value=alias, dense=True, width=W_NOMBRE, text_size=12,
+            value=alias, dense=True, text_size=12,
             content_padding=8, on_change=self._cambio,
         )
         self.tf_email = ft.TextField(
-            value=email, dense=True, width=W_NOMBRE, text_size=12,
+            value=email, dense=True, text_size=12,
             content_padding=8, on_change=self._cambio,
         )
         self.ico_estado = ft.Icon(ft.Icons.CIRCLE, size=16, color=GRIS)
 
         self.snapshot = self._valores()
-        acciones = ft.Row(
+        self.acciones = ft.Row(
             [
                 ft.IconButton(
                     icon=ft.Icons.VISIBILITY_OUTLINED, tooltip="Ver archivo",
-                    icon_color=ft.Colors.BLUE_700, on_click=lambda e: self.previsualizar(),
+                    icon_color=ft.Colors.BLUE_700, icon_size=18,
+                    width=36, height=36, style=ft.ButtonStyle(padding=0),
+                    on_click=lambda e: self.previsualizar(),
                 ),
                 ft.IconButton(
                     icon=ft.Icons.SAVE_OUTLINED, tooltip="Guardar", icon_color=VERDE,
+                    icon_size=18, width=36, height=36, style=ft.ButtonStyle(padding=0),
                     on_click=lambda e: self.guardar(),
                 ),
                 ft.IconButton(
                     icon=ft.Icons.DELETE_OUTLINE, tooltip="Eliminar", icon_color=ROJO,
+                    icon_size=18, width=36, height=36, style=ft.ButtonStyle(padding=0),
                     on_click=lambda e: self.seccion.eliminar_fila(self),
                 ),
             ],
-            spacing=0,
-            alignment=ft.MainAxisAlignment.CENTER,
-        )
-        self.fila = ft.DataRow(
-            selected=False,
-            on_select_change=self._al_seleccionar,
-            cells=[
-                ft.DataCell(celda_centrada(self.ico_estado, W_ESTADO)),
-                ft.DataCell(self.tf_clabe),
-                ft.DataCell(self.tf_monto),
-                ft.DataCell(celda_centrada(self.txt_banco, W_BANCO)),
-                ft.DataCell(celda_centrada(self.txt_tipo, W_TIPO)),
-                ft.DataCell(self.tf_benef),
-                ft.DataCell(self.tf_alias),
-                ft.DataCell(self.tf_email),
-                ft.DataCell(celda_centrada(acciones, W_ACCIONES)),
-            ],
+            spacing=2,
+            alignment=ft.MainAxisAlignment.CENTER, tight=True,
         )
         self._actualizar_estado()
 
-    def _al_seleccionar(self, e) -> None:
-        # Solo se sincroniza el modelo con lo que el cliente ya pintó; NO se llama
-        # a page.update(). El check-box general dispara este evento por CADA fila,
-        # y un page.update() por evento (un refresco completo) causaba el delay al
-        # seleccionar todas. El checkbox ya se marca solo en el cliente.
-        self.fila.selected = str(e.data).lower() == "true"
+    def fila_datos(self) -> FilaDatos:
+        """Fila para la tabla responsiva: una celda (control) por columna, en el
+        orden de `_COLS`. El fondo lleva el color de conciliación de la fila."""
+        return FilaDatos(
+            [self.chk_sel, self.ico_estado, self.tf_clabe, self.tf_monto,
+             self.txt_banco, self.txt_tipo, self.tf_benef, self.tf_alias,
+             self.tf_email, self.acciones],
+            bgcolor=self.color,
+        )
+
+    def _al_seleccionar(self, _e=None) -> None:
+        # El checkbox ya refleja su estado en el cliente; no se hace page.update
+        # (el check general dispara este evento por CADA fila y refrescar por evento
+        # causaba el delay al seleccionar todas).
+        pass
+
+    @property
+    def seleccionada(self) -> bool:
+        return bool(self.chk_sel.value)
+
+    def set_seleccion(self, valor: bool) -> None:
+        self.chk_sel.value = bool(valor)
 
     # ------------------------------------------------------------- helpers
     def _valores(self) -> tuple[str, str, str, str, str]:
@@ -273,15 +302,19 @@ class FilaBeneficiario:
         """Pinta la fila según la conciliación: morado si se importó de
         devoluciones; rojo si no coincide; ámbar si la CLABE se sugirió por nombre
         (revisar); azul si el dato viene solo del reporte (sin estado de cuenta);
-        sin color si coincide por CLABE o si no hay reporte importado."""
+        sin color si coincide por CLABE o si no hay reporte importado. Si la fila
+        ya está renderizada, muta el fondo del contenedor en vivo (sin reconstruir,
+        para no perder el foco de un campo en edición)."""
         self.conciliacion = estado
-        self.fila.color = (
+        self.color = (
             IMPORTADO_DEVOL if self.importado_devolucion
             else SIN_COINCIDENCIA if estado == "sin"
             else SUGERIDO_NOMBRE if estado == "nombre"
             else SOLO_REPORTE if self.desde_reporte
             else None
         )
+        if self.contenedor is not None:
+            self.contenedor.bgcolor = self.color
 
     def previsualizar(self) -> None:
         """Abre el archivo original del registro en el visor predeterminado del
@@ -428,33 +461,16 @@ class SeccionAltaBeneficiarios:
         seccion_rpa = self._construir_rpa()
 
         # --- Sección 2: tabla editable con todos los registros ---
-        self.enc_benef = encabezado_col("Beneficiario", W_NOMBRE)
-        self.enc_alias = encabezado_col("Alias", W_NOMBRE)
-        self.enc_email = encabezado_col("Email de notificación", W_NOMBRE)
-        self.tabla = ft.DataTable(
-            columns=[
-                ft.DataColumn(label=encabezado_col("Estado", W_ESTADO)),
-                ft.DataColumn(label=encabezado_col("CLABE", W_CLABE)),
-                ft.DataColumn(label=encabezado_col("Monto", W_MONTO), numeric=True),
-                ft.DataColumn(label=encabezado_col("Banco", W_BANCO)),
-                ft.DataColumn(label=encabezado_col("Tipo", W_TIPO)),
-                ft.DataColumn(label=self.enc_benef),
-                ft.DataColumn(label=self.enc_alias),
-                ft.DataColumn(label=self.enc_email),
-                ft.DataColumn(label=encabezado_col("Acciones", W_ACCIONES)),
-            ],
-            rows=[],
-            show_checkbox_column=True,
-            column_spacing=14,
-            heading_row_color=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            heading_row_height=46,
-            data_row_min_height=48,
-            data_row_max_height=48,
-            divider_thickness=1,
-            border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
-            border_radius=10,
-            vertical_lines=ft.BorderSide(1, ft.Colors.with_opacity(0.4, ft.Colors.OUTLINE_VARIANT)),
-        )
+        # Tabla RESPONSIVA: columnas por porcentaje del ancho (se adaptan a la
+        # ventana; scroll horizontal si no caben). Mismo modelo que Dispersión (No
+        # Pemex). El check de selección va en la columna 0.
+        columnas = [
+            ColumnaTabla(etq, pct, alin, ancho_min_px=minpx)
+            for etq, pct, alin, minpx in _COLS
+        ]
+        self.tabla = TablaResponsiva(
+            self.page, columnas, alto_fila=52,
+            ancho_inicial=(getattr(self.page, "width", None) or 1200) - 90)
         self.txt_resumen = ft.Text("", color=GRIS, size=12)
         # Formato de exportación: Bancomer -> carpeta con TXT de alta de cuentas ;
         # Banregio -> Excel de alta de cuentas.
@@ -546,10 +562,10 @@ class SeccionAltaBeneficiarios:
                     barra,
                     self._leyenda(),
                     barra_busqueda,
-                    ft.Row([self.tabla], scroll=ft.ScrollMode.AUTO),
+                    self.tabla.control,
                     barra_paginacion,
                 ],
-                spacing=12,
+                spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
         )
 
@@ -872,9 +888,14 @@ class SeccionAltaBeneficiarios:
         pagina = self._filas_pagina(visibles)
         # Solo se renderiza la página actual (no todas las filas): esto agiliza el
         # listado y hace que 'Seleccionar todos' no se trabe.
-        self.tabla.rows = [f.fila for f in pagina]
-        self._ajustar_anchos()
-        self._remarcar_conciliacion()
+        self._remarcar_conciliacion()  # fija f.color antes de pintar (bgcolor)
+        self.tabla.set_contenido([f.fila_datos() for f in pagina])
+        # Enlaza SOLO las filas de la página con su contenedor renderizado (para
+        # recolorearlas en vivo al editar); las demás quedan sin contenedor.
+        for f in self.filas:
+            f.contenedor = None
+        for i, f in enumerate(pagina):
+            f.contenedor = self.tabla.contenedor_fila(i)
         self._actualizar_resumen()
         self._actualizar_contador(len(visibles))
         self._actualizar_paginacion(len(visibles))
@@ -1164,27 +1185,11 @@ class SeccionAltaBeneficiarios:
         )
         self.page.update()
 
-    def _ajustar_anchos(self) -> None:
-        """Reparte el ancho disponible entre los campos de texto largos
-        (beneficiario, alias, email) para que crezcan al agrandar la ventana."""
-        ancho = self.page.width or 1180
-        # Columnas de ancho fijo: estado, CLABE, monto, banco, tipo, acciones.
-        fijo = W_ESTADO + W_CLABE + W_MONTO + W_BANCO + W_TIPO + W_ACCIONES
-        overhead = 170  # paddings de la tarjeta y espaciamiento entre columnas
-        disponible = ancho - fijo - overhead
-        w = max(W_NOMBRE, int(disponible / 3))
-        for f in self.filas:
-            f.tf_benef.width = w
-            f.tf_alias.width = w
-            f.tf_email.width = w
-        # Los encabezados acompañan el ancho de sus columnas.
-        self.enc_benef.width = w
-        self.enc_alias.width = w
-        self.enc_email.width = w
-
     def _on_resize(self, _e) -> None:
-        self._ajustar_anchos()
-        self.page.update()
+        # La tabla responsiva se remide sola (on_size_change); no hay que reajustar
+        # anchos a mano. Se conserva el método porque app.py lo registra como
+        # listener de redimensionado.
+        pass
 
     def _actualizar_resumen(self) -> None:
         total = len(self.filas)
@@ -1474,15 +1479,15 @@ class SeccionAltaBeneficiarios:
         visibles = self._filas_visibles()
         if not visibles:
             return
-        nuevo = not all(f.fila.selected for f in visibles)
+        nuevo = not all(f.seleccionada for f in visibles)
         for f in visibles:
-            f.fila.selected = nuevo
+            f.set_seleccion(nuevo)
         self.page.update()
 
     def _asignar_monto_seleccionados(self, _e) -> None:
         """Aplica un mismo monto a todas las filas seleccionadas, para no
         capturarlo uno por uno."""
-        seleccionados = [f for f in self.filas if f.fila.selected]
+        seleccionados = [f for f in self.filas if f.seleccionada]
         if not seleccionados:
             self.avisar("No hay registros seleccionados (marca las casillas).", GRIS)
             return
@@ -1544,7 +1549,7 @@ class SeccionAltaBeneficiarios:
 
     def _guardar_seleccionados(self, _e) -> None:
         self._guardar_varias(
-            [f for f in self.filas if f.fila.selected],
+            [f for f in self.filas if f.seleccionada],
             "No hay registros seleccionados (marca las casillas o usa 'Seleccionar todos').",
         )
 
@@ -1724,7 +1729,7 @@ class SeccionAltaBeneficiarios:
 
     def _eliminar_seleccionados(self, _e) -> None:
         """Elimina todas las filas seleccionadas (con confirmación)."""
-        seleccionados = [f for f in self.filas if f.fila.selected]
+        seleccionados = [f for f in self.filas if f.seleccionada]
         if not seleccionados:
             self.avisar("No hay registros seleccionados (marca las casillas).", GRIS)
             return
