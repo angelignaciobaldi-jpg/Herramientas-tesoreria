@@ -174,6 +174,15 @@ class TablaResponsiva:
             self._encabezado_holder.content = self._construir_encabezado()
         self._pintar_cuerpo()
 
+    def contenedor_fila(self, indice: int):
+        """Container de la fila renderizada en la posición `indice` (según el orden
+        pasado a set_contenido). Permite mutar su `bgcolor` en vivo —sin reconstruir
+        la tabla— para no perder el foco de un campo que se está editando. Devuelve
+        None si el índice no existe."""
+        if 0 <= indice < len(self._filas_refs):
+            return self._filas_refs[indice].get("cont")
+        return None
+
     # ----------------------------------------------------------- medición / px
     def _medir(self, e) -> None:
         """Handler de `on_size_change`: si el ancho cambió lo suficiente, recomputa

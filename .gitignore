@@ -67,3 +67,6 @@ _cuentas_dispersion_cache.json
 descargas/
 # Token de la API cifrado con DPAPI (por maquina; NUNCA al repo)
 token_api.json
+
+# Volcado de la API de empresas (referencia con datos internos/RFC; no al repo)
+core/empresas.md
