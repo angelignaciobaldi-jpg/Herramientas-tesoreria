@@ -15,7 +15,7 @@ from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from core import (
     db, exportador_alta_bancomer, exportador_alta_banregio, exportador_alta_spei,
-    ocr, reporte_cuentas,
+    ocr, reporte_beneficiarios, reporte_cuentas,
 )
 from core.catalogo_bancos import banco_desde_clabe
 from core.extractores import extraer_clabes, extraer_datos, nombre_desde_archivo, validar_clabe
@@ -23,11 +23,26 @@ from core.rpa_sipp import (
     BucleRpa, ErrorSipp, SesionSipp, asegurar_navegador, necesita_navegador,
 )
 from ui.comun import (
-    EXTENSIONES, GRIS, NARANJA, ROJO, VERDE,
-    W_ACCIONES, W_BANCO, W_CLABE, W_ESTADO, W_MONTO, W_NOMBRE, W_TIPO,
-    celda_centrada, encabezado_col, fmt_monto, parse_monto, solo_digitos,
-    tarjeta, validar,
+    CENTRO, EXTENSIONES, GRIS, NARANJA, ROJO, VERDE,
+    fmt_monto, parse_monto, solo_digitos, tarjeta, validar,
 )
+from ui.tabla_responsiva import DER, IZQ, ColumnaTabla, FilaDatos, TablaResponsiva
+
+# Columnas de la tabla de beneficiarios, por PORCENTAJE del ancho disponible
+# (TablaResponsiva las adapta al tamaño de ventana; scroll horizontal si no caben).
+# Cada entrada: (etiqueta, pct, alineación, ancho_min_px). La col 0 es el check.
+_COLS = [
+    ("", 3, CENTRO, 44),
+    ("Estado", 4, CENTRO, 56),
+    ("CLABE", 13, CENTRO, 150),
+    ("Monto", 7, DER, 90),
+    ("Banco", 9, CENTRO, 90),
+    ("Tipo", 9, CENTRO, 90),
+    ("Beneficiario", 15, IZQ, 150),
+    ("Alias", 13, IZQ, 130),
+    ("Email de notificación", 16, IZQ, 150),
+    ("Acciones", 8, CENTRO, 118),
+]
 
 # Tipos de beneficiario que el RPA puede filtrar en el reporte del SIPP.
 # (etiqueta visible, clave de coincidencia que usa el RPA para marcar la opción).
@@ -62,6 +77,10 @@ class _TokenCarga:
 SIN_COINCIDENCIA = ft.Colors.with_opacity(0.16, ft.Colors.RED)      # no coincide
 SUGERIDO_NOMBRE = ft.Colors.with_opacity(0.18, ft.Colors.AMBER)     # CLABE sugerida por nombre
 SOLO_REPORTE = ft.Colors.with_opacity(0.14, ft.Colors.BLUE)         # dato solo del reporte (sin estado de cuenta)
+IMPORTADO_DEVOL = ft.Colors.with_opacity(0.16, ft.Colors.PURPLE)    # importado del módulo de devoluciones
+
+# Etiqueta de 'Tipo' para los registros traídos desde devoluciones.
+TIPO_IMPORTADO_DEVOL = "Importado de devoluciones"
 
 
 class FilaBeneficiario:
@@ -70,7 +89,7 @@ class FilaBeneficiario:
     def __init__(self, seccion: "SeccionAltaBeneficiarios", id_: int | None, clabe: str,
                  beneficiario: str, alias: str, email: str, origen: str = "",
                  monto: float | None = None, ruta_archivo: str | None = None,
-                 desde_reporte: bool = False):
+                 desde_reporte: bool = False, importado_devolucion: bool = False):
         self.seccion = seccion
         self.id = id_          # None mientras no se haya guardado en la base
         self.origen = origen   # nombre del archivo de origen (informativo)
@@ -78,21 +97,33 @@ class FilaBeneficiario:
         # True si la fila se creó a partir del reporte (no hay estado de cuenta
         # descargado). Se pinta en azul para distinguirla y su 'Ver archivo' avisa.
         self.desde_reporte = desde_reporte
+        # True si la fila se movió desde el módulo de devoluciones. Se pinta en
+        # morado, su 'Tipo' es TIPO_IMPORTADO_DEVOL y la conciliación no la toca.
+        self.importado_devolucion = importado_devolucion
         # Estado de conciliación con el reporte de cuentas:
         #   None     -> no aplica (sin reporte importado)
         #   "ok"     -> la CLABE coincide con el reporte
         #   "nombre" -> CLABE sugerida porque el nombre coincide (fila ámbar)
         #   "sin"    -> no coincide ni por CLABE ni por nombre (fila roja)
         self.conciliacion: str | None = None
+        # Color de fondo actual (str|None) y contenedor renderizado en la tabla
+        # responsiva (para recolorear en vivo sin reconstruir; lo asigna la sección
+        # tras pintar la página). None mientras la fila no esté en la página visible.
+        self.color: str | None = None
+        self.contenedor = None
+        # Casilla de selección de la fila (col 0), reemplaza el check nativo del
+        # DataTable. La selección vive aquí (sin page.update por fila).
+        self.chk_sel = ft.Checkbox(value=False, on_change=self._al_seleccionar)
 
-        # Sin max_length (evita el contador "X/18" que desalineaba la fila); el
-        # límite de 18 dígitos se mantiene por código en _cambio_clabe.
+        # Sin anchos fijos: las celdas llenan el ancho que les da la columna
+        # responsiva. Sin max_length (evita el contador "X/18"); el límite de 18
+        # dígitos se mantiene por código en _cambio_clabe.
         self.tf_clabe = ft.TextField(
-            value=clabe, dense=True, width=W_CLABE, text_size=12,
+            value=clabe, dense=True, text_size=12,
             content_padding=8, text_align=ft.TextAlign.CENTER, on_change=self._cambio_clabe,
         )
         self.tf_monto = ft.TextField(
-            value=fmt_monto(monto), dense=True, width=W_MONTO, text_size=12,
+            value=fmt_monto(monto), dense=True, text_size=12,
             content_padding=8, text_align=ft.TextAlign.RIGHT, hint_text="0.00",
             on_change=self._cambio,
         )
@@ -103,58 +134,66 @@ class FilaBeneficiario:
         # Tipo de beneficiario: se llena al conciliar con el reporte ('—' si no).
         self.txt_tipo = ft.Text("—", size=12, text_align=ft.TextAlign.CENTER)
         self.tf_benef = ft.TextField(
-            value=beneficiario, dense=True, width=W_NOMBRE, text_size=12,
+            value=beneficiario, dense=True, text_size=12,
             content_padding=8, on_change=self._cambio,
         )
         self.tf_alias = ft.TextField(
-            value=alias, dense=True, width=W_NOMBRE, text_size=12,
+            value=alias, dense=True, text_size=12,
             content_padding=8, on_change=self._cambio,
         )
         self.tf_email = ft.TextField(
-            value=email, dense=True, width=W_NOMBRE, text_size=12,
+            value=email, dense=True, text_size=12,
             content_padding=8, on_change=self._cambio,
         )
         self.ico_estado = ft.Icon(ft.Icons.CIRCLE, size=16, color=GRIS)
 
         self.snapshot = self._valores()
-        acciones = ft.Row(
+        self.acciones = ft.Row(
             [
                 ft.IconButton(
                     icon=ft.Icons.VISIBILITY_OUTLINED, tooltip="Ver archivo",
-                    icon_color=ft.Colors.BLUE_700, on_click=lambda e: self.previsualizar(),
+                    icon_color=ft.Colors.BLUE_700, icon_size=18,
+                    width=36, height=36, style=ft.ButtonStyle(padding=0),
+                    on_click=lambda e: self.previsualizar(),
                 ),
                 ft.IconButton(
                     icon=ft.Icons.SAVE_OUTLINED, tooltip="Guardar", icon_color=VERDE,
+                    icon_size=18, width=36, height=36, style=ft.ButtonStyle(padding=0),
                     on_click=lambda e: self.guardar(),
                 ),
                 ft.IconButton(
                     icon=ft.Icons.DELETE_OUTLINE, tooltip="Eliminar", icon_color=ROJO,
+                    icon_size=18, width=36, height=36, style=ft.ButtonStyle(padding=0),
                     on_click=lambda e: self.seccion.eliminar_fila(self),
                 ),
             ],
-            spacing=0,
-            alignment=ft.MainAxisAlignment.CENTER,
-        )
-        self.fila = ft.DataRow(
-            selected=False,
-            on_select_change=self._al_seleccionar,
-            cells=[
-                ft.DataCell(celda_centrada(self.ico_estado, W_ESTADO)),
-                ft.DataCell(self.tf_clabe),
-                ft.DataCell(self.tf_monto),
-                ft.DataCell(celda_centrada(self.txt_banco, W_BANCO)),
-                ft.DataCell(celda_centrada(self.txt_tipo, W_TIPO)),
-                ft.DataCell(self.tf_benef),
-                ft.DataCell(self.tf_alias),
-                ft.DataCell(self.tf_email),
-                ft.DataCell(celda_centrada(acciones, W_ACCIONES)),
-            ],
+            spacing=2,
+            alignment=ft.MainAxisAlignment.CENTER, tight=True,
         )
         self._actualizar_estado()
 
-    def _al_seleccionar(self, e) -> None:
-        self.fila.selected = str(e.data).lower() == "true"
-        self.seccion.page.update()
+    def fila_datos(self) -> FilaDatos:
+        """Fila para la tabla responsiva: una celda (control) por columna, en el
+        orden de `_COLS`. El fondo lleva el color de conciliación de la fila."""
+        return FilaDatos(
+            [self.chk_sel, self.ico_estado, self.tf_clabe, self.tf_monto,
+             self.txt_banco, self.txt_tipo, self.tf_benef, self.tf_alias,
+             self.tf_email, self.acciones],
+            bgcolor=self.color,
+        )
+
+    def _al_seleccionar(self, _e=None) -> None:
+        # El checkbox ya refleja su estado en el cliente; no se hace page.update
+        # (el check general dispara este evento por CADA fila y refrescar por evento
+        # causaba el delay al seleccionar todas).
+        pass
+
+    @property
+    def seleccionada(self) -> bool:
+        return bool(self.chk_sel.value)
+
+    def set_seleccion(self, valor: bool) -> None:
+        self.chk_sel.value = bool(valor)
 
     # ------------------------------------------------------------- helpers
     def _valores(self) -> tuple[str, str, str, str, str]:
@@ -260,17 +299,22 @@ class FilaBeneficiario:
         self.txt_tipo.value = tipo or "—"
 
     def marcar_conciliacion(self, estado: str | None) -> None:
-        """Pinta la fila según la conciliación: rojo si no coincide; ámbar si la
-        CLABE se sugirió por nombre (revisar); azul si el dato viene solo del
-        reporte (sin estado de cuenta); sin color si coincide por CLABE o si no
-        hay reporte importado."""
+        """Pinta la fila según la conciliación: morado si se importó de
+        devoluciones; rojo si no coincide; ámbar si la CLABE se sugirió por nombre
+        (revisar); azul si el dato viene solo del reporte (sin estado de cuenta);
+        sin color si coincide por CLABE o si no hay reporte importado. Si la fila
+        ya está renderizada, muta el fondo del contenedor en vivo (sin reconstruir,
+        para no perder el foco de un campo en edición)."""
         self.conciliacion = estado
-        self.fila.color = (
-            SIN_COINCIDENCIA if estado == "sin"
+        self.color = (
+            IMPORTADO_DEVOL if self.importado_devolucion
+            else SIN_COINCIDENCIA if estado == "sin"
             else SUGERIDO_NOMBRE if estado == "nombre"
             else SOLO_REPORTE if self.desde_reporte
             else None
         )
+        if self.contenedor is not None:
+            self.contenedor.bgcolor = self.color
 
     def previsualizar(self) -> None:
         """Abre el archivo original del registro en el visor predeterminado del
@@ -300,6 +344,10 @@ class SeccionAltaBeneficiarios:
         self.filas: list[FilaBeneficiario] = []
         # Texto de la barra de búsqueda del listado (filtra por beneficiario/CLABE).
         self.filtro_texto = ""
+        # Paginación del listado (agiliza el render con muchos registros): página
+        # actual y tamaño de página (10/50/100/200). Solo se renderiza la página.
+        self.pagina = 1
+        self.tam_pagina = 50
         # Control de la carga de estados de cuenta (para poder detener/reanudar):
         # _cargando indica que hay una carga en curso; _token_carga es el testigo
         # de cancelación de esa corrida; _rutas_pendientes guarda los que faltaron
@@ -413,41 +461,25 @@ class SeccionAltaBeneficiarios:
         seccion_rpa = self._construir_rpa()
 
         # --- Sección 2: tabla editable con todos los registros ---
-        self.enc_benef = encabezado_col("Beneficiario", W_NOMBRE)
-        self.enc_alias = encabezado_col("Alias", W_NOMBRE)
-        self.enc_email = encabezado_col("Email de notificación", W_NOMBRE)
-        self.tabla = ft.DataTable(
-            columns=[
-                ft.DataColumn(label=encabezado_col("Estado", W_ESTADO)),
-                ft.DataColumn(label=encabezado_col("CLABE", W_CLABE)),
-                ft.DataColumn(label=encabezado_col("Monto", W_MONTO), numeric=True),
-                ft.DataColumn(label=encabezado_col("Banco", W_BANCO)),
-                ft.DataColumn(label=encabezado_col("Tipo", W_TIPO)),
-                ft.DataColumn(label=self.enc_benef),
-                ft.DataColumn(label=self.enc_alias),
-                ft.DataColumn(label=self.enc_email),
-                ft.DataColumn(label=encabezado_col("Acciones", W_ACCIONES)),
-            ],
-            rows=[],
-            show_checkbox_column=True,
-            column_spacing=14,
-            heading_row_color=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-            heading_row_height=46,
-            data_row_min_height=48,
-            data_row_max_height=48,
-            divider_thickness=1,
-            border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
-            border_radius=10,
-            vertical_lines=ft.BorderSide(1, ft.Colors.with_opacity(0.4, ft.Colors.OUTLINE_VARIANT)),
-        )
+        # Tabla RESPONSIVA: columnas por porcentaje del ancho (se adaptan a la
+        # ventana; scroll horizontal si no caben). Mismo modelo que Dispersión (No
+        # Pemex). El check de selección va en la columna 0.
+        columnas = [
+            ColumnaTabla(etq, pct, alin, ancho_min_px=minpx)
+            for etq, pct, alin, minpx in _COLS
+        ]
+        self.tabla = TablaResponsiva(
+            self.page, columnas, alto_fila=52,
+            ancho_inicial=(getattr(self.page, "width", None) or 1200) - 90)
         self.txt_resumen = ft.Text("", color=GRIS, size=12)
         # Formato de exportación: Bancomer -> carpeta con TXT de alta de cuentas ;
         # Banregio -> Excel de alta de cuentas.
         self.dd_formato = ft.Dropdown(
-            label="Exportar para", width=300, value="BancomerAlta",
+            label="Exportar para", width=340, value="BancomerAlta",
             options=[
                 ft.dropdown.Option(key="BancomerAlta", text="Bancomer · Alta de cuentas (Carpeta TXT)"),
                 ft.dropdown.Option(key="Banregio", text="Banregio · Alta (Excel)"),
+                ft.dropdown.Option(key="ExcelReporte", text="Excel · Reporte de la tabla (xlsx)"),
             ],
             on_select=self._cambio_formato_export,
         )
@@ -498,6 +530,31 @@ class SeccionAltaBeneficiarios:
             [self.tf_buscar, self.txt_contador],
             spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
+        # Paginación (abajo del listado): tamaño de página + navegación. Solo se
+        # renderiza la página actual, lo que agiliza el listado con muchos datos.
+        self.dd_tam_pagina = ft.Dropdown(
+            label="Por página", width=110, value="50", dense=True,
+            options=[ft.dropdown.Option(str(n)) for n in (10, 50, 100, 200)],
+            on_select=self._cambiar_tam_pagina,
+        )
+        self.btn_pagina_prev = ft.IconButton(
+            icon=ft.Icons.CHEVRON_LEFT, tooltip="Página anterior",
+            on_click=self._pagina_prev,
+        )
+        self.btn_pagina_next = ft.IconButton(
+            icon=ft.Icons.CHEVRON_RIGHT, tooltip="Página siguiente",
+            on_click=self._pagina_next,
+        )
+        self.txt_pagina = ft.Text("Página 1 de 1", size=12, color=GRIS)
+        barra_paginacion = ft.Row(
+            [
+                ft.Text("Registros por página:", size=12, color=GRIS),
+                self.dd_tam_pagina,
+                self.btn_pagina_prev, self.txt_pagina, self.btn_pagina_next,
+            ],
+            spacing=8, alignment=ft.MainAxisAlignment.END,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER, wrap=True,
+        )
         seccion_tabla = tarjeta(
             "2. Revisión y edición de beneficiarios",
             ft.Column(
@@ -505,9 +562,10 @@ class SeccionAltaBeneficiarios:
                     barra,
                     self._leyenda(),
                     barra_busqueda,
-                    ft.Row([self.tabla], scroll=ft.ScrollMode.AUTO),
+                    self.tabla.control,
+                    barra_paginacion,
                 ],
-                spacing=12,
+                spacing=12, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
             ),
         )
 
@@ -814,9 +872,11 @@ class SeccionAltaBeneficiarios:
                           "Fila en rojo: sin coincidencia en el reporte")
         chip_azul = swatch(SOLO_REPORTE, ft.Colors.BLUE,
                           "Fila azul: dato del reporte (sin estado de cuenta)")
+        chip_morado = swatch(IMPORTADO_DEVOL, ft.Colors.PURPLE,
+                            "Fila morada: importada del módulo de devoluciones")
         return ft.Row(
             [ft.Text("Leyenda:", size=12, weight=ft.FontWeight.BOLD, color=GRIS),
-             *chips, chip_ambar, chip_rojo, chip_azul],
+             *chips, chip_ambar, chip_rojo, chip_azul, chip_morado],
             spacing=18,
             wrap=True,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
@@ -825,14 +885,59 @@ class SeccionAltaBeneficiarios:
     # ========================================================= utilidades
     def _redibujar_tabla(self) -> None:
         visibles = self._filas_visibles()
-        self.tabla.rows = [f.fila for f in visibles]
-        self._ajustar_anchos()
-        self._remarcar_conciliacion()
+        pagina = self._filas_pagina(visibles)
+        # Solo se renderiza la página actual (no todas las filas): esto agiliza el
+        # listado y hace que 'Seleccionar todos' no se trabe.
+        self._remarcar_conciliacion()  # fija f.color antes de pintar (bgcolor)
+        self.tabla.set_contenido([f.fila_datos() for f in pagina])
+        # Enlaza SOLO las filas de la página con su contenedor renderizado (para
+        # recolorearlas en vivo al editar); las demás quedan sin contenedor.
+        for f in self.filas:
+            f.contenedor = None
+        for i, f in enumerate(pagina):
+            f.contenedor = self.tabla.contenedor_fila(i)
         self._actualizar_resumen()
         self._actualizar_contador(len(visibles))
+        self._actualizar_paginacion(len(visibles))
         self._actualizar_btn_completar()
         self._refrescar_candado_export()
         self.page.update()
+
+    # ------------------------------------------------------- paginación
+    def _total_paginas(self, total_visibles: int) -> int:
+        return max(1, (total_visibles + self.tam_pagina - 1) // self.tam_pagina)
+
+    def _filas_pagina(self, visibles: list[FilaBeneficiario]) -> list[FilaBeneficiario]:
+        """Recorta la lista de filas visibles a la página actual (ajustando la
+        página si quedó fuera de rango, p. ej. tras filtrar o borrar)."""
+        total_paginas = self._total_paginas(len(visibles))
+        self.pagina = max(1, min(self.pagina, total_paginas))
+        ini = (self.pagina - 1) * self.tam_pagina
+        return visibles[ini:ini + self.tam_pagina]
+
+    def _actualizar_paginacion(self, total_visibles: int) -> None:
+        total_paginas = self._total_paginas(total_visibles)
+        self.txt_pagina.value = f"Página {self.pagina} de {total_paginas}"
+        self.btn_pagina_prev.disabled = self.pagina <= 1
+        self.btn_pagina_next.disabled = self.pagina >= total_paginas
+
+    def _cambiar_tam_pagina(self, _e=None) -> None:
+        try:
+            self.tam_pagina = int(self.dd_tam_pagina.value)
+        except (TypeError, ValueError):
+            self.tam_pagina = 50
+        self.pagina = 1
+        self._redibujar_tabla()
+
+    def _pagina_prev(self, _e=None) -> None:
+        if self.pagina > 1:
+            self.pagina -= 1
+            self._redibujar_tabla()
+
+    def _pagina_next(self, _e=None) -> None:
+        if self.pagina < self._total_paginas(len(self._filas_visibles())):
+            self.pagina += 1
+            self._redibujar_tabla()
 
     # ----------------------------------------------- búsqueda / contador
     def _filas_visibles(self) -> list[FilaBeneficiario]:
@@ -854,6 +959,7 @@ class SeccionAltaBeneficiarios:
     def _filtrar(self, _e=None) -> None:
         """Aplica el texto de la barra de búsqueda y redibuja el listado."""
         self.filtro_texto = (self.tf_buscar.value or "").strip().lower()
+        self.pagina = 1  # al cambiar el filtro se vuelve a la primera página
         self._redibujar_tabla()
 
     def _actualizar_contador(self, mostrados: int | None = None) -> None:
@@ -934,6 +1040,8 @@ class SeccionAltaBeneficiarios:
             return
         por_clabe = por_nombre = sin_match = 0
         for f in self.filas:
+            if f.importado_devolucion:
+                continue  # importadas de devoluciones: tipo/color propios, no se concilian
             clabe = solo_digitos(f.tf_clabe.value)
             rep = self.catalogo_reporte.get(clabe) if len(clabe) == 18 else None
             if rep:
@@ -964,6 +1072,9 @@ class SeccionAltaBeneficiarios:
         mantener el marcado tras redibujar la tabla. Conserva el aviso ámbar de
         las filas cuya CLABE se sugirió por nombre."""
         for f in self.filas:
+            if f.importado_devolucion:
+                f.marcar_conciliacion(None)  # conserva el morado; no toca el tipo
+                continue
             if not self.catalogo_reporte:
                 f.marcar_conciliacion(None)
                 f.set_tipo("")
@@ -985,6 +1096,9 @@ class SeccionAltaBeneficiarios:
     def _conciliar_una(self, fila: FilaBeneficiario) -> None:
         """Concilia una sola fila por CLABE (al editar su CLABE en vivo). No
         sugiere CLABE por nombre aquí para no pisar lo que el usuario escribe."""
+        if fila.importado_devolucion:
+            fila.marcar_conciliacion(None)  # conserva el morado; no toca el tipo
+            return
         if not self.catalogo_reporte:
             fila.marcar_conciliacion(None)
             fila.set_tipo("")
@@ -1041,18 +1155,25 @@ class SeccionAltaBeneficiarios:
         if self.dd_formato.value == "Banregio":
             self.btn_export.content = "Exportar Excel (Banregio)"
             self.btn_export.icon = ft.Icons.TABLE_VIEW
+        elif self.dd_formato.value == "ExcelReporte":
+            self.btn_export.content = "Generar Excel (reporte)"
+            self.btn_export.icon = ft.Icons.TABLE_VIEW
         else:  # BancomerAlta
             self.btn_export.content = "Generar carpeta de alta (Bancomer)"
             self.btn_export.icon = ft.Icons.CREATE_NEW_FOLDER
         self._refrescar_candado_export()
 
     def _refrescar_candado_export(self) -> None:
-        """Bloquea la exportación si falta un monto. El candado aplica al alta de
-        cuentas Bancomer (el monto va dentro del TXT); el alta Banregio no usa
-        montos."""
-        if self.dd_formato.value == "Banregio":
+        """Bloquea la exportación si falta un monto. El candado aplica solo al alta
+        de cuentas Bancomer (el monto va dentro del TXT); el alta Banregio y el
+        reporte Excel no dependen del monto."""
+        if self.dd_formato.value in ("Banregio", "ExcelReporte"):
             self.btn_export.disabled = False
-            self.btn_export.tooltip = "Genera el archivo Excel de alta para Banregio"
+            self.btn_export.tooltip = (
+                "Genera el reporte Excel de la tabla"
+                if self.dd_formato.value == "ExcelReporte"
+                else "Genera el archivo Excel de alta para Banregio"
+            )
             self.page.update()
             return
         sin_monto = sum(1 for b in db.listar() if b.monto is None)
@@ -1064,27 +1185,11 @@ class SeccionAltaBeneficiarios:
         )
         self.page.update()
 
-    def _ajustar_anchos(self) -> None:
-        """Reparte el ancho disponible entre los campos de texto largos
-        (beneficiario, alias, email) para que crezcan al agrandar la ventana."""
-        ancho = self.page.width or 1180
-        # Columnas de ancho fijo: estado, CLABE, monto, banco, tipo, acciones.
-        fijo = W_ESTADO + W_CLABE + W_MONTO + W_BANCO + W_TIPO + W_ACCIONES
-        overhead = 170  # paddings de la tarjeta y espaciamiento entre columnas
-        disponible = ancho - fijo - overhead
-        w = max(W_NOMBRE, int(disponible / 3))
-        for f in self.filas:
-            f.tf_benef.width = w
-            f.tf_alias.width = w
-            f.tf_email.width = w
-        # Los encabezados acompañan el ancho de sus columnas.
-        self.enc_benef.width = w
-        self.enc_alias.width = w
-        self.enc_email.width = w
-
     def _on_resize(self, _e) -> None:
-        self._ajustar_anchos()
-        self.page.update()
+        # La tabla responsiva se remide sola (on_size_change); no hay que reajustar
+        # anchos a mano. Se conserva el método porque app.py lo registra como
+        # listener de redimensionado.
+        pass
 
     def _actualizar_resumen(self) -> None:
         total = len(self.filas)
@@ -1093,6 +1198,32 @@ class SeccionAltaBeneficiarios:
             f"{total} registro(s) · {pendientes} pendiente(s) de guardar"
             if total else "Sin registros todavía."
         )
+
+    # ============================== importación desde devoluciones
+    def importar_desde_devoluciones(self, registros: list[dict]) -> int:
+        """Agrega a la tabla registros traídos del módulo de devoluciones. Cada
+        `registro` es un dict con: clabe, beneficiario, monto (float|None). El
+        alias se toma igual al beneficiario y el banco se deduce de la CLABE. Se
+        marcan con Tipo 'Importado de devoluciones' y color morado. Devuelve
+        cuántos se agregaron. La llama SeccionDevoluciones vía el shell (app)."""
+        agregados = 0
+        for r in registros:
+            clabe = solo_digitos(r.get("clabe", ""))
+            beneficiario = (r.get("beneficiario", "") or "").strip()
+            if not clabe and not beneficiario:
+                continue  # nada útil que importar
+            fila = FilaBeneficiario(
+                self, None, clabe, beneficiario, beneficiario,
+                r.get("email", "") or "", origen="(devoluciones)",
+                monto=r.get("monto"), importado_devolucion=True,
+            )
+            fila.set_tipo(TIPO_IMPORTADO_DEVOL)
+            fila.marcar_conciliacion(None)  # aplica el morado
+            self.filas.append(fila)
+            agregados += 1
+        if agregados:
+            self._redibujar_tabla()
+        return agregados
 
     # ============================================================ datos DB
     def cargar_desde_db(self) -> None:
@@ -1342,18 +1473,21 @@ class SeccionAltaBeneficiarios:
 
     # =========================================================== acciones
     def _seleccionar_todos(self, _e) -> None:
-        """Selecciona todas las filas; si ya estaban todas, las deselecciona."""
-        if not self.filas:
+        """Selecciona/deselecciona TODOS los registros del listado (todas las
+        páginas del filtro actual). Como solo se renderiza la página visible, es
+        inmediato aunque haya cientos de registros."""
+        visibles = self._filas_visibles()
+        if not visibles:
             return
-        nuevo = not all(f.fila.selected for f in self.filas)
-        for f in self.filas:
-            f.fila.selected = nuevo
+        nuevo = not all(f.seleccionada for f in visibles)
+        for f in visibles:
+            f.set_seleccion(nuevo)
         self.page.update()
 
     def _asignar_monto_seleccionados(self, _e) -> None:
         """Aplica un mismo monto a todas las filas seleccionadas, para no
         capturarlo uno por uno."""
-        seleccionados = [f for f in self.filas if f.fila.selected]
+        seleccionados = [f for f in self.filas if f.seleccionada]
         if not seleccionados:
             self.avisar("No hay registros seleccionados (marca las casillas).", GRIS)
             return
@@ -1415,7 +1549,7 @@ class SeccionAltaBeneficiarios:
 
     def _guardar_seleccionados(self, _e) -> None:
         self._guardar_varias(
-            [f for f in self.filas if f.fila.selected],
+            [f for f in self.filas if f.seleccionada],
             "No hay registros seleccionados (marca las casillas o usa 'Seleccionar todos').",
         )
 
@@ -1426,8 +1560,12 @@ class SeccionAltaBeneficiarios:
         )
 
     async def _exportar(self, _e) -> None:
-        """Exporta los registros guardados en el formato elegido: Bancomer ->
-        carpeta con los TXT de alta de cuentas ; Banregio -> Excel de alta."""
+        """Exporta según el formato elegido: Bancomer -> carpeta con TXT de alta;
+        Banregio -> Excel de alta; Excel Reporte -> reporte de la tabla (todo lo
+        que hay en pantalla, no solo lo guardado)."""
+        if self.dd_formato.value == "ExcelReporte":
+            await self._exportar_reporte_excel()
+            return
         guardados = db.listar()
         if not guardados:
             self.avisar("No hay registros guardados para exportar.", ROJO)
@@ -1437,6 +1575,50 @@ class SeccionAltaBeneficiarios:
             await self._exportar_alta_banregio(guardados)
         else:  # BancomerAlta
             await self._exportar_alta_bancomer(guardados)
+
+    async def _exportar_reporte_excel(self) -> None:
+        """Genera un Excel con TODOS los registros de la tabla (guardados +
+        pendientes), con sus valores actuales, en las columnas del apartado sin
+        'Estado' ni 'Acciones'."""
+        if not self.filas:
+            self.avisar("No hay registros en la tabla para exportar.", ROJO)
+            return
+        registros = []
+        for f in self.filas:
+            try:
+                monto = parse_monto(f.tf_monto.value)
+            except ValueError:
+                monto = None  # en el reporte no se bloquea por un monto mal escrito
+            banco = (f.txt_banco.value or "").strip()
+            tipo = (f.txt_tipo.value or "").strip()
+            registros.append({
+                "clabe": solo_digitos(f.tf_clabe.value),
+                "monto": monto,
+                "banco": "" if banco == "—" else banco,
+                "tipo": "" if tipo == "—" else tipo,
+                "beneficiario": (f.tf_benef.value or "").strip(),
+                "alias": (f.tf_alias.value or "").strip(),
+                "email": (f.tf_email.value or "").strip(),
+            })
+        ruta = await self.picker.save_file(
+            dialog_title="Guardar reporte de beneficiarios (Excel)",
+            file_name="reporte_beneficiarios.xlsx", allowed_extensions=["xlsx"],
+        )
+        if not ruta:
+            return
+        if not ruta.lower().endswith(".xlsx"):
+            ruta += ".xlsx"
+        try:
+            reporte_beneficiarios.generar(ruta, registros)
+        except PermissionError:
+            self.avisar(
+                "No se pudo guardar: el archivo está abierto en Excel. Ciérralo e "
+                "intenta de nuevo (o guarda con otro nombre).", ROJO)
+            return
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self.avisar(f"No se pudo generar el Excel: {exc}", ROJO)
+            return
+        self.avisar(f"Reporte Excel generado con {len(registros)} registro(s).", VERDE)
 
     async def _exportar_alta_bancomer(self, guardados) -> None:
         """Genera la carpeta 'CUENTAS PARA ALTA BANCOMER - dd-mm-aaaa' con los
@@ -1547,7 +1729,7 @@ class SeccionAltaBeneficiarios:
 
     def _eliminar_seleccionados(self, _e) -> None:
         """Elimina todas las filas seleccionadas (con confirmación)."""
-        seleccionados = [f for f in self.filas if f.fila.selected]
+        seleccionados = [f for f in self.filas if f.seleccionada]
         if not seleccionados:
             self.avisar("No hay registros seleccionados (marca las casillas).", GRIS)
             return
