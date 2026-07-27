@@ -540,13 +540,37 @@ def _guardar_tema_oscuro(oscuro: bool) -> None:
         pass
 
 
+# Tamaño mínimo razonable de la ventana (px). Sirve para descartar geometrías
+# "fantasma" de una ventana MINIMIZADA, que Windows reporta como ~160x39 en la
+# posición -32000/-32000: si se guardara y restaurara, la app abriría colapsada.
+_VENTANA_MIN_W = 400
+_VENTANA_MIN_H = 300
+_OFFSCREEN = -30000  # left/top <= esto ⇒ minimizada/oculta (no es una posición real)
+
+
+def _geometria_valida(est: dict) -> bool:
+    """True si el estado de ventana es una geometría real y usable. Una ventana
+    maximizada siempre es válida; una 'normal' debe tener un tamaño mínimo y no
+    estar fuera de pantalla (evita persistir/restaurar el estado minimizado)."""
+    if est.get("maximized"):
+        return True
+    w, h = est.get("width"), est.get("height")
+    if not w or not h or w < _VENTANA_MIN_W or h < _VENTANA_MIN_H:
+        return False
+    izq, arr = est.get("left"), est.get("top")
+    if (izq is not None and izq <= _OFFSCREEN) or (arr is not None and arr <= _OFFSCREEN):
+        return False
+    return True
+
+
 def _restaurar_ventana(page: ft.Page) -> None:
-    """Aplica el tamaño/posición/maximizado guardados de la última sesión. La
-    primera vez (sin estado guardado) abre la ventana maximizada."""
+    """Aplica el tamaño/posición/maximizado guardados de la última sesión. Si no hay
+    estado guardado —o el guardado es una geometría inválida (p. ej. la de una
+    ventana minimizada)— abre la ventana maximizada."""
     from core import preferencias
 
     est = preferencias.cargar_valor(_CLAVE_VENTANA)
-    if isinstance(est, dict) and est:
+    if isinstance(est, dict) and est and _geometria_valida(est):
         if est.get("maximized"):
             page.window.maximized = True
         else:
@@ -559,7 +583,7 @@ def _restaurar_ventana(page: ft.Page) -> None:
             if est.get("top") is not None:
                 page.window.top = est["top"]
     else:
-        page.window.maximized = True  # primera vez: maximizada
+        page.window.maximized = True  # sin estado (o inválido): maximizada
 
 
 def _vigilar_ventana(page: ft.Page) -> None:
@@ -569,6 +593,10 @@ def _vigilar_ventana(page: ft.Page) -> None:
     from core import preferencias
 
     def guardar() -> None:
+        # No persistir el estado de una ventana MINIMIZADA: su geometría es fantasma
+        # (~160x39 en -32000/-32000) y, restaurada, abriría la app colapsada.
+        if bool(getattr(page.window, "minimized", False)):
+            return
         est = {
             "width": page.window.width,
             "height": page.window.height,
@@ -576,11 +604,16 @@ def _vigilar_ventana(page: ft.Page) -> None:
             "top": page.window.top,
             "maximized": bool(page.window.maximized),
         }
+        # Descarta geometrías inválidas (minimizada/fuera de pantalla) por si el
+        # flag 'minimized' no llegó a tiempo en el evento.
+        if not _geometria_valida(est):
+            return
         # Maximizada: el ancho/alto/pos serían los de pantalla completa; conserva
-        # los últimos valores 'normales' para poder restaurar un tamaño sensato.
+        # los últimos valores 'normales' (solo si eran válidos) para restaurar un
+        # tamaño sensato al desmaximizar.
         if est["maximized"]:
             prev = preferencias.cargar_valor(_CLAVE_VENTANA)
-            if isinstance(prev, dict):
+            if isinstance(prev, dict) and _geometria_valida({**prev, "maximized": False}):
                 for k in ("width", "height", "left", "top"):
                     if prev.get(k) is not None:
                         est[k] = prev[k]

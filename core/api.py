@@ -29,10 +29,12 @@ reaccionar (avisar al usuario, reintentar, caer a un valor por defecto, etc.).
 from __future__ import annotations
 
 import json
+import os
 import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from typing import Any
 
 from core import ajustes_api
@@ -305,3 +307,76 @@ def pagos_deudores_diversos(
         "pageSize": page_size,
     }
     return get(RUTA_PAGOS_DEUDORES, params=params, **kwargs)
+
+
+# --- API extractor de PDF (comprobantes de pago) -------------------------
+# Esta API es INDEPENDIENTE del SIPP: su URL/token viven en ajustes_api (funciones
+# *_extractor) y su autenticación es Bearer (no el header x-auth-token del resto).
+# El endpoint recibe los PDFs como multipart/form-data bajo el campo 'files'.
+RUTA_LECTURA_COMPROBANTES = (
+    "/sipp-equipo-innovaciones/lectura-comprobantes-pagos-bucket")
+
+# Timeout mayor para la lectura de comprobantes: sube varios PDFs por llamada.
+TIMEOUT_EXTRACTOR = 120
+
+
+def _codificar_multipart(campo: str, rutas: list[str]) -> tuple[bytes, str]:
+    """Codifica una lista de archivos como `multipart/form-data` bajo `campo` (todos
+    con el mismo nombre de campo, como espera el endpoint). Devuelve
+    `(cuerpo_bytes, content_type)`; el content_type incluye el boundary. Cada archivo
+    se lee en binario y se marca como application/pdf."""
+    boundary = "----HerramientasTesoreria" + uuid.uuid4().hex
+    sep = ("--" + boundary).encode("ascii")
+    partes: list[bytes] = []
+    for ruta in rutas:
+        nombre = os.path.basename(ruta)
+        with open(ruta, "rb") as fh:
+            contenido = fh.read()
+        partes.append(sep)
+        partes.append(
+            f'Content-Disposition: form-data; name="{campo}"; '
+            f'filename="{nombre}"'.encode("utf-8"))
+        partes.append(b"Content-Type: application/pdf")
+        partes.append(b"")
+        partes.append(contenido)
+    partes.append(("--" + boundary + "--").encode("ascii"))
+    partes.append(b"")
+    cuerpo = b"\r\n".join(partes)
+    return cuerpo, f"multipart/form-data; boundary={boundary}"
+
+
+def leer_comprobantes_pagos(
+    rutas_pdf: list[str],
+    *,
+    base_url: str | None = None,
+    token: str | None = None,
+    timeout: float = TIMEOUT_EXTRACTOR,
+) -> Any:
+    """Sube los PDFs de comprobantes al extractor (POST multipart) y devuelve el JSON
+    ya parseado (dict con `isOk`/`message`/`data`/`failedResults`).
+
+    - `rutas_pdf`: rutas de los archivos PDF a leer (REQUERIDO, no vacío).
+    - `base_url`/`token`: sobrescriben la config del extractor (por defecto,
+      `ajustes_api.base_url_extractor(requerido=True)` y `ajustes_api.token_extractor()`).
+
+    Autenticación por Bearer token (header `Authorization: Bearer <token>`). Reutiliza
+    `_enviar` (retry TLS + traducción a ErrorApi). Lanza `ApiSinConexion`/
+    `ErrorRespuestaApi` ante fallos, o `ValueError` si no hay archivos.
+    """
+    if not rutas_pdf:
+        raise ValueError("No hay archivos para leer.")
+    base = base_url if base_url is not None else ajustes_api.base_url_extractor(
+        requerido=True)
+    tok = token if token is not None else ajustes_api.token_extractor()
+    url = base.rstrip("/") + RUTA_LECTURA_COMPROBANTES
+    cuerpo, content_type = _codificar_multipart("files", list(rutas_pdf))
+    cabeceras = {
+        "Accept": "application/json",
+        "User-Agent": _UA,
+        "Content-Type": content_type,
+    }
+    if tok:
+        cabeceras["Authorization"] = f"Bearer {tok}"
+    req = urllib.request.Request(
+        url, data=cuerpo, headers=cabeceras, method="POST")
+    return _enviar(req, timeout)
