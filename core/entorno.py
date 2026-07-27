@@ -25,6 +25,10 @@ VAR_GITHUB_PAT = "QUETZALTIC_GITHUB_PAT"
 # (Bearer) para autenticar las peticiones. Los consume core/api.py.
 VAR_API_BASE_URL = "QUETZALTIC_API_BASE_URL"
 VAR_API_TOKEN = "QUETZALTIC_API_TOKEN"
+# Extractor de PDF (comprobantes de pago): API INDEPENDIENTE del SIPP, con su propia
+# URL base y su Bearer token. La consume core/api.leer_comprobantes_pagos.
+VAR_EXTRACTOR_API_BASE_URL = "QUETZALTIC_EXTRACTOR_API_BASE_URL"
+VAR_EXTRACTOR_API_TOKEN = "QUETZALTIC_EXTRACTOR_API_TOKEN"
 
 _cargado = False
 
@@ -101,3 +105,15 @@ def api_base_url(requerido: bool = False) -> str | None:
 def api_token(requerido: bool = False) -> str | None:
     """Token (Bearer) opcional para autenticar con los microservicios."""
     return obtener(VAR_API_TOKEN, requerido=requerido)
+
+
+def extractor_api_base_url(requerido: bool = False) -> str | None:
+    """URL base de la API extractor de PDF (sin '/' final). La consume
+    core/api.leer_comprobantes_pagos."""
+    valor = obtener(VAR_EXTRACTOR_API_BASE_URL, requerido=requerido)
+    return valor.rstrip("/") if valor else valor
+
+
+def extractor_api_token(requerido: bool = False) -> str | None:
+    """Bearer token opcional para autenticar con la API extractor de PDF."""
+    return obtener(VAR_EXTRACTOR_API_TOKEN, requerido=requerido)

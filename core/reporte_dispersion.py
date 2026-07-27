@@ -41,6 +41,17 @@ class FilaSolicitud:
     moneda: str = ""
     producto: str = ""
     comentarios: str = ""
+    # --- Campos de la API que NO se muestran en la tabla ---------------------
+    # Se conservan (crudos, tipados) para validaciones futuras del proceso de
+    # dispersión. Solo se llenan cuando la fila viene de la API (desde_api); al
+    # leer del Excel quedan con su valor por defecto. No entran en `clave()`
+    # (la identidad la dan los campos visibles) ni se muestran en la UI.
+    id_empresa: int | None = None
+    id_solicitud_pago: int | None = None
+    id_solicitud_pago_detalle: int | None = None
+    folio_documento: str = ""
+    clabe_interbancaria_proveedor: str = ""
+    id_proveedor: int | None = None
 
     def clave(self) -> tuple:
         """Identidad de la fila para evitar duplicados al recargar reportes."""
@@ -89,6 +100,20 @@ def _numero(valor) -> float | None:
         return float(valor)
     except (TypeError, ValueError):
         return None
+
+
+def _entero(valor) -> int | None:
+    """Convierte a int (para los ids de la API). Acepta enteros, cadenas y flotantes
+    'enteros' (p. ej. 5.0). None si viene vacío o no se puede convertir."""
+    if valor is None or valor == "":
+        return None
+    try:
+        return int(valor)
+    except (TypeError, ValueError):
+        try:
+            return int(float(valor))
+        except (TypeError, ValueError):
+            return None
 
 
 def normalizar_moneda(texto) -> str:
@@ -185,3 +210,85 @@ def leer_varios(rutas: list[str]) -> list[FilaSolicitud]:
     for ruta in rutas:
         todas.extend(leer(ruta))
     return todas
+
+
+# ------------------------------------------------------------------ API (JSON)
+# Campo del JSON de la API (endpoint /api/dispersiones/no_pemex) -> campo de
+# FilaSolicitud. Se separan por tipo de conversión (texto / número / fecha).
+_API_TEXTO = {
+    "empresa": "nb_Empresa",              # nombre corto (coincide con ui.comun.EMPRESAS)
+    "folio": "id_SolicitudPago",          # folio de la SOLICITUD (compartido por sus docs)
+    "tipo": "cl_TipoDocumento",           # 'Tipo de factura' (p. ej. 'NF')
+    "folio_factura": "nu_FolioDocumento",
+    "proveedor": "nb_Proveedor",
+    "cuenta_bancaria": "de_CuentaBancariaProveedor",  # 'BANCO - CLABE' (trae los dígitos)
+    "tipo_solicitud": "de_TipoSolicitudpago",
+    "producto": "nb_Producto",
+    "comentarios": "de_Comentarios",
+    # Ocultos (no se muestran; para validaciones futuras).
+    "folio_documento": "nu_FolioDocumento",
+    "clabe_interbancaria_proveedor": "nu_ClabeInterbancariaProveedor",
+}
+_API_NUMERO = {
+    "total_factura": "im_Total",
+    "saldo_factura": "im_Saldo",
+    "saldo_programado": "im_SaldoSolicitud",  # saldo de la solicitud = 'Saldo Programado'
+}
+_API_FECHA = {
+    "fecha_factura": "fh_Factura",
+    "fecha_vencimiento": "fh_VencimientoFactura",
+}
+# Enteros (ids) ocultos: no se muestran; se conservan para validaciones futuras.
+# id_Empresa se trata aparte (solo se toma si la fila no trae ya un id_empresa).
+_API_ENTERO = {
+    "id_solicitud_pago": "id_SolicitudPago",
+    "id_solicitud_pago_detalle": "nd_SolicitudPagoDetalle",
+    "id_proveedor": "id_Proveedor",
+}
+
+
+def _fecha_api(valor) -> str:
+    """ISO ('YYYY-MM-DDTHH:MM:SS' o 'YYYY-MM-DD') -> 'DD/MM/AAAA' (lo que espera la
+    UI, p. ej. el filtro de vencimiento). '' si viene vacío; el original si no parsea."""
+    s = str(valor or "").strip()
+    if not s:
+        return ""
+    try:
+        anio, mes, dia = s[:10].split("-")
+        return f"{int(dia):02d}/{int(mes):02d}/{anio}"
+    except (ValueError, TypeError):
+        return s
+
+
+def desde_api(respuesta) -> list[FilaSolicitud]:
+    """Convierte la respuesta del endpoint /api/dispersiones/no_pemex en filas
+    tipadas (FilaSolicitud), listas para volcar en la tabla.
+
+    Acepta la respuesta completa (dict con clave 'data') o directamente la lista de
+    registros. Ignora entradas que no sean objetos. La moneda se normaliza (MN->MXN)
+    y las fechas ISO se pasan a 'DD/MM/AAAA', igual que al leer el Excel.
+    """
+    if isinstance(respuesta, dict):
+        registros = respuesta.get("data") or []
+    else:
+        registros = respuesta or []
+    filas: list[FilaSolicitud] = []
+    for reg in registros:
+        if not isinstance(reg, dict):
+            continue
+        datos: dict = {}
+        for campo, clave in _API_TEXTO.items():
+            datos[campo] = _texto(reg.get(clave))
+        for campo, clave in _API_NUMERO.items():
+            datos[campo] = _numero(reg.get(clave))
+        for campo, clave in _API_FECHA.items():
+            datos[campo] = _fecha_api(reg.get(clave))
+        for campo, clave in _API_ENTERO.items():
+            datos[campo] = _entero(reg.get(clave))
+        datos["moneda"] = normalizar_moneda(reg.get("c_MonedaSAT"))
+        # id_Empresa: solo se toma de la API si la fila no trae ya un id_empresa
+        # (se conserva el previo si existiera).
+        if not datos.get("id_empresa"):
+            datos["id_empresa"] = _entero(reg.get("id_Empresa"))
+        filas.append(FilaSolicitud(**datos))
+    return filas

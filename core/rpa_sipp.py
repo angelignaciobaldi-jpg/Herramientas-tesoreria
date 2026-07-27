@@ -151,7 +151,7 @@ class ErrorSipp(Exception):
 _JS_ELEGIR_OPCION = r"""(args) => {
     const {ngModel, texto} = args;
     const norm = s => (s || '')
-        .normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
         .replace(/\s+/g, ' ').trim().toLowerCase();
     const sel = document.querySelector('select[ng-model="' + ngModel + '"]');
     if (!sel) return {ok: false, motivo: 'select-no-encontrado'};
@@ -409,7 +409,7 @@ class SesionSipp:
     # --- URLs ---
     # Sistema productivo: nuestras actividades (consultar/descargar anexos) no
     # alteran registros reales, así que se opera directo sobre producción.
-    # BASE_URL = "https://dev.sipp.petroil.dev"
+    # BASE_URL = "https://test.sipp.petroil.dev"
     BASE_URL = "https://sipp.petroil.com.mx"
     URL_LOGIN = BASE_URL + "/login.html"
     URL_CONFIG_SESION = BASE_URL + "/index.cfm#/configuracionsession"
@@ -1424,6 +1424,17 @@ class SesionSipp:
     _NG_LAYOUT_DISPERSION = "generarLayoutDispersion(item)"
     _TAB_DISPERSIONES = "Dispersiones (No Pemex)"
 
+    # --- Subida de comprobantes: pestaña 'Proveedores (No Pemex)' -------------
+    # Filtros de la pestaña (ng-model), botón de búsqueda (ng-click), contenedor
+    # de resultados (ng-show) y botón para adjuntar el comprobante de cada fila.
+    _TAB_PROVEEDORES = "Proveedores (No Pemex)"
+    _NG_PROV_FILTRO = "filtros.id_Proveedor"
+    _NG_FOLIO_DOC = "filtros.nu_FolioDocumento"
+    _NG_LISTAR = "listar()"
+    # Estatus: <select> nativo con id='id_Estatus' (su ng-model lleva un espacio
+    # inicial); se opera por id en seleccionar_estatus_pagado, no por ng-model.
+    _BTN_ADJUNTAR = '[ng-click="adjuntarPagoCombustibles(item)"]'
+
     async def abrir_modal_agregar_solicitudes(self) -> None:
         """Pulsa 'Agregar Facturas/Solicitudes de Pago' y espera el modal."""
         page = self._exigir_pagina()
@@ -1946,6 +1957,272 @@ class SesionSipp:
             if progreso:
                 progreso(i, total)
         return resultados
+
+    # ==================================== subida de comprobantes (Proveedores)
+    async def ir_a_tab_proveedores_no_pemex(self) -> None:
+        """Entra a DashboardTesor y abre la pestaña 'Proveedores (No Pemex)', donde se
+        buscan los pagos por proveedor + folio de documento para adjuntarles su
+        comprobante. Mismo patrón de tabset (ui-bootstrap) que _ir_a_tab_dispersiones."""
+        page = self._exigir_pagina()
+        await page.goto(
+            self.URL_DASHBOARD_TESOR, wait_until="domcontentloaded",
+            timeout=self.TIMEOUT_NAV)
+        tab = page.locator(
+            "a[uib-tab-heading-transclude]", has_text=self._TAB_PROVEEDORES)
+        try:
+            await tab.first.wait_for(state="visible", timeout=self.TIMEOUT_ELEMENTO)
+        except PlaywrightTimeoutError:
+            pass  # se intentan los respaldos de abajo de todos modos
+        li_tab = page.locator(
+            "li", has=page.locator("uib-tab-heading", has_text=self._TAB_PROVEEDORES))
+        candidatos = [
+            tab,
+            li_tab.locator("a"),
+            li_tab,
+            page.get_by_text(self._TAB_PROVEEDORES, exact=True),
+        ]
+        for loc in candidatos:
+            try:
+                if await loc.count():
+                    await loc.first.click(timeout=self.TIMEOUT_ELEMENTO)
+                    break
+            except PlaywrightTimeoutError:
+                continue
+        else:
+            await self._capturar_diagnostico("tab_proveedores")
+            raise ErrorSipp("No se encontró la pestaña 'Proveedores (No Pemex)'.")
+        # El filtro de proveedor aparece cuando la pestaña terminó de montar.
+        try:
+            await page.locator(
+                f'[ng-model="{self._NG_PROV_FILTRO}"]').first.wait_for(
+                state="attached", timeout=self.TIMEOUT_ELEMENTO)
+        except PlaywrightTimeoutError:
+            pass
+        await self._ocultar_flotantes()
+
+    async def seleccionar_estatus_pagado(self) -> None:
+        """Fija el filtro de Estatus en 'PAGADA'. Se llama UNA sola vez, antes de la
+        primera búsqueda; el estatus persiste para las siguientes.
+
+        Ojo (verificado en el DOM): es un <select> NATIVO (sin chosen), su ng-model
+        lleva un espacio inicial (' filtros.id_Estatus') e id='id_Estatus'; la opción
+        se llama 'PAGADA'. Por eso se opera por id (no por _set_combo)."""
+        page = self._exigir_pagina()
+        sel = page.locator("select#id_Estatus:visible").first
+        try:
+            await sel.select_option(label="PAGADA", timeout=self.TIMEOUT_ELEMENTO)
+            return
+        except Exception:  # noqa: BLE001 — respaldo por coincidencia laxa del texto
+            pass
+        await sel.evaluate(
+            "(s) => { const o = [...s.options].find("
+            "  o => /pagad/i.test(o.textContent||''));"
+            "  if (o) { s.value = o.value;"
+            "    s.dispatchEvent(new Event('change', {bubbles:true})); } }")
+
+    async def seleccionar_empresa_filtro(self, nombre_empresa: str) -> bool:
+        """Fija (BEST-EFFORT) la empresa en el filtro para acotar resultados. NO bloquea
+        la búsqueda: si no encuentra la empresa, devuelve False y sigue.
+
+        Verificado en el DOM: <select> NATIVO (id='id_Empresa',
+        ng-model='filtros.id_Empresa'), con texto = nombre de empresa (NB_EMPRESA) y
+        value = índice."""
+        if not (nombre_empresa or "").strip():
+            return False
+        page = self._exigir_pagina()
+        sel = page.locator("select#id_Empresa:visible").first
+        try:
+            await sel.select_option(
+                label=nombre_empresa, timeout=self.TIMEOUT_ELEMENTO)
+            await page.wait_for_timeout(300)  # deja asentar un posible refresco
+            return True
+        except Exception:  # noqa: BLE001 — respaldo por coincidencia laxa del texto
+            pass
+        try:
+            ok = await sel.evaluate(
+                r"""(s, nombre) => {
+                    const norm = x => (x||'').normalize('NFD')
+                        .replace(/[\u0300-\u036f]/g,'').replace(/\s+/g,' ').trim().toLowerCase();
+                    const t = norm(nombre);
+                    const o = [...s.options].find(
+                        o => o.value !== '' && norm(o.textContent).includes(t));
+                    if (!o) return false;
+                    s.value = o.value;
+                    s.dispatchEvent(new Event('change', {bubbles:true}));
+                    return true;
+                }""", nombre_empresa)
+            if ok:
+                await page.wait_for_timeout(300)
+            return bool(ok)
+        except Exception:  # noqa: BLE001 — best-effort: no debe romper la búsqueda
+            return False
+
+    async def _elegir_proveedor_filtro(self, id_proveedor, nombre: str) -> None:
+        """Elige el proveedor en el filtro (select con chosen). El <option> tiene como
+        TEXTO 'ID_PROVEEDOR - NOMBRE' (p. ej. '1004 - MIGUEL ANGEL...') y como value el
+        INDICE (no el id). Por eso se casa por el TOKEN de id al inicio del texto (no por
+        'empieza con', para no confundir 13 con 1367); respaldo por ID_PROVEEDOR via el
+        scope de Angular y, por ultimo, por nombre en la UI de chosen."""
+        page = self._exigir_pagina()
+        js = r"""(args) => {
+            const {ngModel, id, texto} = args;
+            const sel = document.querySelector('select[ng-model="'+ngModel+'"]');
+            if (!sel) return {ok:false, motivo:'select-no-encontrado'};
+            const norm = s => (s||'').normalize('NFD')
+                                 .replace(/[\u0300-\u036f]/g,'')
+                                 .replace(/\s+/g,' ').trim().toLowerCase();
+            const idTok = t => { const m = String(t||'').match(/^\s*(-?\d+)\s*-/);
+                                 return m ? m[1] : null; };
+            const seleccionar = (opt, via) => {
+                sel.value = opt.value;
+                const jq = window.jQuery || window.$;
+                if (jq) { try { jq(sel).val(opt.value).trigger('change')
+                                 .trigger('chosen:updated'); } catch(e){} }
+                sel.dispatchEvent(new Event('change', {bubbles:true}));
+                return {ok:true, via:via, elegido: opt.textContent.trim()};
+            };
+            const opts = [...sel.options].filter(o => o.value !== '');
+            // 1) Por el TOKEN de id al inicio del texto del option ('id - nombre').
+            if (id) {
+                const opt = opts.find(o => idTok(o.textContent) === String(id));
+                if (opt) return seleccionar(opt, 'id-texto');
+            }
+            // 2) Respaldo: por ID_PROVEEDOR en el scope de Angular.
+            try {
+                if (window.angular && id) {
+                    const scope = angular.element(sel).scope();
+                    const arr = scope ? scope.proveedores : null;
+                    const it = arr && arr.find(p => String(p.ID_PROVEEDOR) === String(id));
+                    if (it) {
+                        const parts = ngModel.split('.');
+                        let obj = scope;
+                        for (let i=0;i<parts.length-1;i++)
+                            obj = obj[parts[i]] = obj[parts[i]] || {};
+                        obj[parts[parts.length-1]] = it.ID_PROVEEDOR;
+                        scope.$apply();
+                        const jq = window.jQuery || window.$;
+                        if (jq) { try { jq(sel).trigger('chosen:updated'); } catch(e){} }
+                        return {ok:true, via:'angular', elegido: it.DE_RAZONSOCIAL};
+                    }
+                }
+            } catch(e) {}
+            // 3) Ultimo respaldo: por nombre contenido en el texto del option.
+            const t = norm(texto);
+            const opt = t && opts.find(o => norm(o.textContent).includes(t));
+            if (opt) return seleccionar(opt, 'texto');
+            return {ok:false, motivo:'no-encontrado'};
+        }"""
+        res = await page.evaluate(js, {
+            "ngModel": self._NG_PROV_FILTRO,
+            "id": str(id_proveedor if id_proveedor is not None else ""),
+            "texto": str(nombre or ""),
+        })
+        if not res or not res.get("ok"):
+            # Ultimo respaldo: la UI de chosen por 'id - nombre' o por nombre.
+            select = page.locator(f'[ng-model="{self._NG_PROV_FILTRO}"]').first
+            chosen = select.locator(
+                "xpath=following-sibling::*[contains(@class,'chosen-container')][1]")
+            if await chosen.count():
+                objetivo = (f"{id_proveedor} - {nombre}"
+                            if id_proveedor is not None else nombre)
+                if objetivo:
+                    await self._seleccionar_chosen(chosen.first, objetivo)
+
+    async def buscar_pago_proveedor(
+        self, id_proveedor, nombre_proveedor: str, folio_documento: str,
+    ) -> int:
+        """Filtra por proveedor (por ID_PROVEEDOR, con respaldo por nombre) + folio de
+        documento, pulsa 'Buscar' (ng-click 'listar()') y devuelve cuántas filas de
+        resultado quedaron (0 = sin resultado, se probará otro folio)."""
+        page = self._exigir_pagina()
+        await self._elegir_proveedor_filtro(id_proveedor, nombre_proveedor)
+        await self._set_input(self._NG_FOLIO_DOC, str(folio_documento or ""))
+        boton = page.locator(f'[ng-click="{self._NG_LISTAR}"]:visible').first
+        try:
+            # La búsqueda pasa por el proxy del backend (cfproxy.cfc); se espera la
+            # respuesta que llegue tras el clic. Heurística (no se conoce el nombre
+            # exacto de la función): afinar contra el portal si hiciera falta.
+            async with page.expect_response(
+                lambda r: "cfproxy" in r.url.lower(), timeout=self.TIMEOUT_NAV,
+            ) as info:
+                await self._click_seguro(boton)
+            await info.value
+        except PlaywrightTimeoutError:
+            pass
+        await page.wait_for_timeout(600)  # respiro para el digest de Angular
+        return await self._contar_filas_pagos()
+
+    async def _contar_filas_pagos(self) -> int:
+        """Cuenta las filas de resultado por sus botones 'Adjuntar Archivo' visibles
+        (únicos de la tabla de pagos de la pestaña Proveedores)."""
+        page = self._exigir_pagina()
+        return await page.locator(f'{self._BTN_ADJUNTAR}:visible').count()
+
+    async def adjuntar_comprobante_en_resultado(
+        self, ruta_pdf: str, importe: float | None = None,
+    ) -> bool:
+        """Adjunta `ruta_pdf` en la fila de resultado. Se espera UNA sola fila; si hay
+        más de una, se elige la que coincide por `importe`. Usa el file chooser nativo
+        (interceptado por Playwright) y espera a que termine la subida. True si subió."""
+        page = self._exigir_pagina()
+        botones = page.locator(f'{self._BTN_ADJUNTAR}:visible')
+        n = await botones.count()
+        if n == 0:
+            return False
+        idx = 0
+        if n > 1 and importe is not None:
+            idx = await self._indice_fila_por_importe(botones, importe)
+            if idx < 0:
+                return False  # ninguna fila casa con el importe esperado
+        boton = botones.nth(idx)
+        try:
+            async with page.expect_file_chooser(
+                timeout=self.TIMEOUT_ELEMENTO) as fc_info:
+                await self._click_seguro(boton)
+            fc = await fc_info.value
+            # Envolver set_files en expect_response para capturar el XHR de subida,
+            # aunque dispare de inmediato al fijar el archivo.
+            try:
+                async with page.expect_response(
+                    lambda r: "cfproxy" in r.url.lower(), timeout=self.TIMEOUT_NAV,
+                ) as up:
+                    await fc.set_files(ruta_pdf, timeout=self.TIMEOUT_ELEMENTO)
+                    await self._confirmar_aviso_si_hay(timeout=2_000)
+                await up.value
+            except PlaywrightTimeoutError:
+                pass
+        except PlaywrightTimeoutError:
+            await self._capturar_diagnostico("adjuntar_comprobante")
+            return False
+        await page.wait_for_timeout(500)  # respiro para que Angular refleje la subida
+        return True
+
+    async def _indice_fila_por_importe(self, botones, importe: float) -> int:
+        """Índice del botón cuya fila (tr ancestro) muestra un importe ≈ `importe`
+        (tolerancia de centavos). -1 si ninguna coincide."""
+        objetivo = round(float(importe or 0), 2)
+        n = await botones.count()
+        for i in range(n):
+            fila = botones.nth(i).locator("xpath=ancestor::tr[1]")
+            try:
+                texto = await fila.inner_text(timeout=1_000)
+            except Exception:  # noqa: BLE001 — fila que no se puede leer, se salta
+                continue
+            if any(abs(monto - objetivo) < 0.01
+                   for monto in self._montos_en_texto(texto)):
+                return i
+        return -1
+
+    @staticmethod
+    def _montos_en_texto(texto: str) -> list[float]:
+        """Extrae importes con 2 decimales de un texto (p. ej. '$1,523,170.19')."""
+        montos: list[float] = []
+        for m in re.findall(r"[\d,]+\.\d{2}", texto or ""):
+            try:
+                montos.append(round(float(m.replace(",", "")), 2))
+            except ValueError:
+                pass
+        return montos
 
     @staticmethod
     async def _texto_respuesta(resp) -> str:
