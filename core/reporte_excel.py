@@ -18,20 +18,19 @@ def _fmt_fecha(fecha: str) -> str:
     return f"{s[0:2]}/{s[2:4]}/{s[4:8]}" if len(s) == 8 else (fecha or "")
 
 
-def generar(ruta: str, contexto: dict, registros: list[tuple]) -> None:
+def generar(ruta: str, registros: list[dict]) -> None:
     """Crea el archivo Excel.
+
+    Cada registro lleva SU PROPIA cuenta origen (empresa/banco/cuenta/número),
+    porque en un mismo reporte pueden convivir movimientos asignados a distintas
+    cuentas de pago; no se usa un contexto único para todos.
 
     Args:
         ruta: ruta destino .xlsx
-        contexto: {empresa, banco, cuenta_origen, num_cuenta, fecha}
-        registros: lista de (clabe, monto, beneficiario, concepto)
+        registros: lista de dicts con las claves:
+            empresa, banco, cuenta_origen, num_cuenta, fecha (origen del pago) y
+            clabe, monto, beneficiario, concepto (datos del movimiento).
     """
-    fecha_devol = _fmt_fecha(contexto.get("fecha", ""))
-    empresa = contexto.get("empresa", "")
-    banco = contexto.get("banco", "")
-    cuenta_origen = contexto.get("cuenta_origen", "")
-    num_cuenta = contexto.get("num_cuenta", "")
-
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Devoluciones"
@@ -58,9 +57,12 @@ def generar(ruta: str, contexto: dict, registros: list[tuple]) -> None:
     CENTRADAS = {1, 4, 5, 6, 10}
     COL_MONTO = 7
     fila_inicio = fila + 1
-    for i, (clabe, monto, beneficiario, concepto) in enumerate(registros, start=1):
-        valores = [i, empresa, banco, cuenta_origen, num_cuenta, clabe,
-                   float(monto or 0), beneficiario, concepto, fecha_devol]
+    for i, reg in enumerate(registros, start=1):
+        valores = [i, reg.get("empresa", ""), reg.get("banco", ""),
+                   reg.get("cuenta_origen", ""), reg.get("num_cuenta", ""),
+                   reg.get("clabe", ""), float(reg.get("monto") or 0),
+                   reg.get("beneficiario", ""), reg.get("concepto", ""),
+                   _fmt_fecha(reg.get("fecha", ""))]
         for col, valor in enumerate(valores, start=1):
             c = ws.cell(row=fila_inicio + i - 1, column=col, value=valor)
             c.border = _BORDE

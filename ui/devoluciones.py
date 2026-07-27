@@ -142,8 +142,22 @@ class FilaSolicitud:
             dense=True, text_size=12, content_padding=8,
             on_change=self._cambio,
         )
-        self.txt_origen = ft.Text("— sin asignar —", size=12, color=GRIS,
-                                  text_align=ft.TextAlign.CENTER)
+        # Cuenta origen de pago (paso 2): dos líneas —empresa · banco (truncada) y
+        # la CLABE completa—, con tooltip que muestra todo el detalle al pasar el
+        # mouse (el nombre de la empresa suele ser largo y no cabe en la celda).
+        self.txt_origen_emp = ft.Text(
+            "— sin asignar —", size=11, color=GRIS, text_align=ft.TextAlign.CENTER,
+            max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self.txt_origen_clabe = ft.Text(
+            "", size=11, weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER,
+            max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+        )
+        self.txt_origen = ft.Column(
+            [self.txt_origen_emp, self.txt_origen_clabe],
+            spacing=0, tight=True,
+            horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        )
 
         self.acciones = ft.Row(
             [
@@ -281,18 +295,34 @@ class FilaSolicitud:
         return not (clabe or monto or cliente or concepto or empresa)
 
     # ----------------------------------------------------- asignación
+    def _pintar_origen(self) -> None:
+        """Refleja la cuenta origen asignada en las dos líneas de la celda
+        (empresa · banco arriba, CLABE abajo) y arma el tooltip con todo el
+        detalle (empresa, banco, CLABE y número de cuenta) para verlo completo."""
+        a = self.asignacion
+        if a:
+            emp = f"{a['empresa_origen']} · {a['banco']}"
+            self.txt_origen_emp.value = emp
+            self.txt_origen_emp.color = None
+            self.txt_origen_clabe.value = a["cuenta_origen"]
+            detalle = f"{emp}\nCLABE: {a['cuenta_origen']}"
+            if a.get("num_cuenta"):
+                detalle += f"\nNo. de cuenta: {a['num_cuenta']}"
+            self.txt_origen.tooltip = detalle
+        else:
+            self.txt_origen_emp.value = "— sin asignar —"
+            self.txt_origen_emp.color = GRIS
+            self.txt_origen_clabe.value = ""
+            self.txt_origen.tooltip = None
+
     def asignar(self, datos: dict) -> None:
         self.asignacion = datos
-        self.txt_origen.value = (
-            f"{datos['empresa_origen']} · {datos['banco']}\n{datos['cuenta_origen']}"
-        )
-        self.txt_origen.color = None
+        self._pintar_origen()
         self.actualizar_color()
 
     def limpiar_asignacion(self) -> None:
         self.asignacion = None
-        self.txt_origen.value = "— sin asignar —"
-        self.txt_origen.color = GRIS
+        self._pintar_origen()
         # Al quitar la asignación, la fila vuelve a su color de origen.
         self.actualizar_color()
 
@@ -1257,21 +1287,39 @@ class SeccionDevoluciones:
         self.app.avisar(
             f"{len(generados)} archivo(s) TXT generados: " + ", ".join(generados), VERDE)
 
-    def _contexto(self) -> dict:
-        return {
-            "empresa": self.dd_empresa.value or "",
-            "banco": self.dd_banco.value or "",
-            "cuenta_origen": self.dd_origen.value or "",
-            "num_cuenta": self.tf_num_cuenta.value or "",
-            "fecha": self.tf_fecha.value or "",
-        }
-
-    async def _generar_excel(self, _e=None) -> None:
-        """Reporte Excel con TODOS los registros de la tabla (SIPP + manuales)."""
+    def _filas_reporte(self) -> list[dict] | None:
+        """Arma los registros del reporte Excel: valida las filas y le agrega a
+        cada una SU PROPIA cuenta origen asignada (empresa/banco/cuenta/número/
+        fecha). Devuelve None si algún dato impide exportar (el aviso lo da
+        `_registros`)."""
         registros = self._registros(self.filas)
         if registros is None:
+            return None
+        # `_registros` conserva el orden y omite las filas vacías; se emparejan con
+        # las mismas filas no vacías para tomar su asignación individual.
+        filas_validas = [f for f in self.filas if not f.vacia()]
+        datos = []
+        for f, (clabe, monto, cliente, concepto) in zip(filas_validas, registros):
+            a = f.asignacion or {}
+            datos.append({
+                "empresa": a.get("empresa_origen", ""),
+                "banco": a.get("banco", ""),
+                "cuenta_origen": a.get("cuenta_origen", ""),
+                "num_cuenta": a.get("num_cuenta", ""),
+                # Fecha de la asignación de la fila; si no está asignada, la del panel.
+                "fecha": a.get("fecha", "") or self.tf_fecha.value or "",
+                "clabe": clabe, "monto": monto,
+                "beneficiario": cliente, "concepto": concepto,
+            })
+        return datos
+
+    async def _generar_excel(self, _e=None) -> None:
+        """Reporte Excel con TODOS los registros de la tabla (SIPP + manuales),
+        cada uno con su propia cuenta origen asignada."""
+        datos = self._filas_reporte()
+        if datos is None:
             return
-        if not registros:
+        if not datos:
             self.app.avisar("No hay registros que exportar.", ROJO)
             return
         ruta = await self.app.picker.save_file(
@@ -1283,7 +1331,7 @@ class SeccionDevoluciones:
         if not ruta.lower().endswith(".xlsx"):
             ruta += ".xlsx"
         try:
-            reporte_excel.generar(ruta, self._contexto(), registros)
+            reporte_excel.generar(ruta, datos)
         except PermissionError:
             self.app.avisar(
                 "No se pudo guardar: el archivo está abierto en Excel. Ciérralo e "
@@ -1293,4 +1341,4 @@ class SeccionDevoluciones:
             self.app.avisar(f"No se pudo generar el Excel: {exc}", ROJO)
             return
         self.app.avisar(
-            f"Reporte Excel generado con {len(registros)} movimiento(s).", VERDE)
+            f"Reporte Excel generado con {len(datos)} movimiento(s).", VERDE)
