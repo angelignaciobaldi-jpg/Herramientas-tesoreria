@@ -10,10 +10,10 @@ Excel del reporte.
 Las credenciales de inicio de sesión se capturan en el menú "Configuración" de
 la barra superior (ver ui/configuracion.py); aquí se leen desde ahí al arrancar.
 
-El RPA corre en un bucle de asyncio en un hilo aparte (BucleRpa) para no
-congelar la interfaz y para que Playwright pueda lanzar el navegador en Windows.
-Los métodos _pausar_rpa / _reanudar_rpa quedan como puntos de conexión para
-cuando exista el proceso de dispersión que se pueda pausar.
+La BÚSQUEDA de solicitudes consulta el microservicio (core/api.py) y vuelca las
+filas mapeadas (reporte_dispersion.desde_api); ya no abre el navegador. El RPA
+(Playwright, en un bucle de asyncio aparte con BucleRpa para no congelar la interfaz)
+se conserva SOLO para el paso de DISPERSAR en el SIPP.
 """
 
 from __future__ import annotations
@@ -26,25 +26,21 @@ import re
 import unicodedata
 
 import flet as ft
-from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from core import (
-    conciliacion, cuentas_dispersion, exportador_devoluciones, preferencias,
-    reporte_dispersion, reporte_dispersion_export, rutas, tipo_cambio,
+    ajustes_api, api, conciliacion, cuentas_dispersion, exportador_devoluciones,
+    preferencias, reporte_dispersion, reporte_dispersion_export, rutas, tipo_cambio,
 )
 from core.reporte_dispersion import FilaSolicitud
 from core.rpa_sipp import (
     BucleRpa,
     ControlRpa,
-    ErrorSipp,
     FiltrosSolicitudPago,
     RpaDetenido,
     SesionSipp,
-    asegurar_navegador,
-    necesita_navegador,
 )
 from ui.comun import (CENTRO, EMPRESAS, GRIS, ID_POR_EMPRESA, NARANJA,
-                      NOMBRES_EMPRESAS, ROJO, ROJO_BOTON, VERDE, encabezado_col)
+                      NOMBRES_EMPRESAS, ROJO, ROJO_BOTON, VERDE)
 from ui.tabla_responsiva import (Cabecera, ColumnaTabla, FilaDatos,
                                  SegmentoCabecera, TablaResponsiva)
 from ui.tabla_responsiva import DER as _TDER
@@ -56,6 +52,9 @@ _RE_FECHA = re.compile(r"^\d{2}/\d{2}/\d{4}$")
 # Alineaciones para las celdas de la tabla.
 _IZQ = ft.Alignment(-1, 0)
 _DER = ft.Alignment(1, 0)
+
+# Fondo de las filas del resumen PENDIENTES de subir su comprobante (modo 'errores').
+_AMARILLO_PENDIENTE = ft.Colors.YELLOW_100
 
 # Margen ("canalón") reservado para que las barras de scroll (que Flet dibuja
 # ENCIMA del contenido) no se solapen con las tablas y obstruyan la información.
@@ -94,13 +93,6 @@ _ANCHO_TABLA = (
 )
 # Alto de cada fila de datos de la tabla.
 _ALTO_FILA = 44
-# Alto fijo del panel de filtros (ya no es un acordeón colapsable). Se ajusta
-# para que el contenido (combos, campos, botones y estado en dos líneas) quepa
-# sin scroll interno en una ventana normal. Si el contenido no cabe (p. ej.
-# ventana muy angosta), el panel hace scroll interno; la pantalla completa
-# también tiene scroll para recorrer panel + tabla.
-_ALTO_PANEL_FILTROS = 370
-
 # Paginación de la tabla ("lazy load"): se renderiza un máximo APROXIMADO de
 # filas por página, respetando los grupos por cuenta (no se parte un grupo, para
 # que su fila TOTAL siga cuadrando). Es el enfoque viable en Flet, cuyo DataTable
@@ -122,8 +114,7 @@ _AYUDA_SOLICITUDES = (
 
 # Texto de ayuda del ícono de interrogante junto a "Buscar solicitudes de pago".
 _AYUDA_BUSCAR = (
-    'Busca las solicitudes de pago pendientes en la sección "Dispersiones (no '
-    'Pemex)" del "Dashboard Tesorería".'
+    'Busca las solicitudes de pago pendientes.'
 )
 
 # --- Formato de moneda ---------------------------------------------------
@@ -136,6 +127,29 @@ def _fmt_tc(valor: float | None) -> str:
     """Formatea el tipo de cambio con 4 decimales (p. ej. $17.5993), tal como lo
     publica el DOF, para que coincida con el valor usado en el cálculo."""
     return f"${(valor or 0):,.4f}"
+
+
+def _fecha_ayer_texto() -> str:
+    """Fecha de AYER en 'DD/MM/AAAA'. Es la fecha con la que se toma (y se muestra)
+    el tipo de cambio del DOF para la dispersión."""
+    return (datetime.date.today() - datetime.timedelta(days=1)).strftime("%d/%m/%Y")
+
+
+def _ultimos_digitos(texto, n: int = 4) -> str:
+    """Últimos `n` dígitos de un texto, ignorando cualquier no-dígito (espacios,
+    guiones, y máscaras como '*0012'). '' si no hay dígitos. Se usa para casar
+    cuentas/CLABEs por sus últimos dígitos (los comprobantes vienen enmascarados)."""
+    d = re.sub(r"\D", "", str(texto or ""))
+    return d[-n:] if d else ""
+
+
+def _norm_nombre_doc(nombre: str) -> str:
+    """Normaliza un nombre de archivo para comparar el 'documento_lectura' que devuelve
+    el extractor contra los PDFs subidos: minúsculas, sin espacios en los extremos y sin
+    la extensión '.pdf'. Tolera diferencias de caja/extensión entre lo subido y lo que
+    reporta la API."""
+    s = (nombre or "").strip().lower()
+    return s[:-4] if s.endswith(".pdf") else s
 
 
 # --- Colores de fila por tipo de solicitud -------------------------------
@@ -199,7 +213,7 @@ _COLS_PCT = [
     ("Tipo", 3, CENTRO, lambda f: f.tipo),
     ("Fh. Fact.", 9, CENTRO, lambda f: f.fecha_factura),
     ("Fh. Ven.", 9, CENTRO, lambda f: f.fecha_vencimiento),
-    ("Producto", 24, _TIZQ, lambda f: f.producto),
+    ("Producto", 25, _TIZQ, lambda f: f.producto),
 ]
 
 
@@ -318,6 +332,31 @@ def _fecha_valida(texto: str) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _fecha_ddmmaaaa_a_iso(texto: str) -> str:
+    """'DD/MM/AAAA' -> 'YYYY-MM-DD' (formato que pide el endpoint). '' si viene
+    vacío o no es una fecha válida (la UI ya trabaja en DD/MM/AAAA)."""
+    s = (texto or "").strip()
+    if not s:
+        return ""
+    try:
+        return datetime.datetime.strptime(s, "%d/%m/%Y").strftime("%Y-%m-%d")
+    except ValueError:
+        return ""
+
+
+# Catálogo de tipos de solicitud: NOMBRE (como se ve en la UI) -> id que espera el
+# endpoint (`tipoSolicitud`). Es la fuente única: la lista del combo
+# (SeccionDispersionNoPemex.TIPOS_SOLICITUD) se deriva de estas claves, así el mapeo
+# nombre->id al buscar siempre cuadra.
+_TIPO_SOLICITUD_ID: dict[str, int] = {
+    "Pago Factura": 1,
+    "Pago Extraordinario": 2,
+    "Pago Estadias": 3,
+    "Pago Extraordinario Facturas": 4,
+    "Pago General de Fletes": 5,
+}
 
 
 def _label_requerido(texto: str) -> ft.Text:
@@ -999,9 +1038,10 @@ class SeccionDispersionNoPemex:
     SUCURSAL_SESION = "Corporativo"
 
     # PRUEBAS: si es True, la operación de dispersión NO cierra el navegador al
-    # terminar/detener, para poder inspeccionar el estado en el SIPP. Volver a
-    # False al finalizar las pruebas.
-    MANTENER_NAVEGADOR_PRUEBAS = True
+    # terminar/detener, para poder inspeccionar el estado en el SIPP. En operación
+    # normal va en False: al terminar cada RPA se cierra el navegador y la app vuelve
+    # al frente.
+    MANTENER_NAVEGADOR_PRUEBAS = False
 
     # Empresas disponibles para la dispersión (No Pemex). La fuente única vive en
     # ui.comun (se comparte con otras pantallas); aquí se referencian.
@@ -1010,13 +1050,9 @@ class SeccionDispersionNoPemex:
     ID_POR_EMPRESA = ID_POR_EMPRESA
 
     # Opciones fijas del combo "Tipo de Solicitud" (las del modal del SIPP).
-    TIPOS_SOLICITUD = [
-        "Pago Facturas",
-        "Pago Extraordinario",
-        "Pago Estadias",
-        "Pago Extraordinario Facturas",
-        "Pago General de Fletes",
-    ]
+    # Nombres del combo 'Tipo de Solicitud': se derivan del catálogo (nombre->id),
+    # para que la selección de la UI mapee directo al id que pide el endpoint.
+    TIPOS_SOLICITUD = list(_TIPO_SOLICITUD_ID)
 
     def __init__(self, app):
         self.app = app
@@ -1048,6 +1084,12 @@ class SeccionDispersionNoPemex:
         # --- Operación "Generar Dispersión" (modal aparte del RPA de búsqueda de
         # arriba). Estado propio: detenido|ejecutando|pausado|completado|error.
         self._disp_estado_op = "detenido"
+        # Guard anti doble-click de 'Generar Dispersión': preparar el payload puede
+        # tardar (TC del DOF + conciliación de muchas solicitudes) y, sin bloqueo, un
+        # segundo clic lanzaría el flujo dos veces (excepción). `_dlg_cargando_disp`
+        # es la pantalla de carga que se muestra mientras se prepara.
+        self._generando_dispersion = False
+        self._dlg_cargando_disp: ft.AlertDialog | None = None
         self._disp_ctrl: ControlRpa | None = None   # control cooperativo pausa/detención
         self._disp_task = None                       # asyncio.Task (envoltura en el loop de la UI)
         self._disp_future = None                     # Future del flujo en el hilo del RPA (cancelable)
@@ -1073,12 +1115,40 @@ class SeccionDispersionNoPemex:
         self._ref_dom_por_grupo: dict[str, dict[tuple, str]] = {}
         self._pesos_generados: list[dict] = []
         self._tipo_cambio: float | None = None
+        self._tc_fecha: str | None = None       # fecha DOF del TC usado (DD/MM/AAAA)
         self._pesos_error: str | None = None
         # Tipo de cambio de VISTA PREVIA (para mostrarlo en el modal 'Solicitudes a
         # dispersar' cuando hay proveedores USD marcados 'pagar en pesos'). Se
         # consulta al generar la dispersión; None si no aplica o no se pudo obtener.
+        # `_tc_preview_fecha` es la fecha de publicación del DOF de ese valor.
         self._tc_preview: float | None = None
+        self._tc_preview_fecha: str | None = None
         self._tc_preview_error: str | None = None
+        # Comprobantes de pago cargados por el usuario en el resumen, por folio
+        # (folio -> ruta de archivo). Las reglas de asignación están por definir.
+        self._comprobantes: dict[str, str] = {}
+        # Comprobantes LEÍDOS por la API extractor (data.comprobantes de la respuesta);
+        # se conservan para el paso de asignación a folios (por definir).
+        self._comprobantes_leidos: list[dict] = []
+        # --- RPA de SUBIDA de comprobantes (Proveedores No Pemex) --------------
+        # Movimientos (_id_fila) cuyo comprobante ya se subió OK; los errores de la
+        # última subida; y el 'modo' de render del resumen (normal|exito|errores).
+        self._subidos: set[str] = set()
+        self._subida_errores: list[str] = []
+        self._resumen_modo: str = "normal"
+        # Estado/controles del RPA de subida (propio, paralelo al de dispersión).
+        self._sub_estado_op = "detenido"
+        self._sub_ctrl: ControlRpa | None = None
+        self._sub_task = None
+        self._sub_future = None
+        self._dlg_subida: ft.AlertDialog | None = None
+        self._sub_al_cerrar = None
+        # Diálogo del resumen y callback a ejecutar CUANDO Flutter confirme su cierre.
+        # Necesario porque Flet solo desmonta el diálogo de más arriba: para cerrar el
+        # resumen (que queda DEBAJO de la confirmación) hay que esperar a que la
+        # confirmación se desmonte y encadenar por on_dismiss.
+        self._dlg_resumen: ft.AlertDialog | None = None
+        self._resumen_al_cerrar = None
         self.contenido = self._construir()
         self._construir_dialogo_dispersion()
         # Carga automática de los filtros guardados (Empresa / Tipo), si existen.
@@ -1170,14 +1240,16 @@ class SeccionDispersionNoPemex:
         )
 
         # --- Botones de ejecución ---
-        # Botón que intercala Iniciar / Pausar / Reanudar según el estado.
+        # Búsqueda por API (ya no abre el navegador): consulta el endpoint y llena
+        # las tablas. Se deshabilita mientras consulta.
         self.btn_iniciar = ft.FilledButton(
-            content="Iniciar", icon=ft.Icons.PLAY_ARROW, on_click=self._iniciar_pausar,
+            content="Buscar solicitudes", icon=ft.Icons.SEARCH,
+            on_click=self._buscar_solicitudes,
         )
-        # Detener solo se habilita mientras el RPA está en marcha o en pausa.
+        # 'Detener' ya no aplica a la búsqueda (la API es rápida): se oculta. Se
+        # conserva la referencia para no romper el layout ni otros usos.
         self.btn_detener = ft.OutlinedButton(
-            content="Detener", icon=ft.Icons.STOP, on_click=self._detener,
-            disabled=True,
+            content="Detener", icon=ft.Icons.STOP, disabled=True, visible=False,
         )
         # Subir un Excel de solicitudes ya filtrado (sin correr el RPA).
         # OCULTO temporalmente: la carga manual por reportes se deshabilita por
@@ -1186,18 +1258,6 @@ class SeccionDispersionNoPemex:
             content="Búsqueda por reportes", icon=ft.Icons.UPLOAD_FILE,
             on_click=self._subir_reporte, visible=False,
         )
-        # Estado del RPA: "Estado:" (label) + el valor coloreado según el estado.
-        # Ambos en negrita cursiva.
-        self.lbl_estado = ft.Text(
-            "Estatus del Robot:", size=13, weight=ft.FontWeight.BOLD, italic=True, color=GRIS)
-        self.txt_estado = ft.Text(
-            "Detenido", size=13, weight=ft.FontWeight.BOLD, italic=True, color=NARANJA)
-        # Aviso + barra (indeterminada) para la descarga del navegador la 1ra vez.
-        self.txt_install = ft.Text(
-            "Instalando componentes extra, espere un momento…",
-            size=13, color=GRIS, visible=False,
-        )
-        self.barra_install = ft.ProgressBar(visible=False)
 
         # --- Grid (12 columnas) ---
         def col(control, ancho_md):
@@ -1233,9 +1293,8 @@ class SeccionDispersionNoPemex:
             ],
             size=11,
         )
-        # Parte inferior en DOS líneas: arriba los botones de ejecución
-        # (Iniciar/Pausar + Detener) con la leyenda de requerido a la derecha, y
-        # abajo el estado del RPA.
+        # Parte inferior: el botón de búsqueda con la leyenda de requerido a la
+        # derecha.
         fila_botones = ft.Row(
             [
                 ft.Row(
@@ -1249,11 +1308,6 @@ class SeccionDispersionNoPemex:
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
             wrap=True,
         )
-        fila_estado = ft.Row(
-            [self.lbl_estado, self.txt_estado],
-            spacing=6, tight=True,
-            vertical_alignment=ft.CrossAxisAlignment.CENTER,
-        )
 
         # Panel de filtros de ALTURA FIJA (ya no es un acordeón). El título es
         # estático; el cuerpo hace scroll interno si no cabe en la altura fija.
@@ -1261,12 +1315,9 @@ class SeccionDispersionNoPemex:
             [
                 fila_combos,
                 fila_campos,
-                self.txt_install,
-                self.barra_install,
                 fila_botones,
-                fila_estado,
             ],
-            spacing=14, scroll=ft.ScrollMode.AUTO, expand=True,
+            spacing=14,
         )
         # Ícono de ayuda junto al título: tooltip inmediato al pasar el mouse
         # (wait_duration=0), sin necesidad de hacer click.
@@ -1295,14 +1346,16 @@ class SeccionDispersionNoPemex:
             alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
             vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
+        # El panel toma su ALTURA NATURAL (se ajusta al contenido): así no queda
+        # espacio muerto bajo el botón de búsqueda. En ventanas angostas los combos
+        # se apilan y el panel crece; el scroll de toda la pantalla lo recorre.
         panel = ft.Card(
             content=ft.Container(
                 content=ft.Column(
                     [encabezado_panel, cuerpo_filtros],
-                    spacing=12, expand=True,
+                    spacing=12,
                 ),
                 padding=16,
-                height=_ALTO_PANEL_FILTROS,
             ),
         )
         panel_tabla = self._construir_tabla()
@@ -1335,7 +1388,7 @@ class SeccionDispersionNoPemex:
         self._cargando = ft.Row(
             [
                 ft.ProgressRing(width=18, height=18, stroke_width=2),
-                ft.Text("Leyendo información de los reportes…", size=13, color=GRIS),
+                ft.Text("Buscando solicitudes…", size=13, color=GRIS),
             ],
             spacing=10, visible=False,
         )
@@ -1587,90 +1640,153 @@ class SeccionDispersionNoPemex:
     async def _generar_dispersiones(self, _e=None) -> None:
         """Valida la selección y la cuenta, concilia el payload y abre el diálogo
         de 'Generar Dispersión' desde el cual se inicia el RPA. El diálogo es modal
-        y no se puede cerrar mientras la operación esté en curso."""
-        seleccion = self._seleccion_por_empresa()
-        if not seleccion:
-            self.app.avisar("Selecciona al menos un movimiento en la tabla.", NARANJA)
+        y no se puede cerrar mientras la operación esté en curso.
+
+        Preparar el payload puede tardar (consulta del TC al DOF + conciliación de
+        muchas solicitudes), así que se muestra una pantalla de carga y se bloquea
+        el botón / la re-entrada para que un segundo clic no dispare el flujo dos
+        veces (lo que provocaba una excepción)."""
+        # Guard anti doble-click: si ya se está preparando, ignora el nuevo clic.
+        if self._generando_dispersion:
             return
-        # La Cuenta de origen es REQUERIDA para dispersar: cada tabla con
-        # movimientos seleccionados debe tener una cuenta elegida.
-        sin_cuenta = [
-            grupo for grupo in seleccion
-            if self._tablas_por_empresa[grupo].cuenta_seleccionada() is None
-        ]
-        if sin_cuenta:
-            self.app.avisar(
-                "Falta elegir la Cuenta en: " + ", ".join(sin_cuenta) + ".", NARANJA)
-            return
-        # Datos de pago por empresa (cuenta elegida + concepto + referencia) para
-        # adjuntarlos al payload de la dispersión (los usará el RPA: la 'cuenta' es
-        # el valor 'Cuenta' por el que se busca la cuenta en SIPP).
-        datos_pago: dict[str, dict] = {}
-        for grupo in seleccion:
-            tabla = self._tablas_por_empresa[grupo]
-            datos_pago[grupo] = {
-                "cuenta": tabla.cuenta_seleccionada() or "",
-                "concepto_pago": tabla.concepto(),
-                "referencia_pago": tabla.referencia(),
+        self._generando_dispersion = True
+        self.btn_dispersar.disabled = True
+        mostro_cargando = False
+        abrir = False
+        try:
+            seleccion = self._seleccion_por_empresa()
+            if not seleccion:
+                self.app.avisar(
+                    "Selecciona al menos un movimiento en la tabla.", NARANJA)
+                return
+            # La Cuenta de origen es REQUERIDA para dispersar: cada tabla con
+            # movimientos seleccionados debe tener una cuenta elegida.
+            sin_cuenta = [
+                grupo for grupo in seleccion
+                if self._tablas_por_empresa[grupo].cuenta_seleccionada() is None
+            ]
+            if sin_cuenta:
+                self.app.avisar(
+                    "Falta elegir la Cuenta en: " + ", ".join(sin_cuenta) + ".",
+                    NARANJA)
+                return
+            # Datos de pago por empresa (cuenta elegida + concepto + referencia) para
+            # adjuntarlos al payload de la dispersión (los usará el RPA: la 'cuenta'
+            # es el valor 'Cuenta' por el que se busca la cuenta en SIPP).
+            datos_pago: dict[str, dict] = {}
+            for grupo in seleccion:
+                tabla = self._tablas_por_empresa[grupo]
+                datos_pago[grupo] = {
+                    "cuenta": tabla.cuenta_seleccionada() or "",
+                    "concepto_pago": tabla.concepto(),
+                    "referencia_pago": tabla.referencia(),
+                }
+            # Pares (proveedor, cuenta beneficiario) marcados 'pagar en pesos' por
+            # grupo USD (se capturan ahora, porque después de dispersar las tablas se
+            # vacían). Solo cuentan los pares con alguna solicitud seleccionada.
+            self._pesos_por_grupo = {
+                grupo: self._tablas_por_empresa[grupo].pares_pagar_pesos()
+                for grupo in seleccion
+                if self._tablas_por_empresa[grupo].pares_pagar_pesos()
             }
-        # Pares (proveedor, cuenta beneficiario) marcados 'pagar en pesos' por grupo
-        # USD (se capturan ahora, porque después de dispersar las tablas se vacían).
-        # Solo cuentan los pares con alguna solicitud seleccionada.
-        self._pesos_por_grupo = {
-            grupo: self._tablas_por_empresa[grupo].pares_pagar_pesos()
-            for grupo in seleccion
-            if self._tablas_por_empresa[grupo].pares_pagar_pesos()
-        }
-        # La Cuenta Origen del pago en pesos es REQUERIDA por CADA par marcado (es la
-        # cuenta origen del TXT en pesos). Se reúnen los pares sin clabe para avisar.
-        self._clabe_pesos_por_grupo = {
-            grupo: self._tablas_por_empresa[grupo].clabes_pesos()
-            for grupo in self._pesos_por_grupo
-        }
-        sin_clabe = [
-            f"{prov} · {cuenta}"
-            for grupo, pares in self._pesos_por_grupo.items()
-            for (prov, cuenta) in pares
-            if (prov, cuenta) not in self._clabe_pesos_por_grupo.get(grupo, {})
-        ]
-        if sin_clabe:
-            self.app.avisar(
-                "Falta elegir la Cuenta Origen (pago en pesos) en: "
-                + ", ".join(sin_clabe) + ".", NARANJA)
+            # La Cuenta Origen del pago en pesos es REQUERIDA por CADA par marcado (es
+            # la cuenta origen del TXT en pesos). Se reúnen los pares sin clabe.
+            self._clabe_pesos_por_grupo = {
+                grupo: self._tablas_por_empresa[grupo].clabes_pesos()
+                for grupo in self._pesos_por_grupo
+            }
+            sin_clabe = [
+                f"{prov} · {cuenta}"
+                for grupo, pares in self._pesos_por_grupo.items()
+                for (prov, cuenta) in pares
+                if (prov, cuenta) not in self._clabe_pesos_por_grupo.get(grupo, {})
+            ]
+            if sin_clabe:
+                self.app.avisar(
+                    "Falta elegir la Cuenta Origen (pago en pesos) en: "
+                    + ", ".join(sin_clabe) + ".", NARANJA)
+                return
+            # Texto de la cuenta origen elegida por par (para saber el banco/formato
+            # del layout en pesos: Banregio vs Bancomer).
+            self._cuenta_pesos_por_grupo = {
+                grupo: self._tablas_por_empresa[grupo].cuentas_pesos_texto()
+                for grupo in self._pesos_por_grupo
+            }
+            # Concepto/Referencia POR PAR (pago en pesos), capturados en la UI. Solo
+            # alimentan el TXT en pesos. La referencia final se resuelve en el RPA con
+            # el respaldo del DOM (ver _ejecutar_dispersion / _generar_txts_pesos).
+            self._concepto_prov_por_grupo = {
+                grupo: self._tablas_por_empresa[grupo].conceptos_pesos()
+                for grupo in self._pesos_por_grupo
+            }
+            self._ref_prov_por_grupo = {
+                grupo: self._tablas_por_empresa[grupo].referencias_pesos()
+                for grupo in self._pesos_por_grupo
+            }
+            # A partir de aquí viene lo lento (TC del DOF + conciliación): se muestra
+            # la pantalla de carga y se cede el control para que alcance a pintarse
+            # antes del trabajo pesado.
+            self._abrir_cargando_dispersion()
+            mostro_cargando = True
+            await asyncio.sleep(0.02)
+            # Tipo de cambio (DOF) para el modal 'Solicitudes a dispersar' cuando hay
+            # proveedores USD marcados 'pagar en pesos'. En un hilo (no congela la UI);
+            # si falla, se guarda el error para avisarlo en el modal (no impide
+            # dispersar). Siempre con la fecha de AYER (valor y fecha mostrada).
+            self._tc_preview = None
+            self._tc_preview_fecha = None
+            self._tc_preview_error = None
+            if self._pesos_por_grupo:
+                try:
+                    self._tc_preview = await asyncio.to_thread(
+                        tipo_cambio.tipo_cambio_usd)
+                    self._tc_preview_fecha = _fecha_ayer_texto()
+                except Exception as exc:  # noqa: BLE001 — se reporta en el modal
+                    self._tc_preview_error = str(exc)
+            # Conciliación (separa por empresa, valida requeridos y cuadre por cuenta)
+            # en un hilo: con muchas solicitudes puede tardar y congelaría la UI. Las
+            # 'válidas' son las que irían al RPA; el payload queda guardado para la
+            # operación (y para el botón 'Ver datos' del diálogo).
+            self._conc_dispersion = await asyncio.to_thread(
+                conciliacion.conciliar, seleccion, datos_pago)
+            abrir = True
+        finally:
+            if mostro_cargando:
+                self._cerrar_cargando_dispersion()
+            self.btn_dispersar.disabled = False
+            self._generando_dispersion = False
+        # El diálogo real se abre DESPUÉS de cerrar la pantalla de carga (evita
+        # apilar diálogos y que el cierre de carga tape al diálogo de dispersión).
+        if abrir:
+            self._abrir_dialogo_dispersion()
+
+    def _abrir_cargando_dispersion(self) -> None:
+        """Muestra la pantalla de carga (modal) mientras se prepara la dispersión.
+        Al ser modal, bloquea la interacción con el botón mientras carga."""
+        self._dlg_cargando_disp = ft.AlertDialog(
+            modal=True,
+            content=ft.Column(
+                [
+                    ft.Text("Preparando la dispersión…", size=20,
+                            weight=ft.FontWeight.BOLD,
+                            text_align=ft.TextAlign.CENTER),
+                    ft.ProgressRing(width=32, height=32, stroke_width=3),
+                ],
+                spacing=20, tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+        )
+        self.page.show_dialog(self._dlg_cargando_disp)
+        self._disp_update()
+
+    def _cerrar_cargando_dispersion(self) -> None:
+        """Cierra la pantalla de carga de la preparación de la dispersión."""
+        if self._dlg_cargando_disp is None:
             return
-        # Texto de la cuenta origen elegida por par (para saber el banco/formato del
-        # layout en pesos: Banregio vs Bancomer).
-        self._cuenta_pesos_por_grupo = {
-            grupo: self._tablas_por_empresa[grupo].cuentas_pesos_texto()
-            for grupo in self._pesos_por_grupo
-        }
-        # Concepto/Referencia POR PAR (pago en pesos), capturados en la UI. Solo
-        # alimentan el TXT en pesos. La referencia final se resuelve en el RPA con el
-        # respaldo del DOM (ver _ejecutar_dispersion / _generar_txts_pesos).
-        self._concepto_prov_por_grupo = {
-            grupo: self._tablas_por_empresa[grupo].conceptos_pesos()
-            for grupo in self._pesos_por_grupo
-        }
-        self._ref_prov_por_grupo = {
-            grupo: self._tablas_por_empresa[grupo].referencias_pesos()
-            for grupo in self._pesos_por_grupo
-        }
-        # Tipo de cambio (DOF) para mostrarlo en el modal 'Solicitudes a dispersar'
-        # cuando hay proveedores USD marcados 'pagar en pesos'. Se consulta ahora
-        # (cacheado por sesión) en un hilo para no congelar la UI; si falla, se
-        # guarda el error para avisarlo en el modal (no impide dispersar).
-        self._tc_preview = None
-        self._tc_preview_error = None
-        if self._pesos_por_grupo:
-            try:
-                self._tc_preview = await asyncio.to_thread(tipo_cambio.tipo_cambio_usd)
-            except Exception as exc:  # noqa: BLE001 — se reporta en el modal
-                self._tc_preview_error = str(exc)
-        # Conciliación: separa por empresa, valida requeridos y cuadre por cuenta.
-        # Las 'válidas' son las que irían al RPA. El payload queda guardado para la
-        # operación (y para el botón 'Ver datos' del diálogo).
-        self._conc_dispersion = conciliacion.conciliar(seleccion, datos_pago)
-        self._abrir_dialogo_dispersion()
+        self._dlg_cargando_disp = None
+        try:
+            self.page.pop_dialog()
+        except Exception:  # noqa: BLE001 — el cierre no debe propagar
+            pass
 
     # ---------------------------------------- diálogo "Generar Dispersión"
     def _construir_dialogo_dispersion(self) -> None:
@@ -1870,6 +1986,240 @@ class SeccionDispersionNoPemex:
         if self._conc_dispersion is not None:
             self._mostrar_datos_dispersion(self._conc_dispersion)
 
+    # =============================== RPA de SUBIDA de comprobantes (Proveedores)
+    def _filas_pendientes_subida(self) -> list[dict]:
+        """Filas del resumen que faltan por subir (no en _subidos) y que tienen un
+        comprobante vinculado con archivo existente en disco (lo único subible)."""
+        pendientes: list[dict] = []
+        for fila in self._folios_dispersados or []:
+            if self._id_fila(fila) in self._subidos:
+                continue
+            ruta = self._comprobantes.get(self._id_fila(fila))
+            if ruta and os.path.exists(ruta):
+                pendientes.append(fila)
+        return pendientes
+
+    def _subida_todo_ok(self) -> bool:
+        """True si TODOS los movimientos del resumen tienen su comprobante subido."""
+        ids = {self._id_fila(f) for f in (self._folios_dispersados or [])}
+        return bool(ids) and ids <= self._subidos
+
+    def _construir_dialogo_subida(self) -> None:
+        """Construye el diálogo modal del RPA de subida de comprobantes: texto guía,
+        estatus del robot y botón Detener. Arranca solo (el usuario ya consintió)."""
+        mensaje = ft.Text(
+            "Se subirán a SIPP los comprobantes vinculados a cada movimiento "
+            "(pestaña 'Proveedores (No Pemex)').\n"
+            "La operación inició automáticamente.",
+            size=13)
+        nota = ft.Text(
+            "NOTA: No cierre esta ventana hasta que la operación termine o se "
+            "detenga.",
+            size=12, italic=True, color=NARANJA)
+        self.btn_sub_detener = ft.OutlinedButton(
+            content="Detener", icon=ft.Icons.STOP, on_click=self._sub_detener,
+            style=ft.ButtonStyle(color=ROJO_BOTON), disabled=True)
+        self.lbl_sub_estado = ft.Text(
+            "Estatus del Robot:", size=13, weight=ft.FontWeight.BOLD,
+            italic=True, color=GRIS)
+        self.txt_sub_estado = ft.Text(
+            "Iniciando…", size=13, weight=ft.FontWeight.BOLD, italic=True,
+            color=VERDE)
+        self.btn_sub_cerrar = ft.TextButton("Cerrar", on_click=self._sub_cerrar)
+        self._dlg_subida = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Subir comprobantes de pago", weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                content=ft.Column(
+                    [
+                        mensaje, nota, ft.Divider(),
+                        ft.Row([self.btn_sub_detener], spacing=10, tight=True),
+                        ft.Row(
+                            [self.lbl_sub_estado,
+                             ft.Container(self.txt_sub_estado, expand=True)],
+                            spacing=6,
+                            vertical_alignment=ft.CrossAxisAlignment.START),
+                    ],
+                    tight=True, spacing=14,
+                ),
+                width=520),
+            actions=[self.btn_sub_cerrar],
+            actions_alignment=ft.MainAxisAlignment.END,
+            on_dismiss=self._sub_on_dismiss,
+        )
+
+    def _sub_on_dismiss(self, _e=None) -> None:
+        """Se dispara cuando Flutter confirma el cierre del diálogo de subida. Ejecuta el
+        callback encadenado (p. ej. mostrar el resumen) sin apilar diálogos."""
+        cb = self._sub_al_cerrar
+        self._sub_al_cerrar = None
+        if cb is not None:
+            cb()
+
+    def _cerrar_subida_luego(self, despues=None) -> None:
+        """Cierra el diálogo de subida y ejecuta `despues` CUANDO Flutter confirme su
+        cierre (así el resumen se muestra recién cuando la subida ya se desmontó)."""
+        dlg = self._dlg_subida
+        if dlg is None or not getattr(dlg, "open", False):
+            if despues is not None:
+                despues()
+            return
+        self._sub_al_cerrar = despues
+        dlg.open = False
+        dlg.update()
+
+    def _abrir_dialogo_subida(self) -> None:
+        """Muestra el diálogo del RPA de subida y lo ARRANCA automáticamente."""
+        self._construir_dialogo_subida()
+        self._sub_estado_op = "ejecutando"
+        self._sub_refrescar_controles()
+        self.page.show_dialog(self._dlg_subida)
+        self._disp_update()
+        self.page.run_task(self._sub_iniciar)
+
+    def _sub_fijar_estado(self, texto: str, color: str) -> None:
+        self.txt_sub_estado.value = texto
+        self.txt_sub_estado.color = color
+
+    def _sub_estado_seguro(self, texto: str, color: str) -> None:
+        """Fija el estatus del diálogo de subida de forma segura desde el hilo RPA."""
+        def aplicar():
+            self._sub_fijar_estado(texto, color)
+            self._disp_update()
+        self._disp_en_ui(aplicar)
+
+    def _sub_refrescar_controles(self) -> None:
+        corriendo = self._sub_estado_op == "ejecutando"
+        self.btn_sub_detener.disabled = not corriendo
+        self.btn_sub_cerrar.disabled = corriendo
+        self._disp_update()
+
+    def _sub_cerrar(self, _e=None) -> None:
+        """Cierra el diálogo de subida (solo cuando no está corriendo)."""
+        if self._sub_estado_op == "ejecutando":
+            return
+        try:
+            self.page.pop_dialog()
+        except Exception:  # noqa: BLE001 — el cierre no debe propagar
+            pass
+
+    async def _sub_detener(self, _e=None) -> None:
+        """Solicita detener la subida: detención cooperativa + cancelación."""
+        if self._sub_estado_op != "ejecutando":
+            return
+        if self._sub_ctrl is not None:
+            self._sub_ctrl.detener()
+        if self._sub_future is not None:
+            self._sub_future.cancel()
+        if self._sub_task is not None:
+            self._sub_task.cancel()
+        self._sub_fijar_estado("Deteniendo…", NARANJA)
+        self.btn_sub_detener.disabled = True
+        self._disp_update()
+
+    async def _sub_iniciar(self) -> None:
+        """Corre la subida y, al terminar (éxito/detenido/error), cierra el diálogo y
+        re-muestra el resumen en modo 'exito' o 'errores'."""
+        self._sub_estado_op = "ejecutando"
+        self._sub_fijar_estado("Iniciando…", VERDE)
+        self._sub_refrescar_controles()
+        self._sub_task = asyncio.create_task(self._ejecutar_subida_comprobantes())
+        try:
+            await self._sub_task
+        except (RpaDetenido, asyncio.CancelledError):
+            self._sub_estado_op = "detenido"
+            self._sub_fijar_estado("Operación detenida.", ROJO)
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self._sub_estado_op = "error"
+            self._sub_fijar_estado(f"Error: {exc}", ROJO)
+            self.app.avisar(f"Falló la subida de comprobantes: {exc}", ROJO)
+        else:
+            self._sub_estado_op = "completado"
+            self._sub_fijar_estado("Operación completada.", VERDE)
+        finally:
+            self._sub_task = None
+            self._sub_future = None
+            self._sub_ctrl = None
+        self._sub_refrescar_controles()
+        # Cerrar el diálogo de subida y, cuando se desmonte, mostrar el resumen en el
+        # modo correspondiente (encadenado para no apilar diálogos).
+        self._resumen_modo = "exito" if self._subida_todo_ok() else "errores"
+        self._cerrar_subida_luego(self._mostrar_resumen_dispersion)
+
+    async def _ejecutar_subida_comprobantes(self) -> None:
+        """Sube, por cada movimiento pendiente con comprobante, su PDF en la pestaña
+        'Proveedores (No Pemex)': login → tab → estatus 'Pagado' (una vez) → por fila:
+        buscar por proveedor + folio(s) de documento y adjuntar. Los errores no abortan
+        (se acumulan en _subida_errores). Corre en el hilo del RPA (BucleRpa)."""
+        self._disp_loop_ui = asyncio.get_running_loop()
+        self._subida_errores = []
+        pendientes = self._filas_pendientes_subida()
+        if not pendientes:
+            self._sub_estado_seguro(
+                "No hay comprobantes vinculados por subir.", NARANJA)
+            return
+        if self.bucle is None:
+            self.bucle = BucleRpa()
+        self._sub_ctrl = ControlRpa(self.bucle._loop)
+        ctrl = self._sub_ctrl
+        self.sesion = SesionSipp(headless=False)
+        sesion = self.sesion
+        usuario, contrasena = self.app.config.credenciales()
+        total = len(pendientes)
+
+        async def flujo() -> None:
+            await sesion.iniciar()
+            await sesion.login(usuario, contrasena)
+            await sesion.seleccionar_empresa_sucursal(
+                self.EMPRESA_SESION, self.SUCURSAL_SESION)
+            await sesion.ir_a_tab_proveedores_no_pemex()
+            # El estatus 'Pagado' se fija UNA sola vez, antes del primer 'Buscar'.
+            await sesion.seleccionar_estatus_pagado()
+            for i, fila in enumerate(pendientes, start=1):
+                await ctrl.punto_control()
+                idf = self._id_fila(fila)
+                ruta = self._comprobantes.get(idf)
+                prov = fila.get("proveedor") or ""
+                self._sub_estado_seguro(
+                    f"Subiendo {i}/{total}: {prov}…", VERDE)
+                id_prov = fila.get("id_proveedor")
+                # Empresa (best-effort): acota los resultados; si no se encuentra, NO
+                # bloquea la búsqueda. Se fija por fila, antes de probar sus folios.
+                await sesion.seleccionar_empresa_filtro(fila.get("empresa") or "")
+                folios = [f for f in (fila.get("folios_documento") or []) if f]
+                if not folios and fila.get("folio_documento"):
+                    folios = [fila["folio_documento"]]
+                subido = False
+                try:
+                    for folio in folios:
+                        # Se busca un folio_documento por grupo; si no da resultado,
+                        # se prueba el siguiente hasta agotarlos.
+                        n = await sesion.buscar_pago_proveedor(
+                            id_prov, prov, str(folio))
+                        if n > 0:
+                            ok = await sesion.adjuntar_comprobante_en_resultado(
+                                ruta, importe=fila.get("monto"))
+                            if ok:
+                                subido = True
+                                break
+                    if subido:
+                        self._subidos.add(idf)
+                    else:
+                        self._subida_errores.append(
+                            f"{prov}: no se encontró/subió el comprobante.")
+                except RpaDetenido:
+                    raise
+                except Exception as exc:  # noqa: BLE001 — un fallo no aborta el resto
+                    self._subida_errores.append(f"{prov}: {exc}")
+
+        self._sub_future = self.bucle.enviar(flujo())
+        try:
+            await asyncio.wrap_future(self._sub_future)
+        finally:
+            self._sub_future = None
+            if not self.MANTENER_NAVEGADOR_PRUEBAS:
+                await self._detener_rpa()   # cierre obligatorio del navegador
+
     async def _ejecutar_dispersion(self) -> None:
         """Operación REAL del RPA de dispersión: abre el navegador, inicia sesión y,
         por cada empresa+moneda VÁLIDA del payload conciliado, registra la dispersión
@@ -1885,7 +2235,14 @@ class SeccionDispersionNoPemex:
         self._disp_carpeta_txt = None
         self._pesos_generados = []
         self._tipo_cambio = None
+        self._tc_fecha = None
         self._pesos_error = None
+        self._comprobantes = {}
+        self._comprobantes_leidos = []
+        # Nueva dispersión: se reinicia el estado de la subida de comprobantes.
+        self._subidos = set()
+        self._subida_errores = []
+        self._resumen_modo = "normal"
         self._ref_dom_por_grupo = {}  # {grupo: {proveedor: referencia_DOM}}
         # (self._pesos_por_grupo y self._clabe_pesos_por_grupo se fijan en
         # _generar_dispersiones y se conservan para el TXT en pesos.)
@@ -1949,15 +2306,14 @@ class SeccionDispersionNoPemex:
                         par: ref for par, ref in referencias_dom.items() if ref}
                 # 6) Guardar y capturar el folio nuevo generado (obj. 8).
                 folio = await sesion.guardar_dispersion()
-                monto = sum((m.saldo_programado or 0) for m in emp.movimientos)
-                moneda = emp.movimientos[0].moneda if emp.movimientos else ""
                 # Se registra en cuanto guardar_dispersion REGRESA (la dispersión ya
-                # quedó guardada en SIPP). 'clave' = empresa+moneda: identifica la
-                # combinación dispersada para el barrido posterior de la tabla.
-                self._folios_dispersados.append({
-                    "folio": folio, "empresa": empresa, "clave": emp.empresa,
-                    "moneda": moneda, "cuenta_origen": cuenta_origen or "",
-                    "monto": monto})
+                # quedó guardada en SIPP). El folio se DESGLOSA en una fila por
+                # (proveedor, cuenta beneficiaria): es el mismo desglose en que el
+                # sistema separa la dispersión al marcarla como pagada (n movimientos,
+                # uno por proveedor + cuenta beneficiario).
+                self._folios_dispersados.extend(
+                    self._filas_resumen_de_empresa(
+                        emp, folio, empresa, cuenta_origen or ""))
             # 7) Descargar los TXT (layouts) de las dispersiones generadas.
             await self._descargar_txts_dispersion(sesion)
             # 8) Generar los TXT en PESOS (proveedores marcados en tablas USD).
@@ -2005,7 +2361,17 @@ class SeccionDispersionNoPemex:
         día y guarda el resultado para el resumen. Resistente: si algo falla, deja el
         resultado vacío y la operación se considera terminada igual (las dispersiones
         ya quedaron guardadas)."""
-        folios = [d for d in self._folios_dispersados if d.get("folio") is not None]
+        # El layout (TXT) es por DISPERSIÓN (folio), no por movimiento: como ahora
+        # _folios_dispersados trae varias filas por folio (una por proveedor+cuenta),
+        # se deduplica por folio para descargar cada layout una sola vez.
+        vistos: set = set()
+        folios = []
+        for d in self._folios_dispersados:
+            f = d.get("folio")
+            if f is None or f in vistos:
+                continue
+            vistos.add(f)
+            folios.append(d)
         if not folios:
             return
         self._disp_estado_seguro("Descargando archivos de dispersión…", VERDE)
@@ -2048,11 +2414,12 @@ class SeccionDispersionNoPemex:
         if not pendientes:
             return
         try:
-            tc = tipo_cambio.tipo_cambio_usd()
+            tc = tipo_cambio.tipo_cambio_usd()  # siempre con la fecha de ayer
         except Exception as exc:  # noqa: BLE001 — se reporta en el resumen
             self._pesos_error = str(exc)
             return
         self._tipo_cambio = tc
+        self._tc_fecha = _fecha_ayer_texto()
         carpeta = self._disp_carpeta_txt or self._carpeta_txt_dispersion()
         os.makedirs(carpeta, exist_ok=True)
         for clave in pendientes:
@@ -2135,6 +2502,51 @@ class SeccionDispersionNoPemex:
                   d.get("cuenta_origen") or ""]
         return " ".join(p.strip() for p in partes if p and p.strip())
 
+    @staticmethod
+    def _filas_resumen_de_empresa(
+        emp, folio, empresa: str, cuenta_origen: str,
+    ) -> list[dict]:
+        """Desglosa una dispersión (empresa+moneda) en filas de resumen, UNA por
+        (proveedor, cuenta beneficiaria) —el mismo corte en que el sistema separa la
+        dispersión al marcarla como pagada—. Cada fila agrega el Saldo Programado del
+        par y conserva, OCULTOS (no se muestran en la tabla), los nu_FolioDocumento de
+        sus solicitudes y la CLABE interbancaria del beneficiario, para validaciones y
+        la vinculación de comprobantes."""
+        moneda = emp.movimientos[0].moneda if emp.movimientos else ""
+        grupos: dict[tuple, list] = {}
+        orden: list[tuple] = []
+        for m in emp.movimientos:
+            par = (m.proveedor, m.cuenta_bancaria)
+            if par not in grupos:
+                grupos[par] = []
+                orden.append(par)
+            grupos[par].append(m)
+        filas: list[dict] = []
+        for par in orden:
+            prov, cuenta = par
+            movs = grupos[par]
+            folios_doc = [m.folio_documento for m in movs if m.folio_documento]
+            beneficiarios = [
+                (m.clabe_interbancaria_proveedor or m.cuenta_bancaria)
+                for m in movs
+                if (m.clabe_interbancaria_proveedor or m.cuenta_bancaria)]
+            # id del proveedor (de la API): se usa para el select "id - nombre" del
+            # RPA de subida de comprobantes (tab Proveedores No Pemex).
+            id_prov = next(
+                (m.id_proveedor for m in movs if m.id_proveedor is not None), None)
+            filas.append({
+                "folio": folio, "empresa": empresa, "clave": emp.empresa,
+                "moneda": moneda, "cuenta_origen": cuenta_origen,
+                "proveedor": prov, "cuenta_destino": cuenta, "par": par,
+                "monto": sum((m.saldo_programado or 0) for m in movs),
+                # --- Ocultos (no se muestran; validaciones/vinculación) ------------
+                "id_proveedor": id_prov,
+                "folio_documento": folios_doc[0] if folios_doc else "",
+                "folios_documento": folios_doc,
+                "beneficiarios": beneficiarios,
+            })
+        return filas
+
     def _disp_en_ui(self, fn) -> None:
         """Ejecuta `fn` en el loop de la UI. El flujo del RPA corre en otro hilo, así
         que las actualizaciones de Flet se marshalan con call_soon_threadsafe."""
@@ -2162,140 +2574,876 @@ class SeccionDispersionNoPemex:
             self._disp_refrescar_controles()
         self._disp_en_ui(aplicar)
 
-    @staticmethod
-    def _celda_resumen(texto, ancho, derecha=False, bold=False):
-        return ft.DataCell(ft.Container(
-            ft.Text(str(texto or ""), size=12,
-                    weight=ft.FontWeight.BOLD if bold else None,
-                    text_align=ft.TextAlign.RIGHT if derecha else ft.TextAlign.LEFT,
-                    max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
-                    width=ancho),
-            width=ancho, alignment=_DER if derecha else _IZQ))
+    # Ancho del contenido del modal de resumen (para dimensionar las tablas).
+    _RESUMEN_ANCHO = 880
 
-    def _tabla_resumen_mxn(self, folios: list[dict]) -> ft.Control:
-        """Tabla de dispersiones en MXN: Folio | Empresa | Total MXN, con total."""
-        c = self._celda_resumen
-        W_FOL, W_EMP, W_MON = 70, 250, 150
-        filas, total = [], 0.0
-        for d in folios:
-            total += d.get("monto") or 0
-            filas.append(ft.DataRow(cells=[
-                c(d.get("folio") if d.get("folio") is not None else "—", W_FOL),
-                c(d.get("empresa"), W_EMP),
-                c(_fmt_moneda(d.get("monto")), W_MON, derecha=True)]))
-        filas.append(ft.DataRow(cells=[
-            c("", W_FOL), c("TOTAL", W_EMP, bold=True),
-            c(_fmt_moneda(total), W_MON, derecha=True, bold=True)]))
-        return ft.DataTable(
-            columns=[
-                ft.DataColumn(label=encabezado_col("Folio", W_FOL)),
-                ft.DataColumn(label=encabezado_col("Empresa", W_EMP)),
-                ft.DataColumn(label=encabezado_col("Total MXN", W_MON), numeric=True)],
-            rows=filas, column_spacing=10, horizontal_margin=8, heading_row_height=34,
-            data_row_min_height=30, data_row_max_height=30,
-            border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT), border_radius=8)
+    def _cols_resumen(self, categoria: str) -> list[ColumnaTabla]:
+        """Columnas (porcentuales) del resumen según la categoría de moneda. El corte
+        es por Empresa · Cuenta origen · Proveedor · Cuenta destino (una fila por
+        proveedor+cuenta, como el sistema separa la dispersión al pagarla). La última
+        columna es 'Acciones'; 'usd_pesos' añade además 'Total MXN'. El Proveedor va a
+        la izquierda (nombres largos), los montos a la derecha y el resto centrado.
 
-    def _tabla_resumen_usd(
-        self, folios: list[dict], pesos_por_clave: dict) -> ft.Control:
-        """Tabla de dispersiones en USD: Folio | Empresa | Total USD | Total MXN.
-        El Total MXN es el importe convertido de los proveedores pagados en pesos de
-        esa dispersión; 'N/A' si esa dispersión no tuvo pago en pesos. Con totales."""
-        c = self._celda_resumen
-        W_FOL, W_EMP, W_USD, W_MXN = 60, 190, 115, 115
-        filas, tot_usd, tot_mxn = [], 0.0, 0.0
+        Los porcentajes suman 99 (no 100) a propósito: así el ancho total queda
+        justo por debajo del disponible y no aparece un scroll horizontal por el
+        redondeo px + los gaps entre columnas (mismo criterio que _COLS_PCT)."""
+        pesos = categoria == "usd_pesos"
+        total_lbl = "Total MXN" if categoria == "mxn" else "Total USD"
+        cols = [
+            ColumnaTabla("Empresa", 13 if pesos else 16, CENTRO),
+            ColumnaTabla("Cuenta origen", 15 if pesos else 18, CENTRO),
+            ColumnaTabla("Proveedor", 17 if pesos else 20, _TIZQ),
+            ColumnaTabla("Cuenta destino", 16 if pesos else 18, CENTRO),
+            ColumnaTabla(total_lbl, 11 if pesos else 12, _TDER),
+        ]
+        if pesos:
+            cols.append(ColumnaTabla("Total MXN", 12, _TDER))
+        cols.append(ColumnaTabla("Acciones", 15, CENTRO))
+        return cols
+
+    def _acciones_resumen(self, d: dict, categoria: str) -> ft.Control:
+        """Botones de acción de una fila del resumen, según `self._resumen_modo`:
+        - 'exito': solo VER (si hay comprobante); sin edición.
+        - 'errores': movimiento SUBIDO (en _subidos) → solo VER; PENDIENTE → Agregar/
+          Editar para adjuntar y reintentar.
+        - 'normal': sin comprobante → Agregar (+); con comprobante → VER + EDITAR.
+        Agregar/Editar nunca coexisten. En 'usd_pesos' (modos normal/errores) se añade el
+        botón de regenerar el TXT en pesos."""
+        modo = self._resumen_modo
+        idf = self._id_fila(d)
+        tiene = bool(self._comprobantes.get(idf))
+        subido = idf in self._subidos
+        botones: list[ft.Control] = []
+
+        def ver() -> ft.Control:
+            return ft.IconButton(
+                ft.Icons.VISIBILITY, icon_size=18, tooltip="Ver comprobante",
+                on_click=lambda _e, dd=d: self._ver_comprobante(dd))
+
+        def editar(icono, tooltip) -> ft.Control:
+            return ft.IconButton(
+                icono, icon_size=18, tooltip=tooltip,
+                on_click=lambda _e, dd=d: self.page.run_task(
+                    self._vincular_comprobante_individual, dd))
+
+        if modo == "exito":
+            # Operación terminada con éxito: solo consulta.
+            if tiene:
+                botones.append(ver())
+            return ft.Row(botones, spacing=0, tight=True,
+                          alignment=ft.MainAxisAlignment.CENTER)
+        if modo == "errores" and subido:
+            # Ya subido: solo se puede ver el comprobante.
+            botones.append(ver())
+            return ft.Row(botones, spacing=0, tight=True,
+                          alignment=ft.MainAxisAlignment.CENTER)
+
+        # Modo normal, o pendiente en modo errores: se puede adjuntar/editar.
+        if tiene:
+            botones.append(ver())
+            botones.append(editar(ft.Icons.EDIT, "Modificar comprobante"))
+        else:
+            botones.append(editar(ft.Icons.ADD, "Agregar comprobante"))
+        if categoria == "usd_pesos":
+            botones.append(ft.IconButton(
+                ft.Icons.AUTORENEW, icon_size=18, tooltip="Regenerar TXT en pesos",
+                on_click=lambda _e, dd=d: self._dialogo_regenerar_txt(dd)))
+        return ft.Row(botones, spacing=0, tight=True,
+                      alignment=ft.MainAxisAlignment.CENTER)
+
+    def _tabla_resumen(self, folios: list[dict], categoria: str,
+                       ancho: float) -> ft.Control:
+        """Tabla de resumen (TablaResponsiva, columnas porcentuales) para una
+        categoría de moneda, con su fila TOTAL y la columna de acciones. Una fila por
+        (proveedor, cuenta destino)."""
+        tabla = TablaResponsiva(
+            self.page, self._cols_resumen(categoria),
+            ancho_inicial=ancho, alto_fila=46)
+
+        def negrita(texto: str) -> ft.Control:
+            return ft.Text(str(texto or ""), size=12, weight=ft.FontWeight.BOLD,
+                           max_lines=1, no_wrap=True,
+                           overflow=ft.TextOverflow.ELLIPSIS)
+
+        filas: list[FilaDatos] = []
+        tot_prin, tot_mxn = 0.0, 0.0
         for d in folios:
-            tot_usd += d.get("monto") or 0
-            mxn = pesos_por_clave.get(d.get("clave"))
-            if mxn is not None:
-                tot_mxn += mxn
-            filas.append(ft.DataRow(cells=[
-                c(d.get("folio") if d.get("folio") is not None else "—", W_FOL),
-                c(d.get("empresa"), W_EMP),
-                c(_fmt_moneda(d.get("monto")), W_USD, derecha=True),
-                c(_fmt_moneda(mxn) if mxn is not None else "N/A", W_MXN, derecha=True)]))
-        filas.append(ft.DataRow(cells=[
-            c("", W_FOL), c("TOTAL", W_EMP, bold=True),
-            c(_fmt_moneda(tot_usd), W_USD, derecha=True, bold=True),
-            c(_fmt_moneda(tot_mxn) if tot_mxn else "N/A", W_MXN, derecha=True, bold=True)]))
-        return ft.DataTable(
-            columns=[
-                ft.DataColumn(label=encabezado_col("Folio", W_FOL)),
-                ft.DataColumn(label=encabezado_col("Empresa", W_EMP)),
-                ft.DataColumn(label=encabezado_col("Total USD", W_USD), numeric=True),
-                ft.DataColumn(label=encabezado_col("Total MXN", W_MXN), numeric=True)],
-            rows=filas, column_spacing=10, horizontal_margin=8, heading_row_height=34,
-            data_row_min_height=30, data_row_max_height=30,
-            border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT), border_radius=8)
+            monto = d.get("monto") or 0
+            tot_prin += monto
+            celdas: list = [
+                d.get("empresa") or "",
+                d.get("cuenta_origen") or "—",
+                d.get("proveedor") or "—",
+                self._cuenta_destino_mostrar(d, categoria) or "—",
+                _fmt_moneda(monto),
+            ]
+            if categoria == "usd_pesos":
+                mxn = self._monto_mxn_fila(d)
+                if mxn is not None:
+                    tot_mxn += mxn
+                celdas.append(_fmt_moneda(mxn) if mxn is not None else "N/A")
+            celdas.append(self._acciones_resumen(d, categoria))
+            # En modo 'errores', las filas NO subidas (pendientes) se resaltan en
+            # amarillo para que el usuario adjunte/reintente su comprobante.
+            pendiente = (self._resumen_modo == "errores"
+                         and self._id_fila(d) not in self._subidos)
+            filas.append(FilaDatos(
+                celdas, bgcolor=_AMARILLO_PENDIENTE if pendiente else None))
+        # Fila TOTAL (en negrita; celdas de texto para poder resaltarlas). Las celdas
+        # vacías corresponden a Cuenta origen, Proveedor y Cuenta destino.
+        total_celdas: list = [
+            negrita("TOTAL"), "", "", "", negrita(_fmt_moneda(tot_prin))]
+        if categoria == "usd_pesos":
+            total_celdas.append(negrita(_fmt_moneda(tot_mxn) if tot_mxn else "N/A"))
+        total_celdas.append("")
+        filas.append(FilaDatos(total_celdas))
+        tabla.set_contenido(filas)
+        return tabla.control
+
+    def _cuenta_destino_mostrar(self, d: dict, categoria: str) -> str:
+        """Cuenta destino a mostrar en el resumen: la cuenta beneficiaria del
+        proveedor y, en 'USD pago en MXN', la Cuenta Origen EN PESOS seleccionada para
+        ese par (la cuenta a la que se hace el pago en pesos)."""
+        if categoria == "usd_pesos":
+            clave, par = d.get("clave") or "", d.get("par")
+            cuenta = (self._cuenta_pesos_por_grupo.get(clave, {}).get(par)
+                      or self._clabe_pesos_por_grupo.get(clave, {}).get(par))
+            if cuenta:
+                return cuenta
+        return d.get("cuenta_destino") or ""
+
+    def _monto_mxn_fila(self, d: dict) -> float | None:
+        """Equivalente en MXN del Saldo Programado (USD) del par: USD × T.C. del DOF
+        (redondeado a 2, como el TXT en pesos). None si aún no hay T.C."""
+        tc = self._tipo_cambio
+        if not tc:
+            return None
+        return round((d.get("monto") or 0) * tc, 2)
 
     def _mostrar_resumen_dispersion(self) -> None:
-        """Resumen final: dos tablas (MXN y USD) que solo se muestran si tienen
-        movimientos, con su total por moneda; el título de USD incluye el tipo de
-        cambio cuando hubo pagos en pesos, y la tabla USD trae Total USD y Total MXN.
-        Abajo, cuántos TXT se descargaron/generaron y un botón para abrir la carpeta."""
+        """Resumen final: hasta tres tablas (MXN, USD y USD pago en MXN) —solo las
+        que tengan movimientos— con su total y una columna de acciones; una leyenda
+        consolidada de dispersiones/archivos; un botón para cargar comprobantes; y
+        los botones de continuar/terminar la operación."""
         folios = self._folios_dispersados
         resultados = self._disp_resultados_txt or []
         carpeta = self._disp_carpeta_txt
         pesos_gen = self._pesos_generados or []
         descargados = sum(1 for r in resultados if r.get("ok"))
-        no_descargados = len(folios) - descargados
+        # Las DISPERSIONES se cuentan por folio único (cada folio son varias filas, una
+        # por proveedor+cuenta); los archivos (layouts) también son por folio.
+        n_dispersiones = len(
+            {d.get("folio") for d in folios if d.get("folio") is not None})
+        no_descargados = n_dispersiones - descargados
         hay_carpeta = bool(
             carpeta and os.path.isdir(carpeta) and (descargados or pesos_gen))
-
-        # Importe en pesos (convertido) por combinación empresa+moneda dispersada.
-        pesos_por_clave = {
-            p.get("empresa"): p.get("total_pesos") for p in pesos_gen}
-        usd = [d for d in folios if (d.get("moneda") or "").upper() == "USD"]
-        mxn = [d for d in folios if (d.get("moneda") or "").upper() != "USD"]
         tc = self._tipo_cambio
 
-        cuerpo: list[ft.Control] = [
-            ft.Text(f"Se generaron {len(folios)} dispersión(es).", size=13)]
-        if mxn:
-            cuerpo.append(ft.Text("Dispersiones generadas en MXN", size=13,
-                                  weight=ft.FontWeight.BOLD))
-            cuerpo.append(self._tabla_resumen_mxn(mxn))
-        if usd:
-            titulo = "Dispersiones generadas en USD"
-            if tc:
-                titulo += f" (T.C. {_fmt_tc(tc)} MXN)"
-            cuerpo.append(ft.Text(titulo, size=13, weight=ft.FontWeight.BOLD))
-            cuerpo.append(self._tabla_resumen_usd(usd, pesos_por_clave))
-        cuerpo.append(ft.Divider())
-        cuerpo.append(ft.Text(
-            f"Archivos TXT descargados: {descargados}"
-            + (f"   ·   No descargados: {no_descargados}"
-               if no_descargados > 0 else ""),
-            size=13, weight=ft.FontWeight.BOLD,
-            color=VERDE if no_descargados == 0 else NARANJA))
-        if pesos_gen:
+        # Categorías por moneda, POR FILA (proveedor+cuenta): MXN (0), USD puro (1),
+        # USD pago en MXN (2, solo el par marcado 'pagar en pesos').
+        mxn, usd, usd_pesos = [], [], []
+        for d in folios:
+            rango = self._rango_moneda_fila(d)
+            (mxn if rango == 0 else usd if rango == 1 else usd_pesos).append(d)
+
+        ancho_tabla = self._RESUMEN_ANCHO - 2 * _GUTTER_SCROLL - 24
+
+        # La leyenda consolidada ("Se generaron X…") va en el SUBTÍTULO fijo del modal
+        # (siempre visible, aunque se haga scroll) — ver `titulo` más abajo. Aquí solo
+        # quedan los avisos secundarios de problemas (pueden desplazarse con el cuerpo).
+        cuerpo: list[ft.Control] = []
+        if no_descargados > 0:
             cuerpo.append(ft.Text(
-                f"Archivos TXT en pesos generados: {len(pesos_gen)}",
-                size=12, color=VERDE))
-        elif self._pesos_error:
+                f"Nota: {no_descargados} archivo(s) no se pudieron recuperar.",
+                size=12, color=NARANJA))
+        if self._pesos_error:
             cuerpo.append(ft.Text(
                 f"No se generaron los TXT en pesos: {self._pesos_error}",
                 size=12, color=ROJO))
 
-        acciones: list[ft.Control] = []
-        if hay_carpeta:
-            acciones.append(ft.FilledButton(
-                "Abrir carpeta", icon=ft.Icons.FOLDER_OPEN,
-                on_click=lambda _e: self._abrir_archivo(carpeta)))
-        acciones.append(ft.TextButton(
-            "Cerrar", on_click=lambda _e: self.page.pop_dialog()))
+        def seccion(titulo: str, folios_cat: list[dict], categoria: str) -> None:
+            cuerpo.append(ft.Text(titulo, size=13, weight=ft.FontWeight.BOLD))
+            cuerpo.append(self._tabla_resumen(
+                folios_cat, categoria, ancho_tabla))
 
+        if mxn:
+            seccion("Dispersiones en MXN", mxn, "mxn")
+        if usd:
+            seccion("Dispersiones en USD", usd, "usd")
+        if usd_pesos:
+            titulo = "Dispersiones en USD pago en MXN"
+            if tc:
+                titulo += f" (T.C. {_fmt_tc(tc)} MXN)"
+            seccion(titulo, usd_pesos, "usd_pesos")
+
+        # Título del modal (fijo): 1ª línea con el nombre y el botón de 'Carga de
+        # comprobantes de pago' (+ su ícono de ayuda) a la derecha; 2ª línea con la
+        # leyenda consolidada como SUBTÍTULO, que queda siempre visible aunque se haga
+        # scroll en el cuerpo. El botón abre el selector; la asignación folio↔comprobante
+        # está por definir.
+        # El botón de carga masiva de comprobantes (+ su ícono de ayuda) se OCULTA en
+        # el modo 'exito' (ya se terminó todo; no hay nada que cargar).
+        if self._resumen_modo == "exito":
+            controles_carga: ft.Control = ft.Container()
+        else:
+            controles_carga = ft.Row(
+                [
+                    ft.OutlinedButton(
+                        "Carga de comprobantes de pago",
+                        icon=ft.Icons.UPLOAD_FILE,
+                        on_click=self._cargar_comprobantes),
+                    ft.Icon(
+                        ft.Icons.HELP_OUTLINE, size=18, color=GRIS,
+                        tooltip="Subir los comprobantes generados en el "
+                                "banco tras realizar los pagos.\nEstos se "
+                                "vincularán automáticamente a los movimientos "
+                                "generados."),
+                ],
+                spacing=8, tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        titulo = ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Text("Resumen de la dispersión", weight=ft.FontWeight.BOLD),
+                        controles_carga,
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                self._subtitulo_resumen(n_dispersiones, descargados),
+            ],
+            tight=True, spacing=4)
+
+        # Botones del modal según el modo. En 'exito' solo queda 'Cerrar' (cierra el
+        # resumen y el navegador). En 'normal'/'errores': Abrir carpeta · Terminar ·
+        # Continuar operación.
+        if self._resumen_modo == "exito":
+            acciones: list[ft.Control] = [
+                ft.Container(),
+                ft.FilledButton(
+                    "Cerrar", icon=ft.Icons.CHECK_CIRCLE_OUTLINE,
+                    on_click=lambda _e: self._dialogo_terminar_operacion()),
+            ]
+        else:
+            izquierda: ft.Control = (
+                ft.FilledButton(
+                    "Abrir carpeta", icon=ft.Icons.FOLDER_OPEN,
+                    on_click=lambda _e: self._abrir_archivo(carpeta))
+                if hay_carpeta else ft.Container())
+            grupo_derecha = ft.Row(
+                [
+                    ft.OutlinedButton(
+                        "Terminar operación", icon=ft.Icons.STOP_CIRCLE_OUTLINED,
+                        on_click=lambda _e: self._dialogo_terminar_operacion()),
+                    ft.FilledButton(
+                        "Continuar operación", icon=ft.Icons.PLAY_ARROW,
+                        on_click=lambda _e: self._dialogo_continuar_operacion()),
+                ],
+                spacing=10, tight=True)
+            acciones = [izquierda, grupo_derecha]
+
+        # El contenido va con padding derecho para la barra de scroll vertical.
+        contenido = ft.Container(
+            content=ft.Column(
+                [ft.Container(
+                    ft.Column(cuerpo, tight=True, spacing=10),
+                    padding=ft.Padding.only(right=_GUTTER_SCROLL))],
+                tight=True, scroll=ft.ScrollMode.AUTO),
+            width=self._RESUMEN_ANCHO, height=560)
+
+        # Si ya hay un resumen ABIERTO, se ACTUALIZA EN SITIO (título/contenido/botones)
+        # en vez de cerrar+reabrir: así no se apilan diálogos de resumen (cerrar+mostrar
+        # dejaba el viejo montado debajo, porque Flet solo desmonta el de más arriba).
+        dlg = self._dlg_resumen
+        if dlg is not None and getattr(dlg, "open", False):
+            dlg.title = titulo
+            dlg.content = contenido
+            dlg.actions = acciones
+            dlg.update()
+            return
         dlg = ft.AlertDialog(
             modal=True,
-            title=ft.Text("Resumen de la dispersión", weight=ft.FontWeight.BOLD),
-            content=ft.Container(
-                content=ft.Column(cuerpo, tight=True, spacing=10,
-                                  scroll=ft.ScrollMode.AUTO),
-                width=560, height=500),
+            title=titulo,
+            content=contenido,
             actions=acciones,
-            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN if hay_carpeta
-            else ft.MainAxisAlignment.END,
+            actions_alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+            on_dismiss=self._resumen_on_dismiss,
         )
+        self._dlg_resumen = dlg
         self.page.show_dialog(dlg)
+
+    def _resumen_on_dismiss(self, _e=None) -> None:
+        """Se dispara cuando Flutter confirma el cierre del resumen. Ejecuta el
+        callback pendiente (encadenado tras cerrar la confirmación), si lo hay."""
+        cb = self._resumen_al_cerrar
+        self._resumen_al_cerrar = None
+        if self._dlg_resumen is not None and not self._dlg_resumen.open:
+            self._dlg_resumen = None
+        if cb is not None:
+            cb()
+
+    def _cerrar_resumen_luego(self, despues=None) -> None:
+        """Cierra el resumen y ejecuta `despues` CUANDO Flutter confirme su cierre. Se
+        usa desde el on_dismiss de la confirmación (ahí el resumen ya es el diálogo de
+        más arriba y sí se puede desmontar)."""
+        dlg = self._dlg_resumen
+        if dlg is None or not getattr(dlg, "open", False):
+            if despues is not None:
+                despues()
+            return
+        self._resumen_al_cerrar = despues
+        dlg.open = False
+        dlg.update()
+
+    def _subtitulo_resumen(self, n_dispersiones: int, descargados: int) -> ft.Control:
+        """Subtítulo fijo del resumen según `self._resumen_modo`:
+        - 'exito'  → "La dispersión se ha realizado con éxito" (VERDE).
+        - 'errores'→ "Ocurrieron errores al subir los comprobantes" (NARANJA).
+        - 'normal' → leyenda de dispersiones/archivos generados (GRIS)."""
+        if self._resumen_modo == "exito":
+            return ft.Text("La dispersión se ha realizado con éxito",
+                           size=13, weight=ft.FontWeight.BOLD, color=VERDE)
+        if self._resumen_modo == "errores":
+            return ft.Text("Ocurrieron errores al subir los comprobantes",
+                           size=13, weight=ft.FontWeight.BOLD, color=NARANJA)
+        return ft.Text(
+            f"Se generaron {n_dispersiones} dispersiones y se recuperaron "
+            f"{descargados} archivos.",
+            size=13, weight=ft.FontWeight.W_500, color=GRIS)
+
+    # -------------------------------------- acciones del resumen
+    @staticmethod
+    def _id_fila(d: dict) -> str:
+        """Clave estable de una fila del resumen: folio + proveedor + cuenta destino.
+        Identifica el MOVIMIENTO al que se vincula un comprobante, ya que un folio se
+        abre en varias filas (una por proveedor + cuenta beneficiaria) y no puede
+        distinguirse solo por el folio."""
+        prov, cuenta = d.get("par") or (d.get("proveedor"), d.get("cuenta_destino"))
+        return f"{d.get('folio')}‖{prov}‖{cuenta}"
+
+    def _ver_comprobante(self, d: dict) -> None:
+        """Abre el comprobante vinculado a una fila del resumen (si hay)."""
+        ruta = self._comprobantes.get(self._id_fila(d))
+        if not ruta:
+            self.app.avisar(
+                "Este movimiento aún no tiene un comprobante vinculado.", NARANJA)
+        elif os.path.exists(ruta):
+            self._abrir_archivo(ruta)
+        else:
+            self.app.avisar(
+                "El comprobante está vinculado, pero no se encontró el archivo de "
+                "origen en disco.", NARANJA)
+
+    # ------------------------------------ vinculación comprobante ↔ dispersión
+    def _objetivo_vinculacion(self, fila: dict) -> dict:
+        """Datos normalizados de UNA fila del resumen (par proveedor+cuenta) para casar
+        un comprobante. ABSTRAÍDO para reutilizarlo también en la vinculación masiva:
+          - `origenes`: cuenta(s) origen. En 'USD pago en MXN' es la cuenta origen EN
+            PESOS elegida para ese par; si no, la cuenta origen de la dispersión.
+          - `beneficiarios`: CLABE(s) interbancaria(s) del proveedor de la fila.
+          - `total`: total a casar. En 'USD pago en MXN' es el total EN MXN del par
+            (Saldo Programado USD × T.C.).
+        """
+        clave = fila.get("clave") or ""
+        par = fila.get("par")
+        es_pesos = bool(par) and par in self._pesos_por_grupo.get(clave, set())
+        beneficiarios = set(fila.get("beneficiarios") or [])
+        if not beneficiarios and fila.get("cuenta_destino"):
+            beneficiarios = {fila["cuenta_destino"]}
+        if es_pesos:
+            # Cuenta origen EN PESOS del par (1.1) y total EN MXN (3.1).
+            origenes = set()
+            cta = self._cuenta_pesos_por_grupo.get(clave, {}).get(par)
+            clabe = self._clabe_pesos_por_grupo.get(clave, {}).get(par)
+            origenes.update(o for o in (cta, clabe) if o)
+            total = round((fila.get("monto") or 0) * (self._tipo_cambio or 0), 2)
+        else:
+            origenes = {fila.get("cuenta_origen") or ""}
+            total = fila.get("monto") or 0
+        return {
+            "origenes": {o for o in origenes if o},
+            "beneficiarios": {b for b in beneficiarios if b},
+            "total": float(total or 0),
+            "es_pesos": es_pesos,
+        }
+
+    def _comprobante_coincide(self, comprobante: dict, folio_dict: dict) -> dict:
+        """Evalúa las 3 reglas de vinculación de un comprobante (dict de la respuesta
+        del extractor) contra una dispersión (folio). REUTILIZABLE para carga
+        individual y masiva. Devuelve {'origen','beneficiario','total','coincide'}
+        (bools); 'coincide' = las tres reglas se cumplen.
+
+        Las cuentas del comprobante vienen enmascaradas (p. ej. '*0012'), así que la
+        comparación es por los ÚLTIMOS dígitos: cuenta origen (regla 1) y CLABE
+        interbancaria del beneficiario vs cuenta destino (regla 2). El total (regla 3)
+        se compara con tolerancia de centavos."""
+        obj = self._objetivo_vinculacion(folio_dict)
+        origen_comp = _ultimos_digitos(comprobante.get("cuenta_origen"))
+        origen_ok = bool(origen_comp) and any(
+            _ultimos_digitos(o) == origen_comp for o in obj["origenes"])
+        destino_comp = _ultimos_digitos(comprobante.get("cuenta_destino"))
+        benef_ok = bool(destino_comp) and any(
+            _ultimos_digitos(b) == destino_comp for b in obj["beneficiarios"])
+        importe = comprobante.get("importe")
+        total_ok = importe is not None and abs(
+            float(importe) - obj["total"]) < 0.01
+        return {
+            "origen": origen_ok, "beneficiario": benef_ok, "total": total_ok,
+            "coincide": origen_ok and benef_ok and total_ok,
+        }
+
+    async def _vincular_comprobante_individual(self, fila: dict) -> None:
+        """Carga INDIVIDUAL: pide UN PDF, lo lee en el extractor, valida las reglas
+        contra ESTE movimiento (par proveedor+cuenta) y lo vincula. Si no coincide del
+        todo, pide confirmación antes de adjuntar (regla 4)."""
+        archivos = await self.app.picker.pick_files(
+            dialog_title="Selecciona el comprobante (PDF)",
+            allowed_extensions=["pdf"], allow_multiple=False)
+        if not archivos:
+            return
+        ruta = archivos[0].path
+        if not ajustes_api.base_url_extractor():
+            self.app.avisar(
+                "Configura la URL de la API extractor en Configuración.", NARANJA)
+            return
+        # Lee el PDF en el extractor (con un spinner mientras responde).
+        spinner = ft.AlertDialog(
+            modal=True,
+            content=ft.Column(
+                [ft.ProgressRing(width=32, height=32, stroke_width=3),
+                 ft.Text("Leyendo comprobante…", size=14)],
+                spacing=16, tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+        self.page.show_dialog(spinner)
+        self._disp_update()
+        error = None
+        resp = None
+        try:
+            resp = await asyncio.to_thread(api.leer_comprobantes_pagos, [ruta])
+        except api.ErrorApi as exc:
+            error = str(exc)
+        finally:
+            self.page.pop_dialog()  # spinner
+        if error:
+            self.app.avisar(f"No se pudo leer el comprobante: {error}", ROJO)
+            return
+        comprobantes = ((resp or {}).get("data") or {}).get("comprobantes") or []
+        if not comprobantes:
+            self.app.avisar("El comprobante no devolvió datos legibles.", NARANJA)
+            return
+        # Coincide si ALGÚN comprobante leído del PDF casa con el movimiento.
+        coincide = any(
+            self._comprobante_coincide(c, fila).get("coincide")
+            for c in comprobantes)
+        if coincide:
+            self._adjuntar_comprobante(fila, ruta)
+            return
+        # Regla 4: no coincide del todo -> confirmar antes de adjuntar.
+        def aceptar(_e=None) -> None:
+            self.page.pop_dialog()  # confirmación
+            self._adjuntar_comprobante(fila, ruta)
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Comprobante no coincide", weight=ft.FontWeight.BOLD),
+            content=ft.Text(
+                "Se detectó que el comprobante no coincide totalmente con el "
+                "movimiento.\n¿Adjuntar de todas formas?"),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _e: self.page.pop_dialog()),
+                ft.FilledButton("Adjuntar", on_click=aceptar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
+
+    def _adjuntar_comprobante(self, fila: dict, ruta: str) -> None:
+        """Vincula el archivo `ruta` a ESE movimiento (fila del resumen) y refresca el
+        resumen (los íconos de la columna 'Acciones' pasan a Ver/Editar)."""
+        self._comprobantes[self._id_fila(fila)] = ruta
+        # Re-render EN SITIO del resumen (no cerrar+reabrir: evita apilar diálogos).
+        self._mostrar_resumen_dispersion()
+        prov = fila.get("proveedor") or f"folio {fila.get('folio')}"
+        self.app.avisar(f"Comprobante vinculado a {prov}.", VERDE)
+
+    async def _cargar_comprobantes(self, _e=None) -> None:
+        """Sube al extractor los PDFs de comprobantes elegidos por el usuario, en
+        LOTES de 10, mostrando una barra de progreso ((lotes_procesados/total)*100).
+        Acumula los comprobantes leídos en self._comprobantes_leidos (para la
+        asignación a folios, por definir) y avisa un resumen al terminar."""
+        # 1) Selección de PDFs (multi-archivo).
+        archivos = await self.app.picker.pick_files(
+            dialog_title="Selecciona los comprobantes de pago (PDF)",
+            allowed_extensions=["pdf"], allow_multiple=True)
+        if not archivos:
+            return
+        rutas = [a.path for a in archivos]
+        # 2) La API extractor debe estar configurada (URL). Si no, se avisa.
+        if not ajustes_api.base_url_extractor():
+            self.app.avisar(
+                "Configura la URL de la API extractor en Configuración.", NARANJA)
+            return
+        # 3) Lotes de 10 archivos.
+        _TAM_LOTE = 10
+        lotes = [rutas[i:i + _TAM_LOTE] for i in range(0, len(rutas), _TAM_LOTE)]
+        total = len(lotes)
+
+        # 4) Modal con barra de progreso. El ProgressRing es INDETERMINADO: gira de
+        # forma continua en el cliente (Flutter) aunque un lote tarde, para que el
+        # usuario vea siempre actividad y no crea que la app se congeló; la
+        # ProgressBar (determinada) muestra el avance por lotes.
+        anillo = ft.ProgressRing(width=34, height=34, stroke_width=4)
+        barra = ft.ProgressBar(value=0, width=360, bar_height=14)
+        texto = ft.Text(f"Procesando lote 0 de {total}… (0%)", size=13, color=GRIS)
+        dlg = ft.AlertDialog(
+            modal=True,
+            content=ft.Column(
+                [anillo,
+                 ft.Text("Leyendo comprobantes…", size=20,
+                         weight=ft.FontWeight.BOLD, text_align=ft.TextAlign.CENTER),
+                 texto, barra],
+                spacing=16, tight=True,
+                horizontal_alignment=ft.CrossAxisAlignment.CENTER))
+        self.page.show_dialog(dlg)
+        self._disp_update()
+
+        # 5) Subida por lotes; tras cada await se refresca el progreso.
+        comprobantes: list[dict] = []
+        fallidos: list = []
+        errores: list[str] = []
+        try:
+            for i, lote in enumerate(lotes, start=1):
+                try:
+                    resp = await asyncio.to_thread(
+                        api.leer_comprobantes_pagos, lote)
+                    data = (resp or {}).get("data") or {}
+                    comprobantes.extend(data.get("comprobantes") or [])
+                    fallidos.extend((resp or {}).get("failedResults") or [])
+                except api.ErrorApi as exc:
+                    errores.append(str(exc))
+                barra.value = i / total
+                texto.value = (
+                    f"Procesando lote {i} de {total}… ({int(i / total * 100)}%)")
+                self._disp_update()
+        finally:
+            self.page.pop_dialog()
+
+        # 6) Guarda lo leído.
+        self._comprobantes_leidos = comprobantes
+        n_ok = len(comprobantes)
+        n_fallidos = len(fallidos)
+
+        # 7) Vinculación MASIVA: asigna cada comprobante a la dispersión (fila) que le
+        # corresponde, con las MISMAS reglas del alta individual (origen + beneficiario
+        # + total), pero SIN el diálogo de confirmación (ese es solo para carga
+        # individual). Refresca el resumen si hubo vínculos nuevos.
+        n_vinc, n_sin_disp, n_sin_arch = self._vincular_comprobantes_masivo(
+            comprobantes, rutas)
+        if n_vinc:
+            self._refrescar_resumen_dispersion()
+
+        # 8) Resumen del resultado (lectura + vinculación).
+        detalle = []
+        if n_vinc:
+            detalle.append(f"{n_vinc} vinculado(s)"
+                           + (f", {n_sin_arch} sin archivo" if n_sin_arch else ""))
+        if n_sin_disp:
+            detalle.append(f"{n_sin_disp} sin dispersión que coincida")
+        vinc_txt = ("Vinculación: " + "; ".join(detalle) + "."
+                    if detalle else "Ningún comprobante coincidió con una dispersión.")
+        if errores:
+            self.app.avisar(
+                f"Se leyeron {n_ok} comprobante(s); {len(errores)} lote(s) "
+                f"fallaron: {errores[0]}. {vinc_txt}", ROJO)
+        elif n_fallidos:
+            self.app.avisar(
+                f"Se leyeron {n_ok} comprobante(s); {n_fallidos} ilegible(s). "
+                f"{vinc_txt}", NARANJA)
+        elif n_ok:
+            color = VERDE if n_vinc and not n_sin_disp else NARANJA
+            self.app.avisar(
+                f"Se leyeron {n_ok} comprobante(s). {vinc_txt}", color)
+        else:
+            self.app.avisar("No se leyó ningún comprobante.", NARANJA)
+
+    def _vincular_comprobantes_masivo(
+        self, comprobantes: list[dict], rutas: list[str],
+    ) -> tuple[int, int, int]:
+        """Asigna cada comprobante leído a la fila del resumen (dispersión) que le
+        corresponde, con las MISMAS reglas del alta individual (_comprobante_coincide),
+        SIN el diálogo de confirmación. El archivo de origen se resuelve por el campo
+        'documento_lectura' del comprobante contra los PDFs subidos (nombre exacto y
+        normalizado). Cada fila se vincula a lo sumo con UN comprobante.
+
+        Devuelve (vinculados, sin_dispersion, sin_archivo):
+          - vinculados: comprobantes casados con una fila (incluye los sin_archivo).
+          - sin_dispersion: no casó con ninguna fila.
+          - sin_archivo: casó, pero no se pudo resolver el PDF de origen (se registra el
+            vínculo igual; 'Ver' no podrá abrirlo hasta corregir el nombre en la API)."""
+        filas = self._folios_dispersados or []
+        ruta_exacta = {os.path.basename(r): r for r in rutas}
+        ruta_norm = {_norm_nombre_doc(os.path.basename(r)): r for r in rutas}
+        vinculados = sin_dispersion = sin_archivo = 0
+        ocupadas = set(self._comprobantes)  # filas que ya tienen comprobante
+        for c in comprobantes:
+            fila = next(
+                (f for f in filas
+                 if self._id_fila(f) not in ocupadas
+                 and self._comprobante_coincide(c, f).get("coincide")),
+                None)
+            if fila is None:
+                sin_dispersion += 1
+                continue
+            nombre = (c.get("documento_lectura") or "").strip()
+            ruta = ruta_exacta.get(nombre) or ruta_norm.get(_norm_nombre_doc(nombre))
+            if ruta is None:
+                sin_archivo += 1
+                ruta = nombre or "(archivo no resuelto)"
+            self._comprobantes[self._id_fila(fila)] = ruta
+            ocupadas.add(self._id_fila(fila))
+            vinculados += 1
+        return vinculados, sin_dispersion, sin_archivo
+
+    def _refrescar_resumen_dispersion(self) -> None:
+        """Refresca EN SITIO el modal de resumen para reflejar los comprobantes recién
+        vinculados (íconos de la columna 'Acciones'), sin cerrar+reabrir (no apila)."""
+        self._mostrar_resumen_dispersion()
+
+    def _dialogo_regenerar_txt(self, folio_dict: dict) -> None:
+        """Modal para regenerar los TXT en pesos de una dispersión USD pago en MXN.
+        Como la Cuenta Origen se elige POR PROVEEDOR, muestra una fila por cada par
+        (proveedor · cuenta) con su propio selector de Cuenta Origen (mismas opciones
+        que en 'pagar en pesos') + concepto y referencia editables. Al regenerar,
+        reescribe los TXT (mismo nombre y carpeta que los originales, reemplazándolos:
+        uno por cuenta origen, como en la generación original)."""
+        clave = folio_dict.get("clave") or ""
+        empresa = folio_dict.get("empresa") or ""
+        pares = sorted(self._pesos_por_grupo.get(clave) or set())
+        if not pares:
+            self.app.avisar(
+                "Esta dispersión no tiene proveedores marcados 'pagar en pesos'.",
+                NARANJA)
+            return
+        opciones = self._clabes_de_empresa(empresa)
+        clabes_prev = self._clabe_pesos_por_grupo.get(clave, {})
+        concep_prev = self._concepto_prov_por_grupo.get(clave, {})
+        refs_prev = self._ref_prov_por_grupo.get(clave, {})
+
+        # Un bloque por par (proveedor · cuenta): selector de Cuenta Origen + concepto
+        # + referencia. Se guardan las referencias de los controles por par.
+        controles: dict[tuple, tuple] = {}
+        bloques: list[ft.Control] = []
+        for par in pares:
+            prov, cuenta = par
+            etiqueta = f"{prov} · {cuenta}" if cuenta else str(prov)
+            dd = ft.Dropdown(
+                label="Cuenta Origen (pago en pesos)", width=340,
+                enable_filter=True, editable=True,
+                value=clabes_prev.get(par) or None,
+                options=[ft.dropdown.Option(key=cl, text=cta) for cta, cl in opciones])
+            tfc = ft.TextField(
+                label="Concepto de pago", width=200, value=concep_prev.get(par, ""))
+            tfr = ft.TextField(
+                label="Referencia bancaria", width=200, value=refs_prev.get(par, ""))
+            controles[par] = (dd, tfc, tfr)
+            bloques.append(ft.Column(
+                [ft.Text(etiqueta, size=12, weight=ft.FontWeight.BOLD),
+                 ft.Row([dd, tfc, tfr], spacing=12, wrap=True)],
+                spacing=6, tight=True))
+
+        def regenerar(_e=None) -> None:
+            clabes_par, concep_par, refs_par = {}, {}, {}
+            for par, (dd, tfc, tfr) in controles.items():
+                clabes_par[par] = (dd.value or "").strip()
+                concep_par[par] = (tfc.value or "").strip()
+                refs_par[par] = (tfr.value or "").strip()
+            if not any(clabes_par.values()):
+                self.app.avisar(
+                    "Elige la Cuenta Origen de al menos un proveedor.", NARANJA)
+                return
+            ok, msg = self._regenerar_txt_pesos(
+                folio_dict, clabes_par, concep_par, refs_par)
+            self.page.pop_dialog()
+            self.app.avisar(msg, VERDE if ok else ROJO)
+
+        folio = folio_dict.get("folio")
+        alto = min(460, 70 + 116 * len(pares))
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text(
+                f"Regenerar TXT en pesos — folio {folio}",
+                weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                content=ft.Column(bloques, tight=True, spacing=16,
+                                  scroll=ft.ScrollMode.AUTO),
+                width=800, height=alto),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _e: self.page.pop_dialog()),
+                ft.FilledButton("Regenerar", icon=ft.Icons.AUTORENEW,
+                                on_click=regenerar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
+
+    def _regenerar_txt_pesos(
+        self, folio_dict: dict, clabes_par: dict, conceptos_par: dict,
+        refs_par: dict,
+    ) -> tuple[bool, str]:
+        """Regenera los TXT en pesos de una dispersión (USD pago en MXN) con la Cuenta
+        Origen / concepto / referencia elegidos POR PAR (proveedor · cuenta). Agrupa
+        por cuenta origen y genera UN archivo por cada una (su banco define el
+        formato), igual que la generación original. Reemplaza los TXT previos de esta
+        dispersión (borra los anteriores para no dejar sobrantes si cambió el origen).
+        Devuelve (ok, mensaje)."""
+        clave = folio_dict.get("clave") or ""
+        empresa = folio_dict.get("empresa") or ""
+        conc = self._conc_dispersion
+        emp = next((e for e in conc.validas if e.empresa == clave), None) \
+            if conc is not None else None
+        if emp is None:
+            return False, "No se encontró la información de la dispersión para regenerar."
+        pares = self._pesos_por_grupo.get(clave) or set()
+        if not pares:
+            return False, "Esta dispersión no tiene proveedores marcados 'pagar en pesos'."
+        # Tipo de cambio (siempre el de ayer); reutiliza el ya obtenido si existe.
+        tc = self._tipo_cambio
+        if not tc:
+            try:
+                tc = tipo_cambio.tipo_cambio_usd()
+                self._tipo_cambio = tc
+                self._tc_fecha = _fecha_ayer_texto()
+            except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+                return False, f"No se pudo obtener el tipo de cambio: {exc}"
+        # Texto de cada cuenta origen (define banco/formato del layout).
+        texto_por_clabe = {cl: cta for cta, cl in self._clabes_de_empresa(empresa)}
+        # Agrupa los registros por CUENTA ORIGEN (un archivo por origen), con el
+        # concepto/referencia de cada par.
+        por_origen: dict[str, dict] = {}
+        for par in pares:
+            clabe_origen = (clabes_par.get(par) or "").strip()
+            if not clabe_origen:
+                continue
+            prov, cuenta = par
+            movs = [m for m in emp.movimientos
+                    if m.proveedor == prov and m.cuenta_bancaria == cuenta]
+            usd = sum((m.saldo_programado or 0) for m in movs)
+            pesos = round(usd * tc, 2)
+            concepto = (conceptos_par.get(par) or emp.concepto_pago or "").strip()
+            referencia = (refs_par.get(par) or "").strip()
+            texto = f"{concepto} {referencia}".strip() if referencia else concepto
+            bucket = por_origen.setdefault(clabe_origen, {
+                "cuenta_texto": texto_por_clabe.get(clabe_origen, ""),
+                "registros": [], "total": 0.0})
+            bucket["registros"].append(
+                (re.sub(r"\D", "", cuenta or ""), pesos, prov, texto))
+            bucket["total"] += pesos
+        if not por_origen:
+            return False, "Ningún proveedor tiene Cuenta Origen para regenerar."
+        # Borra los TXT anteriores de esta dispersión (para reemplazarlos y no dejar
+        # sobrantes si cambió alguna cuenta origen).
+        carpeta = self._disp_carpeta_txt or self._carpeta_txt_dispersion()
+        os.makedirs(carpeta, exist_ok=True)
+        for p in [x for x in self._pesos_generados if x.get("empresa") == clave]:
+            try:
+                os.remove(p.get("archivo"))
+            except OSError:
+                pass
+            self._pesos_generados.remove(p)
+        # Un TXT por cada cuenta origen (mismo nombre que en la generación original).
+        folio = folio_dict.get("folio")
+        generados = 0
+        for clabe_origen, bucket in por_origen.items():
+            registros = bucket["registros"]
+            clabe_dig = re.sub(r"\D", "", clabe_origen or "")
+            cuenta_texto = bucket["cuenta_texto"]
+            if exportador_devoluciones.banco_formato(cuenta_texto) == "banregio":
+                hoy = datetime.date.today().strftime("%d%m%Y")
+                contenido = exportador_devoluciones.generar_banregio(registros, hoy)
+            else:  # BBVA / Bancomer (ancho fijo) — formato por defecto
+                contenido = exportador_devoluciones.generar_bancomer(
+                    registros, clabe_dig, str(folio or ""))
+            sufijo = f"Pesos {clabe_dig[-4:]}" if clabe_dig else "Pesos"
+            nombre = _sanear_archivo(
+                self._nombre_txt(folio_dict) + " " + sufijo) + ".txt"
+            ruta = os.path.join(carpeta, nombre)  # sobrescribe (mismo nombre)
+            try:
+                with open(ruta, "w", encoding="latin-1", newline="") as fh:
+                    fh.write(contenido)
+            except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+                return False, f"No se pudo escribir el TXT: {exc}"
+            self._pesos_generados.append({
+                "empresa": clave, "archivo": ruta,
+                "total_pesos": bucket["total"], "proveedores": len(registros)})
+            generados += 1
+        # Persiste los valores editados por par (por si se regenera de nuevo).
+        self._clabe_pesos_por_grupo[clave] = {
+            par: cl for par, cl in clabes_par.items() if cl}
+        self._concepto_prov_por_grupo[clave] = dict(conceptos_par)
+        self._ref_prov_por_grupo[clave] = dict(refs_par)
+        self._cuenta_pesos_por_grupo[clave] = {
+            par: texto_por_clabe.get(cl, "")
+            for par, cl in clabes_par.items() if cl}
+        return True, f"{generados} TXT en pesos regenerado(s)."
+
+    def _dialogo_continuar_operacion(self) -> None:
+        """Confirmación para continuar con la SUBIDA de comprobantes. Al aceptar: se
+        cierra la confirmación, luego (encadenado por on_dismiss) el resumen y, cuando
+        éste se desmonta, se abre el RPA de subida (que arranca solo)."""
+        estado = {"aceptar": False}
+
+        def al_cerrar_confirmacion(_e=None) -> None:
+            if estado["aceptar"]:
+                # El resumen ya es el diálogo de arriba: cerrarlo y, tras su cierre,
+                # abrir el diálogo del RPA de subida.
+                self._cerrar_resumen_luego(self._abrir_dialogo_subida)
+
+        def aceptar(_e=None) -> None:
+            estado["aceptar"] = True
+            self.page.pop_dialog()  # confirmación -> dispara al_cerrar_confirmacion
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Continuar operación", weight=ft.FontWeight.BOLD),
+            content=ft.Text(
+                "Se subirán los archivos vinculados a las dispersiones.\n"
+                "¿Continuar con la operación?"),
+            on_dismiss=al_cerrar_confirmacion,
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _e: self.page.pop_dialog()),
+                ft.FilledButton("Aceptar", on_click=aceptar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
+
+    def _dialogo_terminar_operacion(self) -> None:
+        """Confirmación para terminar la operación. Al aceptar: se cierra la
+        confirmación, luego (encadenado por on_dismiss) el resumen y, cuando éste se
+        desmonta, se cierra —de forma obligatoria— el navegador. El encadenamiento es
+        necesario porque Flet solo desmonta el diálogo de más arriba."""
+        estado = {"aceptar": False}
+
+        def cerrar_navegador() -> None:
+            self.page.run_task(self._detener_rpa)
+
+        def al_cerrar_confirmacion(_e=None) -> None:
+            if estado["aceptar"]:
+                self._cerrar_resumen_luego(cerrar_navegador)
+
+        def aceptar(_e=None) -> None:
+            estado["aceptar"] = True
+            self.page.pop_dialog()  # confirmación -> dispara al_cerrar_confirmacion
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Terminar operación", weight=ft.FontWeight.BOLD),
+            content=ft.Text(
+                "Se dará por terminada la operación de dispersión.\n\n ¿Continuar?"),
+            on_dismiss=al_cerrar_confirmacion,
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _e: self.page.pop_dialog()),
+                ft.FilledButton("Aceptar", on_click=aceptar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
 
     def _eliminar_dispersadas(self) -> int:
         """Quita de las tablas las solicitudes de las combinaciones (empresa+moneda)
@@ -2336,6 +3484,27 @@ class SeccionDispersionNoPemex:
         self._reconstruir_tablas()
         return barridas
 
+    def _rango_moneda(self, clave: str, moneda: str) -> int:
+        """Rango de orden/categoría por moneda de un grupo (empresa+moneda):
+        0 = MXN (u otras), 1 = USD, 2 = USD pago en MXN (USD con ≥1 par marcado
+        'pagar en pesos', según self._pesos_por_grupo). La moneda llega ya
+        normalizada (MN→MXN)."""
+        if (moneda or "").strip().upper() == "USD":
+            return 2 if self._pesos_por_grupo.get(clave) else 1
+        return 0
+
+    def _rango_moneda_fila(self, d: dict) -> int:
+        """Categoría por moneda de UNA fila del resumen (proveedor+cuenta): 0 = MXN,
+        1 = USD, 2 = USD pago en MXN. A diferencia de _rango_moneda (por grupo), aquí
+        'usd_pesos' aplica solo si ESE par está marcado 'pagar en pesos', de modo que un
+        mismo grupo USD puede repartir sus filas entre USD y USD pago en MXN."""
+        if (d.get("moneda") or "").strip().upper() != "USD":
+            return 0
+        par = d.get("par")
+        if par and par in self._pesos_por_grupo.get(d.get("clave") or "", set()):
+            return 2
+        return 1
+
     def _mostrar_datos_dispersion(self, conc: "conciliacion.Conciliacion") -> None:
         """Muestra, de forma amigable (tablas, sin JSON), los datos que tomará el
         robot, separados por empresa + tipo de moneda (la misma separación de la
@@ -2344,6 +3513,10 @@ class SeccionDispersionNoPemex:
         if not empresas:
             cuerpo: ft.Control = ft.Text("No hay datos que mostrar.", size=12, color=GRIS)
         else:
+            # Orden por moneda: MXN → USD → USD pago en MXN (sort estable: dentro de
+            # cada categoría se respeta el orden original).
+            empresas = sorted(empresas, key=lambda e: self._rango_moneda(
+                e.empresa, e.movimientos[0].moneda if e.movimientos else ""))
             secciones: list[ft.Control] = []
             # Banner con el tipo de cambio: solo si hay proveedores USD marcados
             # 'pagar en pesos' (es el TC con que se convertirán a MXN).
@@ -2380,9 +3553,10 @@ class SeccionDispersionNoPemex:
             return None
         if self._tc_preview is not None:
             icono, color = ft.Icons.CURRENCY_EXCHANGE, VERDE
-            texto = (f"Tipo de cambio (DOF): {_fmt_tc(self._tc_preview)} MXN "
-                     "por USD. Se usará para convertir a pesos los proveedores "
-                     "marcados 'pagar en pesos'.")
+            con_fecha = (f" con fecha del {self._tc_preview_fecha}"
+                         if self._tc_preview_fecha else "")
+            texto = (f"Tipo de cambio: {_fmt_tc(self._tc_preview)} MXN (tomado del "
+                     f"Diario Oficial de la Federación{con_fecha})")
         else:
             icono, color = ft.Icons.WARNING_AMBER, NARANJA
             detalle = f" ({self._tc_preview_error})" if self._tc_preview_error else ""
@@ -2414,15 +3588,21 @@ class SeccionDispersionNoPemex:
             [ft.Text(e.empresa, weight=ft.FontWeight.BOLD, size=14), chip],
             spacing=10, wrap=True, vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
-        info = ft.Row(
-            [
-                self._dato_compacto(
-                    "Cuenta origen", e.cuenta or "—"),
-                self._dato_compacto("Concepto", e.concepto_pago or "—"),
-                self._dato_compacto("Referencia", e.referencia_pago or "—"),
-            ],
-            wrap=True, spacing=20, run_spacing=4,
-        )
+        datos = [
+            self._dato_compacto("Cuenta origen", e.cuenta or "—"),
+            self._dato_compacto("Concepto", e.concepto_pago or "—"),
+            self._dato_compacto("Referencia", e.referencia_pago or "—"),
+        ]
+        # En entradas 'USD pago en MXN' (con pares marcados 'pagar en pesos') se
+        # añade la(s) cuenta(s) origen elegidas para el pago en pesos.
+        if e.empresa in self._pesos_por_grupo:
+            cuentas_pesos = [
+                c for c in dict.fromkeys(
+                    self._cuenta_pesos_por_grupo.get(e.empresa, {}).values()) if c]
+            datos.append(self._dato_compacto(
+                "Cuenta de pago en pesos",
+                " · ".join(cuentas_pesos) if cuentas_pesos else "—"))
+        info = ft.Row(datos, wrap=True, spacing=20, run_spacing=4)
         hijos: list[ft.Control] = [encabezado, info]
         if e.errores:
             hijos.append(ft.Column(
@@ -2445,94 +3625,117 @@ class SeccionDispersionNoPemex:
 
     def _tabla_datos_movimientos(
             self, e: "conciliacion.EmpresaDispersion") -> ft.Control:
-        """Tabla compacta de los movimientos a dispersar de una empresa: folio,
-        folio factura, proveedor, cuenta bancaria destino y los importes (total y
-        saldo de factura + saldo programado), con sus totales. Si el grupo es USD y
-        tiene proveedores marcados 'pagar en pesos', agrega una columna con la
-        equivalencia en pesos (Saldo Programado × T.C.) para esos proveedores."""
-        W_FOLIO, W_FOLIO_FAC, W_PROV, W_CTA, W_MONTO, W_PESOS = (
-            60, 90, 200, 200, 105, 115)
-
+        """Tabla de los movimientos a dispersar de una empresa, AGRUPADOS por
+        proveedor+cuenta: una banda-cabecera por grupo con 'proveedor · cuenta … TOTAL
+        PROG. $X' (igual que la tabla principal) y, al final, una banda con el TOTAL
+        GENERAL, para que el usuario vea el total por proveedor y el total general. Las
+        columnas de detalle son Folio, Folio Factura y los importes (proveedor y cuenta
+        ya van en la banda). Si el grupo es USD con proveedores 'pagar en pesos', añade
+        la columna Equiv. MXN (Saldo Programado × T.C.)."""
         # Pares (proveedor, cuenta beneficiario) del grupo marcados 'pagar en pesos' y
-        # el tipo de cambio. La columna solo aparece si hay marcados y hay T.C.
+        # el tipo de cambio. La columna Equiv. MXN solo aparece si hay marcados y T.C.
         pesos_set = self._pesos_por_grupo.get(e.empresa, set())
         tc = self._tc_preview
         mostrar_pesos = bool(pesos_set) and bool(tc)
 
-        def celda(texto, ancho, derecha=False, bold=False):
-            return ft.DataCell(ft.Container(
-                ft.Text(
-                    str(texto or ""), size=11,
-                    weight=ft.FontWeight.BOLD if bold else None,
-                    text_align=ft.TextAlign.RIGHT if derecha else ft.TextAlign.LEFT,
-                    max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
-                    width=ancho),
-                width=ancho, tooltip=str(texto or "") or None,
-                alignment=_DER if derecha else _IZQ))
+        cols = [
+            ColumnaTabla("Folio", 11 if mostrar_pesos else 13, CENTRO),
+            ColumnaTabla("Folio Factura", 15 if mostrar_pesos else 18, CENTRO),
+            ColumnaTabla("Total Fact.", 18 if mostrar_pesos else 23, _TDER),
+            ColumnaTabla("Saldo Fact.", 18 if mostrar_pesos else 23, _TDER),
+            ColumnaTabla("Saldo Prog.", 18 if mostrar_pesos else 22, _TDER),
+        ]
+        if mostrar_pesos:
+            cols.append(ColumnaTabla("Equiv. MXN", 19, _TDER))
+        n_cols = len(cols)
 
-        filas: list[ft.DataRow] = []
+        def banda(prov, cuenta, total, total_pesos, general=False) -> Cabecera:
+            """Banda (Cabecera a todo lo ancho) con 'proveedor · cuenta' a la izquierda
+            y el total a la derecha. Si `general`, es el TOTAL GENERAL (sin proveedor,
+            con un fondo distinto para diferenciarlo de las bandas de grupo)."""
+            if general:
+                izq: ft.Control = ft.Container(expand=True)
+                etiqueta = "TOTAL GENERAL PROG."
+            else:
+                prov_txt, cta_txt = str(prov or "—"), str(cuenta or "")
+                izq = ft.Row(
+                    [ft.Text(prov_txt, size=13, weight=ft.FontWeight.BOLD,
+                             max_lines=1, no_wrap=True,
+                             overflow=ft.TextOverflow.ELLIPSIS,
+                             tooltip=prov_txt if len(prov_txt) > 40 else None),
+                     ft.Text("·", size=13, color=GRIS),
+                     ft.Text(cta_txt, size=12, weight=ft.FontWeight.BOLD, color=GRIS,
+                             max_lines=1, no_wrap=True,
+                             overflow=ft.TextOverflow.ELLIPSIS,
+                             tooltip=cta_txt if len(cta_txt) > 34 else None)],
+                    spacing=8, tight=True, expand=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER)
+                etiqueta = "TOTAL PROG."
+            tam = 14 if general else 13
+            der_items = [
+                ft.Text(etiqueta, size=11, weight=ft.FontWeight.BOLD, color=GRIS),
+                ft.Text(_fmt_moneda(total), size=tam, weight=ft.FontWeight.BOLD),
+            ]
+            if total_pesos is not None:
+                der_items += [
+                    ft.Text("· Equiv. MXN", size=11, weight=ft.FontWeight.BOLD,
+                            color=GRIS),
+                    ft.Text(_fmt_moneda(total_pesos), size=tam,
+                            weight=ft.FontWeight.BOLD),
+                ]
+            der = ft.Row(der_items, spacing=6, tight=True,
+                         vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            info = ft.Row([izq, der], vertical_alignment=ft.CrossAxisAlignment.CENTER)
+            return Cabecera(
+                [SegmentoCabecera(n_cols, info, alineacion=None,
+                                  padding=ft.Padding.only(left=10, right=10))],
+                bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST if general else None,
+                alto=40)
+
+        # Agrupa los movimientos por (proveedor, cuenta) en orden de aparición.
+        grupos: dict[tuple, list] = {}
+        orden: list[tuple] = []
+        for m in e.movimientos:
+            k = (m.proveedor, m.cuenta_bancaria)
+            if k not in grupos:
+                grupos[k] = []
+                orden.append(k)
+            grupos[k].append(m)
+
+        filas: list = []
         tot_prog = 0.0
         tot_pesos = 0.0
-        for m in e.movimientos:
-            tot_prog += m.saldo_programado or 0
-            celdas = [
-                celda(m.folio, W_FOLIO),
-                celda(m.folio_factura, W_FOLIO_FAC),
-                celda(m.proveedor, W_PROV),
-                celda(m.cuenta_bancaria, W_CTA),
-                celda(_fmt_moneda(m.total_factura), W_MONTO, derecha=True),
-                celda(_fmt_moneda(m.saldo_factura), W_MONTO, derecha=True),
-                celda(_fmt_moneda(m.saldo_programado), W_MONTO, derecha=True),
-            ]
-            if mostrar_pesos:
-                if (m.proveedor, m.cuenta_bancaria) in pesos_set:
-                    pesos = round((m.saldo_programado or 0) * tc, 2)
-                    tot_pesos += pesos
-                    celdas.append(celda(_fmt_moneda(pesos), W_PESOS, derecha=True))
-                else:  # (proveedor, cuenta) USD que NO se paga en pesos
-                    celdas.append(celda("—", W_PESOS, derecha=True))
-            filas.append(ft.DataRow(cells=celdas))
-        # Fila de totales (Saldo Programado y, si aplica, equivalencia en pesos).
-        total_celdas = [
-            celda("", W_FOLIO), celda("", W_FOLIO_FAC), celda("", W_PROV),
-            celda("", W_CTA), celda("", W_MONTO),
-            celda("TOTAL PROGRAMADO", W_MONTO, derecha=True, bold=True),
-            celda(_fmt_moneda(tot_prog), W_MONTO, derecha=True, bold=True),
-        ]
-        if mostrar_pesos:
-            total_celdas.append(
-                celda(_fmt_moneda(tot_pesos), W_PESOS, derecha=True, bold=True))
-        filas.append(ft.DataRow(cells=total_celdas))
+        for (prov, cuenta) in orden:
+            movs = grupos[(prov, cuenta)]
+            grupo_prog = sum(m.saldo_programado or 0 for m in movs)
+            es_pesos = mostrar_pesos and (prov, cuenta) in pesos_set
+            grupo_pesos = round(grupo_prog * tc, 2) if es_pesos else None
+            filas.append(banda(prov, cuenta, grupo_prog, grupo_pesos))
+            for m in movs:
+                tot_prog += m.saldo_programado or 0
+                celdas: list = [
+                    m.folio, m.folio_factura,
+                    _fmt_moneda(m.total_factura),
+                    _fmt_moneda(m.saldo_factura),
+                    _fmt_moneda(m.saldo_programado),
+                ]
+                if mostrar_pesos:
+                    if es_pesos:
+                        p = round((m.saldo_programado or 0) * tc, 2)
+                        tot_pesos += p
+                        celdas.append(_fmt_moneda(p))
+                    else:  # (proveedor, cuenta) USD que NO se paga en pesos
+                        celdas.append("—")
+                filas.append(FilaDatos(celdas))
+        # Banda de TOTAL GENERAL (debajo de los grupos).
+        filas.append(banda(None, None, tot_prog,
+                           tot_pesos if mostrar_pesos else None, general=True))
 
-        columnas = [
-            ft.DataColumn(label=encabezado_col("Folio", W_FOLIO)),
-            ft.DataColumn(label=encabezado_col("Folio Factura", W_FOLIO_FAC)),
-            ft.DataColumn(label=encabezado_col("Proveedor", W_PROV)),
-            ft.DataColumn(label=encabezado_col("Cuenta Bancaria", W_CTA)),
-            ft.DataColumn(label=encabezado_col("Total Fact.", W_MONTO),
-                          numeric=True),
-            ft.DataColumn(label=encabezado_col("Saldo Fact.", W_MONTO),
-                          numeric=True),
-            ft.DataColumn(label=encabezado_col("Saldo Prog.", W_MONTO),
-                          numeric=True),
-        ]
-        if mostrar_pesos:
-            columnas.append(ft.DataColumn(
-                label=encabezado_col("Equiv. MXN", W_PESOS), numeric=True))
-
-        tabla = ft.DataTable(
-            columns=columnas,
-            rows=filas,
-            column_spacing=14, horizontal_margin=6,
-            heading_row_height=34, data_row_min_height=30, data_row_max_height=30,
-            divider_thickness=1,
-            border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT), border_radius=8,
-        )
-        # Padding inferior: reserva sitio para la barra de scroll horizontal (que
-        # Flet dibuja encima) y evita que tape la fila TOTAL PROGRAMADO.
-        return ft.Row(
-            [ft.Container(tabla, padding=ft.Padding.only(bottom=_GUTTER_SCROLL))],
-            scroll=ft.ScrollMode.AUTO)
+        tabla = TablaResponsiva(
+            self.page, cols,
+            ancho_inicial=860 - 2 * _GUTTER_SCROLL - 24, alto_fila=40)
+        tabla.set_contenido(filas)
+        return tabla.control
 
     def _cuentas_de_empresa(self, nombre_empresa: str) -> list[str]:
         """Cuentas de dispersión de una empresa: se emparejan por el ID de la
@@ -2655,10 +3858,11 @@ class SeccionDispersionNoPemex:
         )
         self.page.show_dialog(dlg)
 
-    def _eliminar_todo(self, _e=None) -> None:
-        """Vacía TODAS las tablas: quita sus controles del árbol, olvida las
-        empresas y vuelve al estado inicial (placeholder). Cierra el diálogo."""
-        self.page.pop_dialog()
+    def _reiniciar_tablas(self) -> None:
+        """Vacía TODAS las tablas y su estado por grupo (empresa+moneda): quita sus
+        controles del árbol y olvida empresas/fechas. NO reconstruye ni avisa; lo hace
+        quien llama. Se usa para volver al estado inicial y como reinicio antes de una
+        búsqueda nueva (las solicitudes no se acumulan entre búsquedas)."""
         for tabla in self._tablas_por_empresa.values():
             try:
                 self._contenedor_tablas.controls.remove(tabla.control)
@@ -2667,6 +3871,12 @@ class SeccionDispersionNoPemex:
         self._tablas_por_empresa.clear()
         self._fechas_por_grupo.clear()
         self._empresa_activa = None
+
+    def _eliminar_todo(self, _e=None) -> None:
+        """Vacía TODAS las tablas: quita sus controles del árbol, olvida las
+        empresas y vuelve al estado inicial (placeholder). Cierra el diálogo."""
+        self.page.pop_dialog()
+        self._reiniciar_tablas()
         self._reconstruir_tablas()
         self.app.avisar("Se eliminó la información de las tablas.", VERDE)
 
@@ -2759,158 +3969,81 @@ class SeccionDispersionNoPemex:
             return "La Fecha Inicio no puede ser mayor que la Fecha Fin."
         return ""
 
-    # ----------------------------------------------------- ejecución
-    async def _iniciar_pausar(self, _e) -> None:
-        """Único botón que arranca, pausa o reanuda según el estado actual."""
-        if self.estado == "detenido":
-            usuario, contrasena = self.app.config.credenciales()
-            if not usuario or not contrasena:
-                self.app.avisar(
-                    "Captura usuario y contraseña en Configuración.", ROJO)
-                return
-            error = self._validar_filtros()
-            if error:
-                self.app.avisar(error, ROJO)
-                return
-            # Pasa a 'ejecutando' y HABILITA pausa/detención DESDE YA. Antes el
-            # botón quedaba deshabilitado toda la corrida, por lo que pausa y
-            # detención eran inalcanzables. Toman efecto en el siguiente punto de
-            # control del flujo (o cancelan la operación en curso, al Detener).
-            self.estado = "ejecutando"
-            self.btn_iniciar.content = "Pausar"
-            self.btn_iniciar.icon = ft.Icons.PAUSE
-            self.btn_iniciar.disabled = False
-            self.btn_detener.disabled = False
-            self._estado("Iniciando sesión en el SIPP…", VERDE)
-            self.page.update()
-            try:
-                # Primera vez: descarga el navegador mostrando aviso + barra.
-                if necesita_navegador():
-                    self._mostrar_instalacion(True)
-                    self.page.update()
-                    try:
-                        await self._correr(asegurar_navegador())
-                    finally:
-                        self._mostrar_instalacion(False)
-                        self.page.update()
-                await self._arrancar_rpa(usuario, contrasena)
-            except (RpaDetenido, asyncio.CancelledError):
-                # Detención pedida por el usuario: cierre limpio (no es un error).
-                self._mostrar_instalacion(False)
-                await self._detener_rpa()
-                self.estado = "detenido"
-                self.btn_iniciar.disabled = False
-                self._refrescar_controles()
-                self.app.avisar("RPA detenido.", ROJO)
-                return
-            except ErrorSipp as exc:
-                await self._abortar_por_error(f"No se pudo iniciar el RPA: {exc}")
-                return
-            except PlaywrightTimeoutError:
-                # Timeout de navegación: casi siempre es la conexión o que el
-                # portal del SIPP tardó/no respondió, no un fallo del RPA.
-                await self._abortar_por_error(
-                    "La página del SIPP tardó demasiado en responder. Suele ser por "
-                    "una conexión a internet lenta o inestable (o el portal está "
-                    "caído/muy lento). Revisa tu conexión e inténtalo de nuevo."
-                )
-                return
-            except Exception as exc:  # noqa: BLE001 — se reporta al usuario
-                await self._abortar_por_error(f"Error inesperado al iniciar el RPA: {exc}")
-                return
-            # La operación del RPA terminó: cierra el navegador y vuelve a
-            # 'detenido' (los XLSX quedaron en disco para la lectura posterior).
-            await self._detener_rpa()
-            self.estado = "detenido"
-            self.btn_iniciar.disabled = False
-            n = len(self.rutas_reporte)
-            if n == 0:
-                # Ninguna búsqueda trajo resultados: se termina y se notifica.
-                self.app.avisar(
-                    "No se encontraron resultados en ninguna de las búsquedas. "
-                    "Se terminó la operación del RPA.", NARANJA)
-            else:
-                # Lee los XLSX descargados (en un hilo, para no congelar la UI) y
-                # vuelca sus filas en la tabla, agrupadas por empresa y sin
-                # duplicar respecto a corridas anteriores. Muestra un indicador de
-                # carga mientras se leen para dejar claro que no se colgó.
-                self._mostrar_cargando(True)
-                filas = await asyncio.to_thread(
-                    reporte_dispersion.leer_varios, self.rutas_reporte)
-                # Guarda por grupo las fechas de ESTA búsqueda (inicio/fin del
-                # filtro), para usarlas como filtro en la dispersión.
-                self.volcar_reportes(
-                    filas,
-                    fecha_ini=(self.tf_fecha_ini.value or "").strip(),
-                    fecha_fin=(self.tf_fecha_fin.value or "").strip())
-                sin_datos = self.combinaciones_intentadas - n
-                extra = f" ({sin_datos} sin resultados)" if sin_datos > 0 else ""
-                self.app.avisar(
-                    f"RPA completado: {n} reporte(s) (Excel) descargado(s){extra}.",
-                    VERDE)
-        elif self.estado == "ejecutando":
-            self.estado = "pausado"
-            await self._pausar_rpa()
-        else:  # pausado
-            self.estado = "ejecutando"
-            await self._reanudar_rpa()
-        self._refrescar_controles()
-
-    async def _detener(self, _e) -> None:
-        """Solicita detener el RPA. La detención es cooperativa: se marca la señal
-        y se cancela la operación en curso. El cierre del navegador y el aviso
-        final los hace _iniciar_pausar cuando el flujo se desenrolla, para no
-        cerrar el navegador desde dos lados a la vez."""
-        if self.estado == "detenido":
+    # ----------------------------------------------------- búsqueda (API)
+    async def _buscar_solicitudes(self, _e=None) -> None:
+        """Consulta las solicitudes a dispersar en el endpoint (sin navegador ni
+        login) y vuelca las filas en las tablas. Hace UNA llamada por empresa
+        seleccionada (el endpoint recibe un solo id de empresa); si alguna falla, se
+        avisa sin abortar las demás. El RPA queda solo para el paso de dispersar."""
+        error = self._validar_filtros()
+        if error:
+            self.app.avisar(error, ROJO)
             return
-        if self._ctrl is not None:
-            self._ctrl.detener()   # aborta en el próximo punto de control
-        if self._future_rpa is not None:
-            self._future_rpa.cancel()  # interrumpe la operación en curso
-        # Feedback inmediato; el estado final 'detenido' lo fija _iniciar_pausar.
+        fecha_ini_ui = (self.tf_fecha_ini.value or "").strip()
+        fecha_fin_ui = (self.tf_fecha_fin.value or "").strip()
+        fecha_ini = _fecha_ddmmaaaa_a_iso(fecha_ini_ui) or None
+        fecha_fin = _fecha_ddmmaaaa_a_iso(fecha_fin_ui) or None
+        folio_txt = (self.tf_folio.value or "").strip()
+        folio = int(folio_txt) if folio_txt.isdigit() else None
+        # Tipo(s): si no se elige ninguno o se eligen TODOS -> sin filtro (una llamada
+        # por empresa). Si se eligen algunos, una llamada por empresa × tipo (con su id).
+        tipos_sel = self.ms_tipo.valores()
+        if not tipos_sel or set(tipos_sel) == set(self.TIPOS_SOLICITUD):
+            tipos_id = [None]
+        else:
+            tipos_id = [
+                _TIPO_SOLICITUD_ID[t] for t in tipos_sel if t in _TIPO_SOLICITUD_ID
+            ] or [None]
+
         self.btn_iniciar.disabled = True
-        self.btn_detener.disabled = True
-        self._estado("Deteniendo…", NARANJA)
+        self._mostrar_cargando(True)
         self.page.update()
 
-    def _mostrar_instalacion(self, visible: bool) -> None:
-        """Muestra/oculta el aviso y la barra de descarga del navegador."""
-        self.txt_install.visible = visible
-        self.barra_install.visible = visible
+        filas: list[FilaSolicitud] = []
+        errores: list[str] = []
+        try:
+            for nombre in self.ms_empresa.valores():
+                id_empresa = self.ID_POR_EMPRESA.get(nombre)
+                if id_empresa is None:
+                    errores.append(f"{nombre} (sin id de empresa)")
+                    continue
+                for tipo_id in tipos_id:
+                    try:
+                        resp = await asyncio.to_thread(
+                            api.dispersiones_no_pemex, id_empresa,
+                            fecha_inicio=fecha_ini, fecha_fin=fecha_fin,
+                            tipo_solicitud=tipo_id, folio_solicitud=folio)
+                    except api.ErrorApi as exc:
+                        errores.append(f"{nombre}: {exc}")
+                        continue
+                    filas.extend(reporte_dispersion.desde_api(resp))
+        finally:
+            self._mostrar_cargando(False)
+            self.btn_iniciar.disabled = False
 
-    async def _abortar_por_error(self, mensaje: str) -> None:
-        """Cierra la sesión a medias, vuelve a 'detenido' y reporta el error."""
-        self._mostrar_instalacion(False)
-        await self._detener_rpa()
-        self.estado = "detenido"
-        self.btn_iniciar.disabled = False
-        self._refrescar_controles()
-        self.app.avisar(mensaje, ROJO)
-
-    def _estado(self, texto: str, color: str) -> None:
-        """Fija el texto del estado del RPA y su color (sin actualizar la página;
-        el llamador decide cuándo refrescar)."""
-        self.txt_estado.value = texto
-        self.txt_estado.color = color
-
-    def _refrescar_controles(self) -> None:
-        """Ajusta etiquetas, íconos y disponibilidad de los botones al estado."""
-        if self.estado == "ejecutando":
-            self.btn_iniciar.content = "Pausar"
-            self.btn_iniciar.icon = ft.Icons.PAUSE
-            self.btn_detener.disabled = False
-            self._estado("En ejecución", VERDE)
-        elif self.estado == "pausado":
-            self.btn_iniciar.content = "Reanudar"
-            self.btn_iniciar.icon = ft.Icons.PLAY_ARROW
-            self.btn_detener.disabled = False
-            self._estado("En pausa", ft.Colors.AMBER_700)
-        else:  # detenido
-            self.btn_iniciar.content = "Iniciar"
-            self.btn_iniciar.icon = ft.Icons.PLAY_ARROW
-            self.btn_detener.disabled = True
-            self._estado("Detenido", NARANJA)
+        n = len(filas)
+        # Cada búsqueda parte de cero: se descartan las tablas de la búsqueda anterior
+        # (las solicitudes NO se acumulan entre búsquedas). La carga por Excel sí
+        # acumula a propósito, por eso el reinicio vive aquí y no en volcar_reportes.
+        self._reiniciar_tablas()
+        if filas:
+            # Vuelca (agrupa por empresa+moneda, crea tablas, dedup por clave) y
+            # guarda las fechas de la búsqueda por grupo para la dispersión.
+            self.volcar_reportes(
+                filas, fecha_ini=fecha_ini_ui, fecha_fin=fecha_fin_ui)
+        else:
+            self._reconstruir_tablas()  # oculta el "cargando" / muestra placeholder
         self.page.update()
+
+        if errores:
+            self.app.avisar(
+                "Algunas consultas fallaron: " + "; ".join(errores[:4])
+                + ("…" if len(errores) > 4 else ""), ROJO)
+        elif n:
+            self.app.avisar(f"{n} solicitud(es) encontrada(s).", VERDE)
+        else:
+            self.app.avisar(
+                "No se encontraron solicitudes con esos filtros.", NARANJA)
 
     # ------------------------------------------------- hooks del RPA
     async def _correr(self, coro):
@@ -2920,124 +4053,25 @@ class SeccionDispersionNoPemex:
             self.bucle = BucleRpa()
         return await asyncio.wrap_future(self.bucle.enviar(coro))
 
-    def _estado_seguro(self, texto: str, color: str) -> None:
-        """Fija el estatus del RPA de búsqueda de forma segura desde el hilo del RPA
-        (marshala la actualización de Flet al loop de la UI)."""
-        def aplicar():
-            self._estado(texto, color)
-            try:
-                self.page.update()
-            except (RuntimeError, AssertionError):
-                pass
-        loop = getattr(self, "_loop_ui", None)
-        if loop is not None and not loop.is_closed():
-            loop.call_soon_threadsafe(aplicar)
-        else:
-            aplicar()
-
-    async def _arrancar_rpa(self, usuario: str, contrasena: str) -> None:
-        """Abre el navegador, inicia sesión y, por cada empresa × tipo elegido,
-        aplica filtros, busca y descarga el Excel del reporte."""
-        # Loop de la UI (para marshalar el estatus desde el hilo del RPA).
-        self._loop_ui = asyncio.get_running_loop()
-        self.sesion = SesionSipp(headless=False)
-        sesion = self.sesion
-
-        # Lee los filtros en el hilo de la UI antes de pasar al hilo del RPA.
-        empresas = self.ms_empresa.valores()
-        # Tipo opcional: si no se elige ninguno, se hace UNA búsqueda por empresa
-        # sin filtrar por tipo (None -> fijar_filtros omite ese filtro).
-        tipos = self.ms_tipo.valores() or [None]
-        fecha_ini = (self.tf_fecha_ini.value or "").strip()
-        fecha_fin = (self.tf_fecha_fin.value or "").strip()
-        folio = (self.tf_folio.value or "").strip() or None
-
-        # Controlador de pausa/detención, atado al bucle del RPA. Se crea antes de
-        # lanzar el flujo; el flujo lo consulta en sus puntos de control.
-        if self.bucle is None:
-            self.bucle = BucleRpa()
-        self._ctrl = ControlRpa(self.bucle._loop)
-        ctrl = self._ctrl
-
-        total = len(empresas) * len(tipos)
-
-        async def flujo() -> list[str]:
-            self._estado_seguro("Iniciando sesión en el SIPP…", VERDE)
-            await sesion.iniciar()
-            await sesion.login(usuario, contrasena)
-            self._estado_seguro("Seleccionando empresa y sucursal…", VERDE)
-            await sesion.seleccionar_empresa_sucursal(
-                self.EMPRESA_SESION, self.SUCURSAL_SESION)
-            self._estado_seguro("Abriendo el buscador de solicitudes…", VERDE)
-            await sesion.ir_a_registrar_dispersion_no_pemex()
-            await sesion.abrir_modal_agregar_solicitudes()
-            rutas: list[str] = []
-            # SIPP filtra por una sola empresa/tipo a la vez: se itera cada
-            # combinación reutilizando el mismo modal. Si una búsqueda no trae
-            # resultados, se continúa con la siguiente.
-            k = 0
-            for empresa in empresas:
-                await ctrl.punto_control()  # pausa/detención entre empresas
-                for tipo in tipos:
-                    await ctrl.punto_control()  # pausa/detención entre búsquedas
-                    k += 1
-                    prefijo = empresa if tipo is None else f"{empresa} - {tipo}"
-                    self._estado_seguro(f"Buscando {k}/{total}: {prefijo}…", VERDE)
-                    await sesion.fijar_filtros(
-                        FiltrosSolicitudPago(
-                            empresa=empresa,
-                            fecha_inicio=fecha_ini,
-                            fecha_fin=fecha_fin,
-                            folio_solicitud=folio,
-                            tipo_solicitud=tipo,
-                        )
-                    )
-                    # Se separan Buscar y Descargar para dar retroalimentación con el
-                    # número de solicitudes encontradas antes de bajar el Excel.
-                    encontradas = await sesion.buscar_solicitudes()
-                    if encontradas:
-                        self._estado_seguro(
-                            f"Descargando {k}/{total}: {prefijo} "
-                            f"({encontradas} sol.)…", VERDE)
-                        ruta = await sesion.descargar_reporte_excel(prefijo=prefijo)
-                        if ruta:
-                            rutas.append(ruta)
-                    else:
-                        self._estado_seguro(
-                            f"Sin resultados {k}/{total}: {prefijo}", VERDE)
-            self._estado_seguro("Procesando reportes descargados…", VERDE)
-            return rutas
-
-        # Se guarda el Future para poder cancelar la operación en curso al detener
-        # (la pausa/detención cooperativa solo actúa en los puntos de control).
-        self._future_rpa = self.bucle.enviar(flujo())
-        try:
-            self.rutas_reporte = await asyncio.wrap_future(self._future_rpa)
-        finally:
-            self._future_rpa = None
-        # Búsquedas que sí descargaron vs total intentadas (para el aviso).
-        self.combinaciones_intentadas = len(empresas) * len(tipos)
-
-    async def _pausar_rpa(self) -> None:
-        """Pide pausar: el flujo se detendrá en su próximo punto de control (tras
-        terminar la búsqueda/descarga en curso)."""
-        if self._ctrl is not None:
-            self._ctrl.pausar()
-
-    async def _reanudar_rpa(self) -> None:
-        """Reanuda el flujo pausado."""
-        if self._ctrl is not None:
-            self._ctrl.reanudar()
-
     async def _detener_rpa(self) -> None:
-        """Cierra el navegador y libera la sesión (best-effort)."""
+        """Cierra el navegador, libera la sesión y trae la app al frente (best-effort)."""
         self._ctrl = None
         self._future_rpa = None
-        if self.sesion is None:
-            return
         sesion = self.sesion
         self.sesion = None
+        if sesion is not None:
+            try:
+                await self._correr(sesion.cerrar())
+            except Exception:  # noqa: BLE001 — el cierre no debe propagar errores
+                pass
+        # Tras cerrar el navegador del RPA, devolver el foco a la ventana de la app.
+        self._enfocar_app()
+
+    def _enfocar_app(self) -> None:
+        """Trae la ventana de la app al primer plano (tras cerrar el navegador del
+        RPA). Best-effort y NO-OP fuera de Windows."""
         try:
-            await self._correr(sesion.cerrar())
-        except Exception:  # noqa: BLE001 — el cierre no debe propagar errores
+            from core import win_taskbar
+            win_taskbar.traer_al_frente(self.page.title)
+        except Exception:  # noqa: BLE001 — el foco no es crítico
             pass

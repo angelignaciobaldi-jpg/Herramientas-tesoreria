@@ -70,3 +70,4 @@ token_api.json
 
 # Volcado de la API de empresas (referencia con datos internos/RFC; no al repo)
 core/empresas.md
+token_extractor_api.json
