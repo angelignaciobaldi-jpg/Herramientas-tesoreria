@@ -29,14 +29,20 @@ _CLAVE_URL = "api_base_url"
 # Archivo con el token cifrado con DPAPI (por usuario/máquina, fuera del repo).
 _RUTA_TOKEN = os.path.join(rutas.DATOS, "token_api.json")
 
+# --- API extractor de PDF (comprobantes de pago) -------------------------
+# API INDEPENDIENTE del SIPP: su propia URL (preferencia, texto claro) y su propio
+# token (Bearer) cifrado con DPAPI. Sin URL por defecto: si no está configurada, se
+# considera ausente (la UI lo avisa).
+_CLAVE_URL_EXTRACTOR = "extractor_api_base_url"
+_RUTA_TOKEN_EXTRACTOR = os.path.join(rutas.DATOS, "token_extractor_api.json")
+
 # URL base QUEMADA por defecto. La URL no es secreta (se ve en el tráfico), así
 # que se deja fija en el código para que la app funcione sin configurar nada. Es
 # solo el ÚLTIMO recurso: la preferencia local (Configuración) y la variable de
 # entorno la SOBRESCRIBEN, útil para apuntar a otro entorno (dev/staging/prod)
 # sin recompilar. Para cambiar el default de fábrica, se edita esta constante.
-_URL_POR_DEFECTO = (
-    "https://us-central1-soluciones-petroil.cloudfunctions.net/billing-toolkit-testing"
-)
+# De momento (integración local) apunta al backend en localhost.
+_URL_POR_DEFECTO = "http://localhost:3001"
 
 
 # --- URL base ------------------------------------------------------------
@@ -99,6 +105,71 @@ def _cargar_token() -> str | None:
         return None
     try:
         with open(_RUTA_TOKEN, encoding="utf-8") as fh:
+            datos = json.load(fh)
+        return dpapi.descifrar(datos["token"]) or None
+    except (OSError, ValueError, KeyError):
+        return None
+
+
+# --- API extractor: URL base ---------------------------------------------
+def base_url_extractor(requerido: bool = False) -> str | None:
+    """URL base de la API extractor (sin '/' final): preferencia local -> variable de
+    entorno. SIN default de fábrica: None si no está configurada. Lanza
+    entorno.FaltaVariableEntorno solo si `requerido` y no hay ninguna."""
+    url = (preferencias.cargar_valor(_CLAVE_URL_EXTRACTOR) or "").strip()
+    if not url:
+        url = entorno.extractor_api_base_url() or ""
+    url = url.rstrip("/")
+    if requerido and not url:
+        raise entorno.FaltaVariableEntorno(entorno.VAR_EXTRACTOR_API_BASE_URL)
+    return url or None
+
+
+def guardar_base_url_extractor(url: str) -> None:
+    """Fija la URL base de la API extractor (preferencia local). Vacía -> sin fijar."""
+    preferencias.guardar_valor(
+        _CLAVE_URL_EXTRACTOR, (url or "").strip().rstrip("/"))
+
+
+# --- API extractor: token (Bearer, cifrado con DPAPI) --------------------
+def token_extractor() -> str | None:
+    """Bearer token de la API extractor: store DPAPI local -> variable de entorno
+    (dev). None si no hay ninguno."""
+    guardado = _cargar_token_extractor()
+    if guardado:
+        return guardado
+    return entorno.extractor_api_token(requerido=False)
+
+
+def hay_token_extractor_local() -> bool:
+    """True si hay un token del extractor guardado localmente (cifrado)."""
+    return _cargar_token_extractor() is not None
+
+
+def guardar_token_extractor(valor: str) -> None:
+    """Guarda el token del extractor cifrado con DPAPI. Vacío -> borra el guardado."""
+    valor = (valor or "").strip()
+    if not valor:
+        borrar_token_extractor()
+        return
+    with open(_RUTA_TOKEN_EXTRACTOR, "w", encoding="utf-8") as fh:
+        json.dump({"token": dpapi.cifrar(valor)}, fh)
+
+
+def borrar_token_extractor() -> None:
+    """Elimina el token del extractor guardado localmente."""
+    try:
+        os.remove(_RUTA_TOKEN_EXTRACTOR)
+    except FileNotFoundError:
+        pass
+
+
+def _cargar_token_extractor() -> str | None:
+    """Lee y descifra el token local del extractor; None si no hay o no se descifra."""
+    if not os.path.exists(_RUTA_TOKEN_EXTRACTOR):
+        return None
+    try:
+        with open(_RUTA_TOKEN_EXTRACTOR, encoding="utf-8") as fh:
             datos = json.load(fh)
         return dpapi.descifrar(datos["token"]) or None
     except (OSError, ValueError, KeyError):

@@ -23,9 +23,11 @@ _UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
        "(KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 _TIMEOUT = 30
 
-# Caché en memoria: {fecha_dd/mm/aaaa consultada -> valor}. Persiste hasta cerrar
-# la app. Es de módulo a propósito (una sola consulta por sesión).
-_CACHE: dict[str, float] = {}
+# Caché en memoria: {fecha_dd/mm/aaaa consultada -> (valor, fecha_dof)}. Persiste
+# hasta cerrar la app. Es de módulo a propósito (una sola consulta por sesión).
+# `fecha_dof` es la fecha de la fila del DOF de la que salió el valor (puede
+# diferir de la consultada si esa cayó en fin de semana/festivo).
+_CACHE: dict[str, tuple[float, str]] = {}
 
 
 class TipoCambioNoDisponible(Exception):
@@ -75,27 +77,32 @@ def _a_float(texto: str) -> float | None:
         return None
 
 
-def _consultar(dfecha: datetime.date, hfecha: datetime.date) -> float | None:
-    """Consulta el DOF en el rango [dfecha, hfecha] y devuelve el valor de la
-    ÚLTIMA fila (la fecha más reciente con dato) o None si no hay."""
+def _consultar(
+    dfecha: datetime.date, hfecha: datetime.date,
+) -> tuple[float, str] | None:
+    """Consulta el DOF en el rango [dfecha, hfecha] y devuelve `(valor, fecha_dof)`
+    de la ÚLTIMA fila (la fecha más reciente con dato) o None si no hay. `fecha_dof`
+    es la fecha de esa fila (1ª columna, formato 'DD/MM/AAAA')."""
     html = _descargar(_url(dfecha.strftime("%d/%m/%Y"), hfecha.strftime("%d/%m/%Y")))
     filas = _filas_celda1(html)
     for celdas in reversed(filas):  # la más reciente primero
         if len(celdas) > 1:
             valor = _a_float(celdas[1])
             if valor:
-                return valor
+                return valor, (celdas[0] or "").strip()
     return None
 
 
-def tipo_cambio_usd(
+def tipo_cambio_usd_detalle(
     fecha: datetime.date | None = None, refrescar: bool = False,
-) -> float:
-    """Tipo de cambio USD del DOF para `fecha` (por defecto, AYER).
+) -> tuple[float, str]:
+    """Tipo de cambio USD del DOF para `fecha` (por defecto, AYER), junto con la
+    fecha de publicación del DOF de la que salió: `(valor, fecha_dof)`.
 
     Usa la caché en memoria salvo que `refrescar` sea True. Si el día pedido no
     tiene dato publicado (fin de semana/festivo), amplía la búsqueda hacia atrás y
-    toma el más reciente disponible. Lanza TipoCambioNoDisponible si no se obtiene.
+    toma el más reciente disponible (por eso `fecha_dof` puede diferir de `fecha`).
+    Lanza TipoCambioNoDisponible si no se obtiene.
     """
     if fecha is None:
         fecha = datetime.date.today() - datetime.timedelta(days=1)
@@ -104,17 +111,25 @@ def tipo_cambio_usd(
         return _CACHE[clave]
 
     # 1) El día pedido (dfecha = hfecha), como en el ejemplo del DOF.
-    valor = _consultar(fecha, fecha)
+    dato = _consultar(fecha, fecha)
     # 2) Respaldo: rango de los últimos días hasta hoy (cubre fines de semana o
     #    festivos, tomando el valor publicado más reciente).
-    if valor is None:
-        valor = _consultar(fecha - datetime.timedelta(days=6),
-                           datetime.date.today())
-    if valor is None:
+    if dato is None:
+        dato = _consultar(fecha - datetime.timedelta(days=6),
+                          datetime.date.today())
+    if dato is None:
         raise TipoCambioNoDisponible(
             "El DOF no devolvió un tipo de cambio para la fecha solicitada.")
-    _CACHE[clave] = valor
-    return valor
+    _CACHE[clave] = dato
+    return dato
+
+
+def tipo_cambio_usd(
+    fecha: datetime.date | None = None, refrescar: bool = False,
+) -> float:
+    """Tipo de cambio USD del DOF (solo el valor). Ver `tipo_cambio_usd_detalle`
+    si además se necesita la fecha de publicación del DOF."""
+    return tipo_cambio_usd_detalle(fecha, refrescar)[0]
 
 
 def limpiar_cache() -> None:

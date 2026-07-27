@@ -131,9 +131,18 @@ class SeccionConfiguracion:
             label="Token de la API", password=True, can_reveal_password=True,
             dense=True, content_padding=10,
             hint_text="Déjalo vacío para conservar el actual", expand=True)
+        # API extractor de PDF (comprobantes de pago): URL + Bearer token propios.
+        self.tf_extractor_url = ft.TextField(
+            label="URL de la API extractor", dense=True, content_padding=10,
+            hint_text="https://extractor.quetzaltic.dev", expand=True)
+        self.tf_extractor_token = ft.TextField(
+            label="Token de la API extractor", password=True,
+            can_reveal_password=True, dense=True, content_padding=10,
+            hint_text="Déjalo vacío para conservar el actual", expand=True)
         self.txt_estado_cuentas = ft.Text(size=12)
         self.txt_estado_cuentas_disp = ft.Text(size=12)
         self.txt_api_token_estado = ft.Text(size=12)
+        self.txt_extractor_token_estado = ft.Text(size=12)
         self._actualizar_estado_cuentas()
         self._actualizar_estado_cuentas_dispersion()
         self._actualizar_estado_token()
@@ -142,13 +151,25 @@ class SeccionConfiguracion:
         cred = self._apartado(
             "Credenciales SIPP", None, self.tf_usuario, self.tf_contrasena)
         api = self._apartado(
-            "Configuración de API",
-            "URL y token de los microservicios. El token se guarda cifrado en este "
-            "equipo (DPAPI); nunca en claro ni en la instalación.",
+            "Configuración de API SIPP",
+            "URL y token de los microservicios del SIPP. El token se guarda cifrado en "
+            "este equipo (DPAPI); nunca en claro ni en la instalación.",
             self.tf_api_url, self.tf_api_token,
             ft.Row(
                 [self.txt_api_token_estado,
                  ft.TextButton("Quitar token", on_click=self._quitar_token)],
+                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER))
+        api_extractor = self._apartado(
+            "Configuración de API extractor",
+            "URL y Bearer token del extractor de PDF (lectura de comprobantes de "
+            "pago). El token se guarda cifrado en este equipo (DPAPI); nunca en claro "
+            "ni en la instalación.",
+            self.tf_extractor_url, self.tf_extractor_token,
+            ft.Row(
+                [self.txt_extractor_token_estado,
+                 ft.TextButton("Quitar token",
+                               on_click=self._quitar_token_extractor)],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                 vertical_alignment=ft.CrossAxisAlignment.CENTER))
         calib = self._apartado(
@@ -178,7 +199,8 @@ class SeccionConfiguracion:
 
         # --- Grupos (tarjeta: título + cuerpo) ---
         self._grupo_sistema = tarjeta("Sistema", ft.Column(
-            [cred, ft.Divider(), api, ft.Divider(), calib], spacing=14, tight=True))
+            [cred, ft.Divider(), api, ft.Divider(), api_extractor,
+             ft.Divider(), calib], spacing=14, tight=True))
         self._grupo_catalogos = tarjeta("Catálogos", ft.Column(
             [cuentas, ft.Divider(), cuentas_disp], spacing=14, tight=True))
 
@@ -249,38 +271,59 @@ class SeccionConfiguracion:
         ).abrir()
 
     def _guardar(self, _e=None) -> None:
-        """Guarda credenciales (contraseña cifrada) y ajustes de la API (URL como
+        """Guarda credenciales (contraseña cifrada) y ajustes de ambas APIs (URL como
         preferencia; token cifrado con DPAPI solo si se capturó uno nuevo)."""
         usuario, contrasena = self.credenciales()
         credenciales.guardar(usuario, contrasena)
+        # API SIPP.
         ajustes_api.guardar_base_url(self.tf_api_url.value or "")
         token = (self.tf_api_token.value or "").strip()
         if token:  # vacío -> se conserva el token guardado (no se borra al guardar)
             ajustes_api.guardar_token(token)
+        # API extractor de PDF.
+        ajustes_api.guardar_base_url_extractor(self.tf_extractor_url.value or "")
+        token_ext = (self.tf_extractor_token.value or "").strip()
+        if token_ext:
+            ajustes_api.guardar_token_extractor(token_ext)
         self._cerrar()
         self.app.avisar("Configuración guardada.", VERDE)
 
     # -------------------------------------------------- integración (API)
     def _cargar_ajustes_api(self) -> None:
-        """Precarga la URL base guardada (el token NO se muestra por seguridad)."""
+        """Precarga las URL base guardadas (los tokens NO se muestran por seguridad)."""
         self.tf_api_url.value = ajustes_api.base_url() or ""
+        self.tf_extractor_url.value = ajustes_api.base_url_extractor() or ""
 
     def _actualizar_estado_token(self) -> None:
-        """Refleja si hay un token guardado localmente (sin mostrarlo)."""
-        if ajustes_api.hay_token_local():
-            self.txt_api_token_estado.value = "Token guardado ✓"
-            self.txt_api_token_estado.color = VERDE
-        else:
-            self.txt_api_token_estado.value = "Sin token guardado."
-            self.txt_api_token_estado.color = GRIS
+        """Refleja si hay tokens guardados localmente (SIPP y extractor), sin
+        mostrarlos."""
+        for hay, estado in (
+            (ajustes_api.hay_token_local(), self.txt_api_token_estado),
+            (ajustes_api.hay_token_extractor_local(),
+             self.txt_extractor_token_estado),
+        ):
+            if hay:
+                estado.value = "Token guardado ✓"
+                estado.color = VERDE
+            else:
+                estado.value = "Sin token guardado."
+                estado.color = GRIS
 
     def _quitar_token(self, _e=None) -> None:
-        """Elimina el token guardado localmente."""
+        """Elimina el token del SIPP guardado localmente."""
         ajustes_api.borrar_token()
         self.tf_api_token.value = ""
         self._actualizar_estado_token()
         self.page.update()
-        self.app.avisar("Token de la API eliminado.", VERDE)
+        self.app.avisar("Token de la API SIPP eliminado.", VERDE)
+
+    def _quitar_token_extractor(self, _e=None) -> None:
+        """Elimina el token del extractor guardado localmente."""
+        ajustes_api.borrar_token_extractor()
+        self.tf_extractor_token.value = ""
+        self._actualizar_estado_token()
+        self.page.update()
+        self.app.avisar("Token de la API extractor eliminado.", VERDE)
 
     # ----------------------------------------------- catálogo de cuentas
     def _actualizar_estado_cuentas(self) -> None:

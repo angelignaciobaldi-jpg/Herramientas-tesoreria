@@ -200,7 +200,67 @@ if sys.platform == "win32":
 
         threading.Thread(target=worker, daemon=True).start()
 
+    # --- Traer la ventana de la app al frente (foco) ---------------------------
+    _SW_RESTORE = 9
+    _HWND_TOPMOST = wintypes.HWND(-1)
+    _HWND_NOTOPMOST = wintypes.HWND(-2)
+    _SWP_NOMOVE = 0x0002
+    _SWP_NOSIZE = 0x0001
+    _SWP_SHOWWINDOW = 0x0040
+
+    _user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    _user32.IsIconic.argtypes = [wintypes.HWND]
+    _user32.BringWindowToTop.argtypes = [wintypes.HWND]
+    _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+    _user32.SetWindowPos.argtypes = [
+        wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+        ctypes.c_int, ctypes.c_int, wintypes.UINT]
+    try:
+        _user32.AllowSetForegroundWindow.argtypes = [wintypes.DWORD]
+    except Exception:  # noqa: BLE001
+        pass
+
+    def _traer(hwnd) -> None:
+        # Restaura la ventana si está minimizada.
+        if _user32.IsIconic(hwnd):
+            _user32.ShowWindow(hwnd, _SW_RESTORE)
+        try:  # ASFW_ANY: levanta el 'foreground lock' de Windows.
+            _user32.AllowSetForegroundWindow(0xFFFFFFFF)
+        except Exception:  # noqa: BLE001
+            pass
+        # Truco estándar: subir a TOPMOST y liberar de inmediato, + traer al tope y
+        # pedir el foreground. Fuerza que la ventana quede encima tras cerrar el RPA.
+        flags = _SWP_NOMOVE | _SWP_NOSIZE | _SWP_SHOWWINDOW
+        _user32.SetWindowPos(hwnd, _HWND_TOPMOST, 0, 0, 0, 0, flags)
+        _user32.SetWindowPos(hwnd, _HWND_NOTOPMOST, 0, 0, 0, 0, flags)
+        _user32.BringWindowToTop(hwnd)
+        _user32.SetForegroundWindow(hwnd)
+
+    def traer_al_frente(titulo: str, timeout: float = 3.0) -> None:
+        """Trae al frente (foreground) la ventana `titulo`. Se usa tras cerrar el
+        navegador del RPA para devolver el foco a la app. Reintenta un momento (la
+        ventana del navegador tarda en soltarse). Best-effort; NO-OP fuera de Windows."""
+        def worker() -> None:
+            fin = time.monotonic() + timeout
+            intentos = 0
+            while time.monotonic() < fin and intentos < 4:
+                hwnd = _buscar_hwnd(titulo)
+                if hwnd:
+                    try:
+                        _traer(hwnd)
+                    except Exception:  # noqa: BLE001
+                        pass
+                    intentos += 1
+                    time.sleep(0.15)  # gana la carrera al navegador que se cierra
+                else:
+                    time.sleep(0.2)
+
+        threading.Thread(target=worker, daemon=True).start()
+
 else:  # fuera de Windows: no-op (la app solo se distribuye para Windows)
 
     def configurar_identidad(*_args, **_kwargs) -> None:
+        return
+
+    def traer_al_frente(*_args, **_kwargs) -> None:
         return
