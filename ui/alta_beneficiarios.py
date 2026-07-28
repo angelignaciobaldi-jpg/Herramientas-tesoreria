@@ -14,7 +14,7 @@ import flet as ft
 from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from core import (
-    db, exportador_alta_bancomer, exportador_alta_banregio, exportador_alta_spei,
+    db, exportador_alta_banregio, exportador_alta_spei,
     ocr, reporte_beneficiarios, reporte_cuentas,
 )
 from core.catalogo_bancos import banco_desde_clabe
@@ -1646,19 +1646,23 @@ class SeccionAltaBeneficiarios:
         def tiene_correo(b) -> bool:
             return bool((b.email or "").strip())
 
-        # Bancomer (012) usa su formato; otros bancos usan el formato SPEI.
-        gen_bancomer = exportador_alta_bancomer.generar_txt
-        gen_spei = exportador_alta_spei.generar_txt
+        # TODAS las cuentas (Bancomer 012 y otros bancos) se dan de alta en el mismo
+        # portal ("Mantenimiento de beneficiarias"), que exige el layout de 182
+        # (prefijo de banco + CLABE + moneda + monto + nombre x2 + tipo '40' + correo)
+        # con la casilla "Layout con campo de correo electrónico" marcada. Por eso el
+        # formato es el mismo (182) para todas; solo se separan por banco y por correo
+        # para facilitar la captura de correos faltantes antes de subirlas.
+        gen = exportador_alta_spei.generar_txt
         # (nombre de archivo, filtro, etiqueta, generador del TXT)
         grupos = [
             ("Cuentas Bancomer con correo.txt",
-             lambda b: es_bancomer(b) and tiene_correo(b), "Bancomer con correo", gen_bancomer),
+             lambda b: es_bancomer(b) and tiene_correo(b), "Bancomer con correo", gen),
             ("Cuentas Bancomer sin correo.txt",
-             lambda b: es_bancomer(b) and not tiene_correo(b), "Bancomer sin correo", gen_bancomer),
+             lambda b: es_bancomer(b) and not tiene_correo(b), "Bancomer sin correo", gen),
             ("Cuentas otros bancos con correo.txt",
-             lambda b: not es_bancomer(b) and tiene_correo(b), "otros bancos con correo", gen_spei),
+             lambda b: not es_bancomer(b) and tiene_correo(b), "otros bancos con correo", gen),
             ("Cuentas otros bancos sin correo.txt",
-             lambda b: not es_bancomer(b) and not tiene_correo(b), "otros bancos sin correo", gen_spei),
+             lambda b: not es_bancomer(b) and not tiene_correo(b), "otros bancos sin correo", gen),
         ]
 
         destino = await self.picker.get_directory_path(
