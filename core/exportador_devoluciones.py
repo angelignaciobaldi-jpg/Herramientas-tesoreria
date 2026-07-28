@@ -11,9 +11,14 @@ Banregio (separado por comas, 119 caracteres por línea):
     - concepto: 40 caracteres, izquierda
     - fecha  : DDMMYYYY justificada a la derecha en 15 caracteres
 
-Bancomer (ancho fijo, 131 caracteres por línea):
-    PSC + CLABE_benef(18) + CLABE_origen(18) + MXP + monto(16) + nombre(30)
-        + 40 + codigo_banco(3) + concepto(30 der.) + folio(8)
+Bancomer (ancho fijo). El prefijo distingue el tipo de pago según si la cuenta
+DESTINO es del MISMO banco que la de origen o de OTRO banco:
+    Otro banco (SPEI) -> PSC, 131 caracteres:
+        PSC + CLABE_benef(18) + CLABE_origen(18) + MXP + monto(16) + nombre(30)
+            + 40 + codigo_banco(3) + concepto(30 der.) + folio(8)
+    Mismo banco (Bancomer 012) -> PTC, 88 caracteres (sin nombre, tipo, código ni
+    folio):
+        PTC + CLABE_benef(18) + CLABE_origen(18) + MXP + monto(16) + concepto(30 der.)
 
 Ambos archivos usan salto de línea LF y SIN salto al final.
 """
@@ -32,6 +37,24 @@ def _ascii(texto: str, mayusculas: bool = False) -> str:
         s = s.upper()
     s = re.sub(r"[^A-Za-z0-9 ]", " ", s)
     return " ".join(s.split())
+
+
+def _texto(texto: str) -> str:
+    """Sanea nombre/concepto para el layout del banco: conserva letras (con acentos),
+    dígitos, espacio y los signos , . - / que el banco admite (p. ej. 'S.A. DE C.V.'
+    o 'Z5728847,Z6419734'); colapsa espacios. Lo no representable en latin-1 —cómo se
+    escribe el archivo— se normaliza a ASCII para no romper el guardado."""
+    s = "".join(
+        ch if (ch.isalnum() or ch in " ,.-/") else " "
+        for ch in (texto or "")
+    )
+    try:
+        s.encode("latin-1")
+    except UnicodeEncodeError:
+        s = unicodedata.normalize("NFKD", s).encode("latin-1", "ignore").decode("latin-1")
+    # Solo se recortan los extremos; los espacios internos se conservan tal cual
+    # (el layout del banco no los colapsa).
+    return s.strip()
 
 
 def banco_formato(texto: str) -> str | None:
@@ -53,6 +76,11 @@ def _monto16(monto: float | None) -> str:
 
 def _digitos(clabe: str) -> str:
     return re.sub(r"\D", "", clabe or "")
+
+
+# Código de banco (3 primeros dígitos de la CLABE) de Bancomer, el propio banco
+# que dispersa: si el destino también es 012, el pago es a MISMO banco.
+BANCO_BANCOMER = "012"
 
 
 # ============================================================ Banregio
@@ -81,16 +109,25 @@ def generar_banregio(registros: list[tuple], fecha_ddmmyyyy: str) -> str:
 def linea_bancomer(clabe_benef: str, clabe_origen: str, monto: float | None,
                    nombre: str, concepto: str, folio: str) -> str:
     cb = _digitos(clabe_benef)
-    return (
-        "PSC"
-        + cb
+    base = (
+        cb
         + _digitos(clabe_origen)
         + "MXP"
         + _monto16(monto)
-        + _ascii(nombre)[:30].ljust(30)
+    )
+    concepto_fmt = _texto(concepto)[:30].rjust(30)
+    if cb[:3] == BANCO_BANCOMER:
+        # Mismo banco (Bancomer): pago a terceros PTC, formato corto (sin nombre,
+        # tipo de cuenta, código de banco ni folio).
+        return "PTC" + base + concepto_fmt
+    # Otro banco: pago SPEI PSC, formato completo.
+    return (
+        "PSC"
+        + base
+        + _texto(nombre)[:30].ljust(30)
         + "40"
         + cb[:3]
-        + _ascii(concepto)[:30].rjust(30)
+        + concepto_fmt
         + folio
     )
 
