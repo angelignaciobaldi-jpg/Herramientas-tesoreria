@@ -51,6 +51,7 @@ CATALOGO_BANCOS = {
     "159": "Bank of China",
     "160": "Banco S3",
     "166": "Banco del Bienestar",
+    "167": "Hey Banco",
     "168": "Sociedad Hipotecaria Federal",
     "600": "Monexcb",
     "601": "GBM",
