@@ -34,6 +34,7 @@ import concurrent.futures
 import json
 import os
 import re
+import shutil
 import sys
 import threading
 from dataclasses import dataclass
@@ -65,9 +66,49 @@ def _ruta_navegadores() -> str:
     return os.path.join(rutas.DATOS, "ms-playwright")
 
 
+def _revision_chromium_esperada() -> str:
+    """Revisión de Chromium que espera ESTA versión de Playwright. Se lee de
+    'browsers.json' (empaquetado junto al driver). Cadena vacía si no se puede
+    determinar (se cae a aceptar cualquier revisión)."""
+    try:
+        from playwright._impl._driver import compute_driver_executable
+
+        _node, cli = compute_driver_executable()
+        ruta = os.path.join(os.path.dirname(cli), "browsers.json")
+        with open(ruta, encoding="utf-8") as fh:
+            data = json.load(fh)
+        for b in data.get("browsers", []):
+            if b.get("name") == "chromium":
+                return str(b.get("revision") or "")
+    except Exception:  # noqa: BLE001 — si falla, se usa el chequeo genérico
+        pass
+    return ""
+
+
 def _hay_chromium(base: str) -> bool:
-    """True si ya hay un Chromium instalado en `base`."""
-    return bool(glob.glob(os.path.join(base, "chromium-*", "**", "chrome.exe"), recursive=True))
+    """True si ya está instalado el Chromium de la REVISIÓN que espera Playwright.
+
+    Se verifica la revisión EXACTA (no cualquier 'chromium-*'): al actualizar la
+    app se actualiza también Playwright, que pasa a exigir una revisión nueva de
+    Chromium; un Chromium viejo que quedó en disco (de una versión anterior) ya no
+    sirve y Playwright fallaría al lanzarlo ('Executable doesn't exist at
+    chromium-<rev>'). Si no se puede determinar la revisión, se acepta cualquiera."""
+    rev = _revision_chromium_esperada()
+    patron = f"chromium-{rev}" if rev else "chromium-*"
+    return bool(glob.glob(os.path.join(base, patron, "**", "chrome.exe"), recursive=True))
+
+
+def _limpiar_chromium_viejos(base: str, revision: str) -> None:
+    """Borra los Chromium de OTRAS revisiones que quedaron en `base` de versiones
+    anteriores de la app (cada uno pesa ~150-200 MB y se acumulan en cada update).
+    Conserva solo la revisión vigente. Best-effort: lo que esté en uso o no se pueda
+    borrar se ignora."""
+    if not revision or not os.path.isdir(base):
+        return
+    conservar = {f"chromium-{revision}", f"chromium-headless-shell-{revision}"}
+    for nombre in os.listdir(base):
+        if nombre.startswith("chromium-") and nombre not in conservar:
+            shutil.rmtree(os.path.join(base, nombre), ignore_errors=True)
 
 
 def necesita_navegador() -> bool:
@@ -90,7 +131,10 @@ async def asegurar_navegador() -> None:
         return
     destino = _ruta_navegadores()
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = destino  # antes de usar Playwright
+    revision = _revision_chromium_esperada()
     if _hay_chromium(destino):
+        # Ya está el correcto; de paso limpia revisiones viejas de updates previos.
+        _limpiar_chromium_viejos(destino, revision)
         return
     os.makedirs(destino, exist_ok=True)
     # Descarga Chromium (sin headless shell) con el driver node empaquetado.
@@ -116,6 +160,9 @@ async def asegurar_navegador() -> None:
             "No se pudo preparar el navegador (Chromium). Revisa la conexión a "
             "internet e inténtalo de nuevo."
         )
+    # Ya está el Chromium correcto; borra los de revisiones anteriores para no
+    # acumular cientos de MB en cada actualización.
+    _limpiar_chromium_viejos(destino, revision)
 
 
 def _higienizar_nombre(texto: str) -> str:
