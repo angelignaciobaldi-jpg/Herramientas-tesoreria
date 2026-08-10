@@ -129,10 +129,12 @@ def _fmt_tc(valor: float | None) -> str:
     return f"${(valor or 0):,.4f}"
 
 
-def _fecha_ayer_texto() -> str:
-    """Fecha de AYER en 'DD/MM/AAAA'. Es la fecha con la que se toma (y se muestra)
-    el tipo de cambio del DOF para la dispersión."""
-    return (datetime.date.today() - datetime.timedelta(days=1)).strftime("%d/%m/%Y")
+def _fecha_tc_texto() -> str:
+    """Fecha del DOF con la que se pide el tipo de cambio, en 'DD/MM/AAAA': el día
+    hábil anterior (los lunes, el viernes pasado). Ver `tipo_cambio.fecha_referencia`.
+    Solo para mostrar cuando aún no se consultó el DOF; cuando ya hay respuesta se
+    muestra la fecha que devolvió el DOF, que es la que de verdad se usó."""
+    return tipo_cambio.fecha_referencia().strftime("%d/%m/%Y")
 
 
 def _ultimos_digitos(texto, n: int = 4) -> str:
@@ -1732,15 +1734,16 @@ class SeccionDispersionNoPemex:
             # Tipo de cambio (DOF) para el modal 'Solicitudes a dispersar' cuando hay
             # proveedores USD marcados 'pagar en pesos'. En un hilo (no congela la UI);
             # si falla, se guarda el error para avisarlo en el modal (no impide
-            # dispersar). Siempre con la fecha de AYER (valor y fecha mostrada).
+            # dispersar). Siempre con la fecha del día hábil anterior (los lunes,
+            # el viernes pasado); se muestra la fecha que devuelve el DOF.
             self._tc_preview = None
             self._tc_preview_fecha = None
             self._tc_preview_error = None
             if self._pesos_por_grupo:
                 try:
-                    self._tc_preview = await asyncio.to_thread(
-                        tipo_cambio.tipo_cambio_usd)
-                    self._tc_preview_fecha = _fecha_ayer_texto()
+                    self._tc_preview, self._tc_preview_fecha = (
+                        await asyncio.to_thread(
+                            tipo_cambio.tipo_cambio_usd_detalle))
                 except Exception as exc:  # noqa: BLE001 — se reporta en el modal
                     self._tc_preview_error = str(exc)
             # Conciliación (separa por empresa, valida requeridos y cuadre por cuenta)
@@ -2414,12 +2417,13 @@ class SeccionDispersionNoPemex:
         if not pendientes:
             return
         try:
-            tc = tipo_cambio.tipo_cambio_usd()  # siempre con la fecha de ayer
+            # Día hábil anterior (los lunes, el viernes pasado).
+            tc, tc_fecha = tipo_cambio.tipo_cambio_usd_detalle()
         except Exception as exc:  # noqa: BLE001 — se reporta en el resumen
             self._pesos_error = str(exc)
             return
         self._tipo_cambio = tc
-        self._tc_fecha = _fecha_ayer_texto()
+        self._tc_fecha = tc_fecha
         carpeta = self._disp_carpeta_txt or self._carpeta_txt_dispersion()
         os.makedirs(carpeta, exist_ok=True)
         for clave in pendientes:
@@ -2911,6 +2915,61 @@ class SeccionDispersionNoPemex:
             f"{descargados} archivos.",
             size=13, weight=ft.FontWeight.W_500, color=GRIS)
 
+    def _mostrar_resumen_ejemplo(self, _e=None) -> None:
+        """PRUEBAS: rellena el estado con datos de ejemplo y abre el modal de resumen,
+        para revisar el diseño y dar retro sin ejecutar una dispersión real. Solo con la
+        dispersión en MXN (folio 286, ACP Combustibles)."""
+        def fila(folio, empresa, clave, moneda, origen, par, monto, docs, id_prov):
+            # `docs`: lista de nu_FolioDocumento del grupo (uno por MOVIMIENTO). El
+            # grupo (proveedor+cuenta) muestra 1 fila agregada, pero conserva todos sus
+            # folios de documento (para la búsqueda por folio en el filtro del SIPP) y
+            # el id del proveedor (para el select 'id - nombre' del RPA de subida).
+            return {
+                "folio": folio, "empresa": empresa, "clave": clave, "moneda": moneda,
+                "cuenta_origen": origen, "proveedor": par[0], "cuenta_destino": par[1],
+                "par": par, "monto": monto, "id_proveedor": id_prov,
+                "folio_documento": docs[0] if docs else "",
+                "folios_documento": list(docs),
+                "beneficiarios": [par[1]]}
+
+        # --- REAL: última dispersión (folio 286, ACP Combustibles, MXN) ----------
+        # Un folio con DOS beneficiarios (TRION y VALERO): así se ve el desglose por
+        # proveedor + cuenta. Los id_proveedor son PLACEHOLDER: para una prueba
+        # end-to-end real deben ser los reales de la API.
+        origen_acp = "BBVA BANCOMER 0104728025 ACP COMBUSTIBLES"
+        clave_acp = "ACP Combustibles - MXN"
+        par_trion = ("TRION CORPORATION FUEL AND GAS",
+                     "BANORTE - 072580012454559986")
+        par_valero = ("VALERO MARKETING AND SUPPLY DE MEXICO",
+                      "BANCO 110 - 110180000776465174")
+
+        self._folios_dispersados = [
+            fila("286", "ACP Combustibles", clave_acp, "MXN", origen_acp,
+                 par_trion, 1523170.19, ["146"], 1146),
+            fila("286", "ACP Combustibles", clave_acp, "MXN", origen_acp,
+                 par_valero, 2404645.38,
+                 ["3657735499", "3657735500", "3657735451"], 3657),
+        ]
+        # 1 dispersión (folio 286), 1 layout recuperado.
+        self._disp_resultados_txt = [{"ok": True}]
+        self._disp_carpeta_txt = None
+        # Sin dispersiones USD pago en MXN en este ejemplo.
+        self._pesos_por_grupo = {}
+        self._cuenta_pesos_por_grupo = {}
+        self._clabe_pesos_por_grupo = {}
+        self._concepto_prov_por_grupo = {}
+        self._ref_prov_por_grupo = {}
+        self._pesos_generados = []
+        self._tipo_cambio = None
+        self._tc_fecha = _fecha_tc_texto()
+        self._pesos_error = None
+        self._comprobantes = {}
+        # Estado de subida en limpio (el ejemplo siempre abre en modo normal).
+        self._subidos = set()
+        self._subida_errores = []
+        self._resumen_modo = "normal"
+        self._mostrar_resumen_dispersion()
+
     # -------------------------------------- acciones del resumen
     @staticmethod
     def _id_fila(d: dict) -> str:
@@ -3304,13 +3363,14 @@ class SeccionDispersionNoPemex:
         pares = self._pesos_por_grupo.get(clave) or set()
         if not pares:
             return False, "Esta dispersión no tiene proveedores marcados 'pagar en pesos'."
-        # Tipo de cambio (siempre el de ayer); reutiliza el ya obtenido si existe.
+        # Tipo de cambio del día hábil anterior (los lunes, el viernes pasado);
+        # reutiliza el ya obtenido si existe.
         tc = self._tipo_cambio
         if not tc:
             try:
-                tc = tipo_cambio.tipo_cambio_usd()
+                tc, tc_fecha = tipo_cambio.tipo_cambio_usd_detalle()
                 self._tipo_cambio = tc
-                self._tc_fecha = _fecha_ayer_texto()
+                self._tc_fecha = tc_fecha
             except Exception as exc:  # noqa: BLE001 — se reporta al usuario
                 return False, f"No se pudo obtener el tipo de cambio: {exc}"
         # Texto de cada cuenta origen (define banco/formato del layout).
