@@ -11,13 +11,31 @@ Banregio (separado por comas, 119 caracteres por línea):
     - concepto: 40 caracteres, izquierda
     - fecha  : DDMMYYYY justificada a la derecha en 15 caracteres
 
-Bancomer (ancho fijo). El prefijo distingue el tipo de pago según si la cuenta
-DESTINO es del MISMO banco que la de origen o de OTRO banco:
-    Otro banco (SPEI) -> PSC, 131 caracteres:
-        PSC + CLABE_benef(18) + CLABE_origen(18) + MXP + monto(16) + nombre(30)
-            + 40 + codigo_banco(3) + concepto(30 der.) + folio(8)
-    Mismo banco (Bancomer 012) -> PTC, 88 caracteres (sin nombre, tipo, código ni
-    folio):
+Bancomer / BBVA (ancho fijo). El prefijo distingue el tipo de pago según si la
+cuenta DESTINO es del MISMO banco que la de origen o de OTRO banco.
+
+    Otro banco (SPEI) -> PSC, 131 caracteres. Layout oficial de BBVA Net Cash
+    ("Layout Importación de Grupos - Traspasos y/o Pagos Interbancarios",
+    act. 06/07/2019). Las posiciones del PDF son las del layout base (128) y aquí
+    van corridas 3 por la clave de pago que exige el archivo MIXTO:
+
+        pos    campo (nombre del PDF)             tipo  long
+        1-3    Clave de Pago Bnc                  AL     3   'PSC'
+        4-21   Asunto Beneficiario                N     18   CLABE destino
+        22-39  Asunto Ordenante                   N     18   CLABE cargo
+        40-42  Divisa de la Operación             AL     3   'MXP'
+        43-58  Importe de la Operación            M     16   ceros izq., ####.dd
+        59-88  Titular Asunto Beneficiario        AL    30   izq., espacios
+        89-90  Tipo de Cuenta                     N      2   '40' CLABE / '03' débito
+        91-93  Número de Banco del Beneficiario   N      3   oficial Banxico
+        94-123 Motivo de Pago                     AL    30
+        124-130 Referencia Numérica               N      7   ceros izq.
+        131    Disponibilidad                     AL     1   'H' SPEI / 'M' CECOBAN
+
+    Mismo banco (Bancomer 012) -> PTC, 88 caracteres (sin nombre, tipo, código,
+    referencia ni disponibilidad). OJO: ese layout NO viene en el PDF de
+    interbancarios; se dedujo de un archivo de referencia y está sin verificar
+    contra documentación oficial.
         PTC + CLABE_benef(18) + CLABE_origen(18) + MXP + monto(16) + concepto(30 der.)
 
 Ambos archivos usan salto de línea LF y SIN salto al final.
@@ -78,6 +96,20 @@ def _digitos(clabe: str) -> str:
     return re.sub(r"\D", "", clabe or "")
 
 
+def _referencia7(folio: str) -> str:
+    """Campo 9 del layout BBVA, 'Referencia Numérica': 7 dígitos, ceros a la
+    izquierda ('762' -> '0000762'). Es de ancho fijo; sin rellenar, la línea sale
+    corta y el banco rechaza el archivo."""
+    return _digitos(folio).rjust(7, "0")[-7:]
+
+
+# Campo 10 del layout BBVA, 'Disponibilidad' (1 posición, cierra el registro):
+#   H = mismo día vía SPEI      M = día siguiente vía CECOBAN
+# Los pagos interbancarios de la app salen el mismo día.
+DISPONIBILIDAD_MISMO_DIA = "H"
+DISPONIBILIDAD_DIA_SIGUIENTE = "M"
+
+
 # Código de banco (3 primeros dígitos de la CLABE) de Bancomer, el propio banco
 # que dispersa: si el destino también es 012, el pago es a MISMO banco.
 BANCO_BANCOMER = "012"
@@ -120,7 +152,7 @@ def linea_bancomer(clabe_benef: str, clabe_origen: str, monto: float | None,
         # Mismo banco (Bancomer): pago a terceros PTC, formato corto (sin nombre,
         # tipo de cuenta, código de banco ni folio).
         return "PTC" + base + concepto_fmt
-    # Otro banco: pago SPEI PSC, formato completo.
+    # Otro banco: pago SPEI PSC, formato completo (131 caracteres).
     return (
         "PSC"
         + base
@@ -128,7 +160,8 @@ def linea_bancomer(clabe_benef: str, clabe_origen: str, monto: float | None,
         + "40"
         + cb[:3]
         + concepto_fmt
-        + folio
+        + _referencia7(folio)
+        + DISPONIBILIDAD_MISMO_DIA
     )
 
 
