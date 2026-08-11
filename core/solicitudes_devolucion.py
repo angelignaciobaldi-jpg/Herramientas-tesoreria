@@ -59,9 +59,13 @@ def _mapear(registro: dict, empresa: str) -> SolicitudDevolucion:
     return SolicitudDevolucion(
         folio=_texto(registro.get("id_Solicitud")),
         empresa=empresa,
-        # El beneficiario es el cliente (razón social); 'nb_Solicitante' es el
-        # empleado interno que la registró, no a quien se le paga.
-        cliente=_texto(registro.get("de_Cliente_RazonSocial")
+        # El beneficiario es el 'Nombre Cliente' de la solicitud (nb_Cliente): la
+        # persona a la que se le paga (p. ej. 'EUSEVIO ORTIZ GONZALEZ'). Se prefiere
+        # sobre 'de_Cliente_RazonSocial', que es la razón social de la CUENTA de
+        # cliente y suele ser genérica ('CLIENTES PUBLICO EN GENERAL'). Si nb_Cliente
+        # viniera vacío, se cae a la razón social y, por último, al solicitante.
+        cliente=_texto(registro.get("nb_Cliente")
+                       or registro.get("de_Cliente_RazonSocial")
                        or registro.get("nb_Solicitante")),
         clabe=re.sub(r"\D", "", _texto(registro.get("nu_CuentaBancaria")))[:18],
         banco=_texto(registro.get("nb_Banco")),
