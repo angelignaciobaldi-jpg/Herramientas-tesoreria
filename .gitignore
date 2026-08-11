@@ -56,6 +56,13 @@ Documentos de pruebas conciliación/
 PAGINAS HTML/
 # Archivos TXT de ejemplo (contienen CLABE/nombres reales)
 Archivos TXT/
+# TXT sueltos en la raíz que se dejan al probar el alta de cuentas y la
+# dispersión (CLABE/nombres/montos reales de clientes y proveedores)
+/Cuentas *.txt
+/dispersión *.txt
+/dispersion *.txt
+/*Bancomer*.txt
+/*Banregio*.txt
 ALTABANREGIO 1.xls
 Codigo macro excel
 dispersion_prueba.txt
@@ -71,3 +78,9 @@ token_api.json
 # Volcado de la API de empresas (referencia con datos internos/RFC; no al repo)
 core/empresas.md
 token_extractor_api.json
+
+# ===== Herramientas locales =====
+# Permisos de Claude Code: llevan rutas absolutas de cada máquina
+.claude/
+# Layouts del banco descargados como referencia (no son parte del proyecto)
+bncLay*.pdf
