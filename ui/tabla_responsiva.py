@@ -11,7 +11,8 @@ Es un componente GENÉRICO y reutilizable (no atado a ninguna pantalla). Soporta
 "cabecera" OPCIONALES (bandas a todo lo ancho con colspan), intercaladas con las filas
 de datos: sirven para agrupar (p. ej. proveedor + cuenta + total) o para cualquier
 encabezado de sección. El contenido de cada celda puede ser texto (se trunca con '…' y
-tooltip si no cabe) o cualquier `Control` de Flet (p. ej. un `Checkbox`).
+lleva tooltip con el valor completo) o cualquier `Control` de Flet (p. ej. un
+`Checkbox`); en ese caso el ancho lo debe acotar quien arma el control.
 
 Uso típico:
 
@@ -46,6 +47,13 @@ DER = ft.Alignment(1, 0)
 # Ancho aproximado de un carácter a size=12 (px): decide, sin medir el render, si el
 # texto de una celda probablemente se recorta (y por tanto amerita tooltip).
 _PX_POR_CHAR = 6.0
+# Fracción del ancho a partir de la cual se considera que el texto PUEDE no caber.
+# Por debajo de 1.0 a propósito: la estimación por ancho de carácter se queda corta
+# con negritas, mayúsculas y acentos, así que se activa el tooltip un poco antes de
+# que la cuenta dé justo. No se pone tooltip a TODAS las celdas porque cada uno es un
+# widget con su listener de hover: en una tabla de 100 filas × 11 columnas eso son
+# ~1000 widgets extra y el render se nota.
+_UMBRAL_TOOLTIP = 0.85
 # Canalón para que la barra de scroll horizontal no tape la última fila.
 _GUTTER_SCROLL = 14
 _ALTO_FILA = 44
@@ -221,8 +229,15 @@ class TablaResponsiva:
 
     def _mk_celda(self, contenido, ancho: int, alineacion=CENTRO, bold: bool = False):
         """Devuelve (container, texto|None). Si `contenido` es un Control, se coloca
-        tal cual (texto=None); si es texto, se recorta con '…' y lleva tooltip solo si
-        probablemente no cabe. Se devuelve el Text para poder mutar su ancho en resize."""
+        tal cual (texto=None); si es texto, se recorta con '…' y lleva tooltip con el
+        valor completo cuando puede no caber. Se devuelve el Text para poder mutar su
+        ancho en resize.
+
+        El tooltip NO va en todas las celdas: cada uno es un widget con listener de
+        hover, y ponerlos en una tabla grande degrada el render (ver _UMBRAL_TOOLTIP).
+        Se activa cuando el texto ocupa más del 85% del ancho —margen holgado, porque
+        la estimación por carácter se queda corta con negritas y mayúsculas— y nunca
+        en celdas vacías o de relleno, para no mostrar un globo inútil."""
         if isinstance(contenido, ft.Control):
             return ft.Container(contenido, width=ancho, alignment=alineacion), None
         texto = str(contenido or "")
@@ -232,7 +247,10 @@ class TablaResponsiva:
             align_txt = ft.TextAlign.LEFT
         else:
             align_txt = ft.TextAlign.CENTER
-        tip = texto if len(texto) * _PX_POR_CHAR > ancho else None
+        limpio = texto.strip()
+        # Los guiones son relleno de "sin dato": un tooltip que solo diga '—' estorba.
+        cabe = len(limpio) * _PX_POR_CHAR <= ancho * _UMBRAL_TOOLTIP
+        tip = None if (cabe or limpio in ("", "—", "-", "–")) else limpio
         t = ft.Text(texto, size=12, text_align=align_txt, width=ancho,
                     weight=ft.FontWeight.BOLD if bold else None,
                     max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS)

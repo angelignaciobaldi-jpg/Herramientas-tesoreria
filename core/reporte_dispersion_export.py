@@ -9,7 +9,9 @@ para que el usuario pueda revisar en un archivo familiar lo que eligió pagar.
     única diferencia en los filtros es que el campo "Sucursal" se reemplaza por
     "Fecha Vencimiento".
   - Filas de datos agrupadas por cuenta bancaria y, al cierre de cada grupo, una
-    fila 'TOTAL PROGRAMADO' con la suma del Saldo Programado del grupo.
+    fila 'TOTAL PROGRAMADO' con la suma del Saldo Programado del grupo. Las notas de
+    crédito aparecen en su renglón en negativo y RESTAN de ese total, de modo que
+    coincide con el importe del TXT y con el neto que muestra el SIPP.
 
 No depende de Flet: opera sobre FilaSolicitud, por lo que es fácilmente testeable.
 """
@@ -21,7 +23,7 @@ import re
 import openpyxl
 from openpyxl.styles import Alignment, Font, PatternFill
 
-from core.reporte_dispersion import FilaSolicitud
+from core.reporte_dispersion import FilaSolicitud, total_a_pagar
 
 # Colores del reporte original del SIPP (título/encabezado azul, total gris).
 _AZUL = "FF317FB1"
@@ -175,8 +177,10 @@ def _construir_hoja(ws, empresa: str, filas: list[FilaSolicitud], filtros: dict)
         etq = ws.cell(row=fila, column=_COL_TOTAL_ETIQUETA, value="TOTAL PROGRAMADO")
         etq.font = Font(name=_FUENTE, size=10, bold=True)
         etq.alignment = Alignment(horizontal="right")
+        # Con las notas de crédito descontadas: el archivo refleja lo que se va a
+        # PAGAR, así que su total debe ser el mismo del TXT (ver total_a_pagar).
         tot = ws.cell(row=fila, column=_COL_TOTAL_VALOR,
-                      value=sum(_monto(f.saldo_programado) for f in grupo))
+                      value=total_a_pagar(grupo))
         tot.font = Font(name=_FUENTE, size=10, bold=True)
         tot.alignment = Alignment(horizontal="right")
         tot.number_format = _FMT_MONEDA

@@ -155,6 +155,9 @@ def _agrupar_por_cuenta(movimientos: list[FilaSolicitud]) -> list[GrupoCuenta]:
     grupos: list[GrupoCuenta] = []
     for cuenta in orden:
         movs = por_cuenta[cuenta]
+        # Las notas de crédito entran en ambos totales y restan (sus importes vienen
+        # en negativo, ver FilaSolicitud.__post_init__): así los dos lados reflejan el
+        # neto que se va a dispersar y la comparación sigue cuadrando.
         total_importe = round(sum(getattr(m, _CAMPO_IMPORTE) or 0 for m in movs), 2)
         total_prog = round(sum(m.saldo_programado or 0 for m in movs), 2)
         grupos.append(GrupoCuenta(cuenta, movs, total_importe, total_prog))
