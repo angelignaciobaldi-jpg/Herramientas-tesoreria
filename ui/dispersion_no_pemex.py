@@ -215,7 +215,7 @@ _COLS_PCT = [
     ("Tipo", 3, CENTRO, lambda f: f.tipo),
     ("Fh. Fact.", 9, CENTRO, lambda f: f.fecha_factura),
     ("Fh. Ven.", 9, CENTRO, lambda f: f.fecha_vencimiento),
-    ("Producto", 25, _TIZQ, lambda f: f.producto),
+    ("Producto", 24, _TIZQ, lambda f: f.producto),
 ]
 
 
@@ -505,8 +505,11 @@ class _TablaSolicitudes:
         # en el checkbox (que se reconstruye al paginar). Así no se pierde lo
         # elegido en otras páginas. seleccionadas() lee de aquí.
         self._sel: set[tuple] = set()
-        # Checkboxes de la página ACTUAL (para 'seleccionar todas' sin rebuild).
-        self._checks_filas: list[ft.Checkbox] = []
+        # Checkboxes montados de la página ACTUAL, para reflejar la selección SIN
+        # reconstruir: (checkbox, clave de la fila) y (checkbox de banda, claves del
+        # grupo). Ver _aplicar_seleccion_en_vivo.
+        self._checks_filas: list[tuple] = []
+        self._checks_bandas: list[tuple] = []
         # Paginación a nivel de grupos por cuenta: página actual y el reparto de
         # cuentas por página (se recalcula en _reconstruir).
         self._pagina = 0
@@ -851,10 +854,13 @@ class _TablaSolicitudes:
         self._pagina = max(0, min(self._pagina, len(self._paginas) - 1))
 
         self._checks_filas = []
+        self._checks_bandas = []
         filas_tabla: list = []
         for cuenta in self._paginas[self._pagina]:
             grupo = grupos[cuenta]
-            total = sum((f.saldo_programado or 0) for f in grupo)
+            # Con las notas de crédito ya descontadas, para que el total de la banda
+            # sea el mismo del TXT (ver reporte_dispersion.total_a_pagar).
+            total = reporte_dispersion.total_a_pagar(grupo)
             # Banda del grupo (proveedor+cuenta+total) con un check que selecciona/
             # deselecciona TODAS las solicitudes de ese grupo de una sola vez; debajo
             # sus filas de detalle.
@@ -967,29 +973,37 @@ class _TablaSolicitudes:
                 self._sel -= claves
             else:
                 self._sel |= claves
-            self._reconstruir()
-            self._repintar()  # repinta tabla + barra de pesos (dependen de _sel)
+            # Sin reconstruir: solo se mueven los checks ya montados y la barra de
+            # pesos (ver _aplicar_seleccion_en_vivo).
+            self._aplicar_seleccion_en_vivo()
 
         chk = ft.Checkbox(value=estado, tristate=True, on_change=_toggle)
+        self._checks_bandas.append((chk, claves))
         # Izquierda: proveedor (fuerte) · cuenta (tenue), ocupa el hueco (expand).
         prov_txt = str(proveedor or "—")
         cta_txt = str(cuenta or "")
+        # Los Text llevan `expand` (no `tight`) para que el Row les FIJE un ancho: sin
+        # eso toman su ancho natural, el '…' nunca entra y el texto se desborda
+        # encimándose con el total de la derecha. 3/2 da más espacio al proveedor.
         izq = ft.Row(
             [
-                ft.Text(prov_txt, size=13, weight=ft.FontWeight.BOLD,
+                ft.Text(prov_txt, size=13, weight=ft.FontWeight.BOLD, expand=3,
                         max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
-                        tooltip=prov_txt if len(prov_txt) > 40 else None),
+                        tooltip=prov_txt),
                 ft.Text("·", size=13, color=GRIS),
                 ft.Text(cta_txt, size=12, weight=ft.FontWeight.BOLD, color=GRIS,
+                        expand=2,
                         max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
-                        tooltip=cta_txt if len(cta_txt) > 34 else None),
+                        tooltip=cta_txt or None),
             ],
-            spacing=8, tight=True, expand=True,
+            spacing=8, expand=True,
             vertical_alignment=ft.CrossAxisAlignment.CENTER)
         der = ft.Row(
             [
                 ft.Text("TOTAL PROG.", size=11, weight=ft.FontWeight.BOLD, color=GRIS),
-                ft.Text(_fmt_moneda(total), size=13, weight=ft.FontWeight.BOLD),
+                ft.Text(_fmt_moneda(total), size=13, weight=ft.FontWeight.BOLD,
+                        no_wrap=True,
+                        tooltip=f"TOTAL PROG. {_fmt_moneda(total)}"),
             ],
             spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         # alineacion=None -> el Row llena el ancho del segmento y el total queda a la
@@ -1009,26 +1023,60 @@ class _TablaSolicitudes:
 
         def _al_check(_e, f=f, c=chk):
             (self._sel.add if c.value else self._sel.discard)(f.clave())
+            # Marcar una fila cambia el tri-estado de su banda, el check de
+            # 'seleccionar todas' y la barra de pesos: se reflejan EN VIVO, sin
+            # reconstruir (ver _aplicar_seleccion_en_vivo).
+            self._aplicar_seleccion_en_vivo(salvo=c)
 
         chk.on_change = _al_check
-        self._checks_filas.append(chk)
+        self._checks_filas.append((chk, f.clave()))
 
         celdas: list = [chk]
         for _etiqueta, _pct, _alin, fn in _COLS_PCT[1:]:
             celdas.append(fn(f))
         return FilaDatos(celdas, bgcolor=_color_fila(f))
 
+    def _aplicar_seleccion_en_vivo(self, salvo=None) -> None:
+        """Refleja `self._sel` en los controles YA montados, SIN reconstruir la tabla.
+
+        Al pintar, lo único que depende de la selección es: el check de cada fila, el
+        tri-estado de cada banda, el check 'seleccionar todas' y la barra de 'pagar en
+        pesos'. Ni los colores de fila ni los totales cambian con ella.
+
+        Reconstruir para marcar casillas creaba de cero los ~24 controles de cada fila
+        —más de 2000 en una página llena— y por eso 'seleccionar todas' tardaba
+        segundos en un beneficiario con muchos movimientos. Mutar los checks montados
+        es proporcional al número de casillas, no al de celdas.
+
+        `salvo` es el checkbox que el propio usuario acaba de mover: no se le reescribe
+        el valor para no pelear con el estado que Flet ya le puso.
+        """
+        for chk, clave in self._checks_filas:
+            if chk is salvo:
+                continue
+            chk.value = clave in self._sel
+        for chk, claves in self._checks_bandas:
+            sel = claves & self._sel
+            chk.value = True if sel == claves and claves else (None if sel else False)
+        visibles = self._filas_visibles()
+        self.chk_todos.value = bool(visibles) and all(
+            f.clave() in self._sel for f in visibles)
+        # La barra de 'pagar en pesos' solo muestra los pares SELECCIONADOS, así que
+        # sí hay que rearmarla; es pequeña (un bloque por par marcado).
+        self._reconstruir_pesos()
+        self._repintar()
+
     def _marcar_todas(self, _e) -> None:
         # Selecciona/deselecciona todas las filas VISIBLES (de todas las páginas,
-        # respetando el filtro de vencimiento) y reconstruye para reflejar los checks
-        # por fila y las bandas. Las ocultas no se seleccionan.
+        # respetando el filtro de vencimiento). Las ocultas no se seleccionan. Los
+        # checks se mueven en vivo, sin reconstruir la página (ver
+        # _aplicar_seleccion_en_vivo).
         claves_visibles = {f.clave() for f in self._filas_visibles()}
         if self.chk_todos.value:
             self._sel |= claves_visibles
         else:
             self._sel -= claves_visibles
-        self._reconstruir()
-        self._repintar()
+        self._aplicar_seleccion_en_vivo(salvo=self.chk_todos)
 
 
 class SeccionDispersionNoPemex:
@@ -1116,6 +1164,11 @@ class SeccionDispersionNoPemex:
         # Referencia leída del DOM por el RPA (respaldo), por par.
         self._ref_dom_por_grupo: dict[str, dict[tuple, str]] = {}
         self._pesos_generados: list[dict] = []
+        # Cuentas origen cambiadas a mano desde el resumen, por folio. La app las
+        # aplica a sus filas, pero SIPP se corrige aparte: esto deja el rastro de qué
+        # falta reflejar allá y es el punto de enganche si algún día se automatiza
+        # (la tabla del SIPP expone 'editarDispersionProveedoresNoPemex(item)').
+        self._cuentas_origen_pendientes_sipp: dict = {}
         self._tipo_cambio: float | None = None
         self._tc_fecha: str | None = None       # fecha DOF del TC usado (DD/MM/AAAA)
         self._pesos_error: str | None = None
@@ -2002,6 +2055,75 @@ class SeccionDispersionNoPemex:
                 pendientes.append(fila)
         return pendientes
 
+    def _folios_sin_capturar(self, pendientes: list[dict]) -> list[str]:
+        """Combinaciones empresa · cuenta origen cuyo FOLIO no se pudo capturar al
+        guardar en SIPP (guardar_dispersion devolvió None).
+
+        Sin folio no hay forma segura de ubicar su fila: empresa y cuenta origen se
+        repiten entre dispersiones, así que buscar por ellas podría marcar la
+        equivocada. Esas se dejan fuera del marcado y se reportan para hacerlas a
+        mano, en vez de arriesgar un pago confirmado por error."""
+        sin_folio = []
+        for fila in pendientes:
+            if fila.get("folio") is not None:
+                continue
+            etq = f"{fila.get('empresa') or '?'} · {fila.get('cuenta_origen') or '?'}"
+            if etq not in sin_folio:
+                sin_folio.append(etq)
+        return sin_folio
+
+    def _dispersiones_a_marcar(self, pendientes: list[dict]) -> list[dict]:
+        """Dispersiones (una entrada por FOLIO) que hay que marcar como pagadas antes
+        de subir: las de las filas `pendientes`, deduplicadas por folio.
+
+        El FOLIO es el identificador de la dispersión: lo devuelve el propio SIPP al
+        guardarla y es la primera columna de su tabla. Agrupar por él es lo correcto
+        —y más fiable que empresa + cuenta origen, que se repiten entre dispersiones—:
+        varias filas del resumen (una por proveedor+cuenta destino) pertenecen a UNA
+        sola dispersión, y el total que muestra el SIPP es la suma de todas ellas.
+
+        Cada entrada trae lo necesario para ubicar y VERIFICAR su fila en la tabla de
+        dispersiones del SIPP:
+        - `cuenta`: la Cuenta Origen elegida en SIPP (`cuenta_origen`), que es la que
+          muestra esa tabla. NUNCA la cuenta en pesos del TXT: esa no entró a SIPP.
+        - `total`: la suma de TODAS las filas del folio en _folios_dispersados (no solo
+          las pendientes), en la moneda de la dispersión —SIPP la registró en USD
+          aunque el pago se haga en pesos—, porque la tabla muestra el total completo.
+        """
+        totales: dict = {}
+        for fila in self._folios_dispersados or []:
+            folio = fila.get("folio")
+            if folio is not None:
+                totales[folio] = totales.get(folio, 0.0) + (fila.get("monto") or 0)
+        items, vistos = [], set()
+        for fila in pendientes:
+            folio = fila.get("folio")
+            if folio is None or folio in vistos:
+                continue
+            vistos.add(folio)
+            items.append({
+                "folio": folio,
+                "empresa": fila.get("empresa") or "",
+                "cuenta": fila.get("cuenta_origen") or "",
+                "fecha": fila.get("fecha") or "",
+                "total": round(totales.get(folio, 0.0), 2),
+            })
+        return items
+
+    def _registrar_errores_marcaje(self, marcajes: list[dict]) -> None:
+        """Acumula en _subida_errores las dispersiones que NO quedaron marcadas como
+        pagadas. 'marcada' y 'ya_pagada' son resultados buenos y no se reportan.
+
+        Se avisa además que su subida va a fallar: la búsqueda de comprobantes filtra
+        por estatus PAGADA, así que una dispersión sin marcar no devuelve filas."""
+        for m in marcajes or []:
+            if m.get("estado") in ("marcada", "ya_pagada"):
+                continue
+            detalle = m.get("detalle") or m.get("estado") or "motivo desconocido"
+            self._subida_errores.append(
+                f"Dispersión {m.get('folio')} ({m.get('empresa')}): no se pudo marcar "
+                f"como pagada — {detalle}. Sus comprobantes no se encontrarán.")
+
     def _subida_todo_ok(self) -> bool:
         """True si TODOS los movimientos del resumen tienen su comprobante subido."""
         ids = {self._id_fila(f) for f in (self._folios_dispersados or [])}
@@ -2150,9 +2272,15 @@ class SeccionDispersionNoPemex:
         self._cerrar_subida_luego(self._mostrar_resumen_dispersion)
 
     async def _ejecutar_subida_comprobantes(self) -> None:
-        """Sube, por cada movimiento pendiente con comprobante, su PDF en la pestaña
-        'Proveedores (No Pemex)': login → tab → estatus 'Pagado' (una vez) → por fila:
-        buscar por proveedor + folio(s) de documento y adjuntar. Los errores no abortan
+        """Marca las dispersiones como pagadas y sube los comprobantes.
+
+        login → MARCAR PAGOS (pestaña 'Dispersiones (No Pemex)': una pasada por cada
+        dispersión pendiente, pulsando 'Confirmar Pago') → pestaña 'Proveedores (No
+        Pemex)' → estatus 'Pagado' (una vez) → por fila: buscar por proveedor +
+        folio(s) de documento y adjuntar su PDF.
+
+        El marcaje va PRIMERO porque la subida filtra por estatus PAGADA: sin marcar,
+        las filas de esa dispersión no aparecen en la búsqueda. Los errores no abortan
         (se acumulan en _subida_errores). Corre en el hilo del RPA (BucleRpa)."""
         self._disp_loop_ui = asyncio.get_running_loop()
         self._subida_errores = []
@@ -2170,11 +2298,30 @@ class SeccionDispersionNoPemex:
         usuario, contrasena = self.app.config.credenciales()
         total = len(pendientes)
 
+        a_marcar = self._dispersiones_a_marcar(pendientes)
+        for etq in self._folios_sin_capturar(pendientes):
+            self._subida_errores.append(
+                f"{etq}: no se capturó el folio al guardar la dispersión, así que no "
+                "se pudo marcar como pagada. Hay que marcarla a mano en el SIPP.")
+
+        def _prog_marcaje(hechos: int, total_m: int) -> None:
+            self._sub_estado_seguro(
+                f"Marcando pagos… {hechos}/{total_m}", VERDE)
+
         async def flujo() -> None:
             await sesion.iniciar()
             await sesion.login(usuario, contrasena)
             await sesion.seleccionar_empresa_sucursal(
                 self.EMPRESA_SESION, self.SUCURSAL_SESION)
+            # Marcar como pagadas las dispersiones que se van a subir. La tabla es una
+            # PESTAÑA del DashboardTesor, vecina de 'Proveedores (No Pemex)':
+            # marcar_pagos_dispersion entra sola, sin pasar por el alta de dispersiones.
+            if a_marcar:
+                await ctrl.punto_control()
+                marcajes = await sesion.marcar_pagos_dispersion(
+                    a_marcar, progreso=_prog_marcaje,
+                    punto_control=ctrl.punto_control)
+                self._registrar_errores_marcaje(marcajes)
             await sesion.ir_a_tab_proveedores_no_pemex()
             # El estatus 'Pagado' se fija UNA sola vez, antes del primer 'Buscar'.
             await sesion.seleccionar_estatus_pagado()
@@ -2316,7 +2463,8 @@ class SeccionDispersionNoPemex:
                 # uno por proveedor + cuenta beneficiario).
                 self._folios_dispersados.extend(
                     self._filas_resumen_de_empresa(
-                        emp, folio, empresa, cuenta_origen or ""))
+                        emp, folio, empresa, cuenta_origen or "",
+                        _fmt_fecha(datetime.date.today())))
             # 7) Descargar los TXT (layouts) de las dispersiones generadas.
             await self._descargar_txts_dispersion(sesion)
             # 8) Generar los TXT en PESOS (proveedores marcados en tablas USD).
@@ -2448,7 +2596,8 @@ class SeccionDispersionNoPemex:
                     continue
                 movs = [m for m in emp.movimientos
                         if m.proveedor == prov and m.cuenta_bancaria == cuenta]
-                usd = sum((m.saldo_programado or 0) for m in movs)
+                # Con las notas de crédito descontadas (ver total_a_pagar).
+                usd = reporte_dispersion.total_a_pagar(movs)
                 pesos = round(usd * tc, 2)
                 cuenta_benef = re.sub(r"\D", "", cuenta or "")
                 concepto = (conceptos.get(par) or emp.concepto_pago or "").strip()
@@ -2474,11 +2623,7 @@ class SeccionDispersionNoPemex:
                 else:  # BBVA / Bancomer (ancho fijo) — formato por defecto
                     contenido = exportador_devoluciones.generar_bancomer(
                         registros, clabe_dig, str(folio or ""))
-                # Distintivo de la cuenta origen en el nombre (últimos 4 dígitos), para
-                # no colisionar cuando hay varias cuentas origen en el mismo grupo.
-                sufijo = f"Pesos {clabe_dig[-4:]}" if clabe_dig else "Pesos"
-                nombre = _sanear_archivo(
-                    self._nombre_txt(folio_entry) + " " + sufijo) + ".txt"
+                nombre = self._nombre_txt_pesos(folio_entry, clabe_dig)
                 ruta = _ruta_unica(os.path.join(carpeta, nombre))
                 try:
                     with open(ruta, "w", encoding="latin-1", newline="") as fh:
@@ -2506,16 +2651,34 @@ class SeccionDispersionNoPemex:
                   d.get("cuenta_origen") or ""]
         return " ".join(p.strip() for p in partes if p and p.strip())
 
+    def _nombre_txt_pesos(self, d: dict, clabe_dig: str) -> str:
+        """Nombre completo (con .txt) del layout en PESOS de una dispersión USD
+        pagada en MXN: 'Pesos NNNN Folio Empresa Banco Cuenta'.
+
+        El distintivo va al PRINCIPIO, no al final: en la carpeta del día estos
+        archivos conviven con los layouts en dólares que descarga el SIPP, y llevando
+        'Pesos' adelante el usuario los distingue de un vistazo y quedan todos juntos
+        al ordenar por nombre. `NNNN` son los últimos 4 dígitos de la cuenta origen en
+        pesos, para no colisionar cuando el mismo grupo usa varias cuentas origen."""
+        distintivo = f"Pesos {clabe_dig[-4:]}" if clabe_dig else "Pesos"
+        return _sanear_archivo(
+            f"{distintivo} {self._nombre_txt(d)}".strip()) + ".txt"
+
     @staticmethod
     def _filas_resumen_de_empresa(
-        emp, folio, empresa: str, cuenta_origen: str,
+        emp, folio, empresa: str, cuenta_origen: str, fecha: str = "",
     ) -> list[dict]:
         """Desglosa una dispersión (empresa+moneda) en filas de resumen, UNA por
         (proveedor, cuenta beneficiaria) —el mismo corte en que el sistema separa la
         dispersión al marcarla como pagada—. Cada fila agrega el Saldo Programado del
         par y conserva, OCULTOS (no se muestran en la tabla), los nu_FolioDocumento de
         sus solicitudes y la CLABE interbancaria del beneficiario, para validaciones y
-        la vinculación de comprobantes."""
+        la vinculación de comprobantes.
+
+        `fecha` (DD/MM/AAAA) es la del registro en SIPP: se captura al guardar, no al
+        usarla, para que siga siendo correcta si la subida de comprobantes se retoma
+        otro día. Es la que muestra la columna 'Fecha Pago' de la tabla de
+        dispersiones y sirve para verificar la fila antes de marcarla como pagada."""
         moneda = emp.movimientos[0].moneda if emp.movimientos else ""
         grupos: dict[tuple, list] = {}
         orden: list[tuple] = []
@@ -2540,9 +2703,12 @@ class SeccionDispersionNoPemex:
                 (m.id_proveedor for m in movs if m.id_proveedor is not None), None)
             filas.append({
                 "folio": folio, "empresa": empresa, "clave": emp.empresa,
-                "moneda": moneda, "cuenta_origen": cuenta_origen,
+                "moneda": moneda, "cuenta_origen": cuenta_origen, "fecha": fecha,
                 "proveedor": prov, "cuenta_destino": cuenta, "par": par,
-                "monto": sum((m.saldo_programado or 0) for m in movs),
+                # Lo que de verdad se paga, ya con las notas de crédito descontadas,
+                # para que cuadre con el TXT, con el total que muestra el SIPP y con
+                # el importe que se busca al subir el comprobante.
+                "monto": reporte_dispersion.total_a_pagar(movs),
                 # --- Ocultos (no se muestran; validaciones/vinculación) ------------
                 "id_proveedor": id_prov,
                 "folio_documento": folios_doc[0] if folios_doc else "",
@@ -2582,11 +2748,19 @@ class SeccionDispersionNoPemex:
     _RESUMEN_ANCHO = 880
 
     def _cols_resumen(self, categoria: str) -> list[ColumnaTabla]:
-        """Columnas (porcentuales) del resumen según la categoría de moneda. El corte
-        es por Empresa · Cuenta origen · Proveedor · Cuenta destino (una fila por
-        proveedor+cuenta, como el sistema separa la dispersión al pagarla). La última
-        columna es 'Acciones'; 'usd_pesos' añade además 'Total MXN'. El Proveedor va a
-        la izquierda (nombres largos), los montos a la derecha y el resto centrado.
+        """Columnas (porcentuales) del resumen según la categoría de moneda. Cada fila
+        es un (proveedor, cuenta destino), el corte con que el sistema separa la
+        dispersión al pagarla. La última columna es 'Acciones'; 'usd_pesos' añade
+        'Cuenta pesos' y 'Total MXN'. El Proveedor va a la izquierda (nombres largos),
+        los montos a la derecha y el resto centrado.
+
+        Empresa y Cuenta origen NO son columnas: son iguales para toda la dispersión,
+        así que viven en la banda del folio (ver `_banda_folio`). Eso deja el ancho
+        para lo que sí cambia fila a fila.
+
+        'Cuenta pesos' es la Cuenta Origen EN PESOS del par: es la que nombra el TXT
+        generado ('… Pesos 7045') y por tanto la que permite vincular cada fila con
+        su archivo. Va aparte de 'Cuenta destino', que es la cuenta del beneficiario.
 
         Los porcentajes suman 99 (no 100) a propósito: así el ancho total queda
         justo por debajo del disponible y no aparece un scroll horizontal por el
@@ -2594,12 +2768,12 @@ class SeccionDispersionNoPemex:
         pesos = categoria == "usd_pesos"
         total_lbl = "Total MXN" if categoria == "mxn" else "Total USD"
         cols = [
-            ColumnaTabla("Empresa", 13 if pesos else 16, CENTRO),
-            ColumnaTabla("Cuenta origen", 15 if pesos else 18, CENTRO),
-            ColumnaTabla("Proveedor", 17 if pesos else 20, _TIZQ),
-            ColumnaTabla("Cuenta destino", 16 if pesos else 18, CENTRO),
-            ColumnaTabla(total_lbl, 11 if pesos else 12, _TDER),
+            ColumnaTabla("Proveedor", 22 if pesos else 36, _TIZQ),
+            ColumnaTabla("Cuenta destino", 19 if pesos else 30, CENTRO),
         ]
+        if pesos:
+            cols.append(ColumnaTabla("Cuenta pesos", 19, CENTRO))
+        cols.append(ColumnaTabla(total_lbl, 12 if pesos else 18, _TDER))
         if pesos:
             cols.append(ColumnaTabla("Total MXN", 12, _TDER))
         cols.append(ColumnaTabla("Acciones", 15, CENTRO))
@@ -2611,8 +2785,12 @@ class SeccionDispersionNoPemex:
         - 'errores': movimiento SUBIDO (en _subidos) → solo VER; PENDIENTE → Agregar/
           Editar para adjuntar y reintentar.
         - 'normal': sin comprobante → Agregar (+); con comprobante → VER + EDITAR.
-        Agregar/Editar nunca coexisten. En 'usd_pesos' (modos normal/errores) se añade el
-        botón de regenerar el TXT en pesos."""
+        Agregar/Editar nunca coexisten.
+
+        Las acciones del comprobante van como ICONOS directos (son las de uso
+        frecuente); las demás —regenerar el TXT en pesos y eliminar el movimiento—
+        van en un menú de tres puntos, que además evita apretar la columna. En modo
+        'exito' la operación ya cerró: solo consulta, sin menú."""
         modo = self._resumen_modo
         idf = self._id_fila(d)
         tiene = bool(self._comprobantes.get(idf))
@@ -2630,6 +2808,21 @@ class SeccionDispersionNoPemex:
                 on_click=lambda _e, dd=d: self.page.run_task(
                     self._vincular_comprobante_individual, dd))
 
+        def menu() -> ft.Control:
+            items = []
+            if categoria == "usd_pesos":
+                items.append(ft.PopupMenuItem(
+                    content=ft.Text("Regenerar TXT en pesos", size=13),
+                    icon=ft.Icons.AUTORENEW,
+                    on_click=lambda _e, dd=d: self._dialogo_regenerar_txt(dd)))
+            items.append(ft.PopupMenuItem(
+                content=ft.Text("Eliminar movimiento", size=13, color=ROJO),
+                icon=ft.Icons.DELETE_OUTLINE,
+                on_click=lambda _e, dd=d: self._confirmar_eliminar_fila(dd)))
+            return ft.PopupMenuButton(
+                icon=ft.Icons.MORE_VERT, icon_size=18, tooltip="Más acciones",
+                items=items)
+
         if modo == "exito":
             # Operación terminada con éxito: solo consulta.
             if tiene:
@@ -2637,8 +2830,9 @@ class SeccionDispersionNoPemex:
             return ft.Row(botones, spacing=0, tight=True,
                           alignment=ft.MainAxisAlignment.CENTER)
         if modo == "errores" and subido:
-            # Ya subido: solo se puede ver el comprobante.
+            # Ya subido: ver el comprobante; el resto sigue en el menú.
             botones.append(ver())
+            botones.append(menu())
             return ft.Row(botones, spacing=0, tight=True,
                           alignment=ft.MainAxisAlignment.CENTER)
 
@@ -2648,55 +2842,127 @@ class SeccionDispersionNoPemex:
             botones.append(editar(ft.Icons.EDIT, "Modificar comprobante"))
         else:
             botones.append(editar(ft.Icons.ADD, "Agregar comprobante"))
-        if categoria == "usd_pesos":
-            botones.append(ft.IconButton(
-                ft.Icons.AUTORENEW, icon_size=18, tooltip="Regenerar TXT en pesos",
-                on_click=lambda _e, dd=d: self._dialogo_regenerar_txt(dd)))
+        botones.append(menu())
         return ft.Row(botones, spacing=0, tight=True,
                       alignment=ft.MainAxisAlignment.CENTER)
+
+    def _total_folio(self, folio) -> float:
+        """Total de la dispersión COMPLETA (todas sus filas), en su moneda. Es el
+        importe que muestra el SIPP para ese folio, aunque en esta tabla solo se vean
+        algunas de sus filas."""
+        return round(sum((d.get("monto") or 0) for d in self._folios_dispersados
+                         if d.get("folio") == folio), 2)
+
+    def _banda_folio(self, d: dict, n_cols: int) -> Cabecera:
+        """Banda agrupadora de una dispersión: 'Folio N · Empresa · Cuenta origen' a la
+        izquierda, con el botón de editar la cuenta origen, y el TOTAL FOLIO a la
+        derecha.
+
+        El total es el del folio COMPLETO, no el de las filas visibles: un mismo folio
+        puede repartir sus filas entre las tablas 'USD' y 'USD pago en MXN' (ver
+        `_rango_moneda_fila`, que clasifica por FILA). Por eso se etiqueta 'TOTAL
+        FOLIO', distinto del 'TOTAL' de la tabla, que sí suma solo lo que se ve."""
+        folio = d.get("folio")
+        empresa = str(d.get("empresa") or "—")
+        cuenta = str(d.get("cuenta_origen") or "—")
+        editable = self._resumen_modo != "exito"
+        # Los Text llevan `expand` (no `tight`) para que el Row les fije un ancho y el
+        # '…' funcione; con el ancho natural se desbordarían sobre el total.
+        izq_items = [
+            ft.Text(f"Folio {folio}" if folio is not None else "Sin folio",
+                    size=13, weight=ft.FontWeight.BOLD, no_wrap=True,
+                    tooltip=f"Folio de la dispersión en SIPP: {folio}"),
+            ft.Text("·", size=13, color=GRIS),
+            ft.Text(empresa, size=12, weight=ft.FontWeight.BOLD, expand=2,
+                    max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+                    tooltip=empresa),
+            ft.Text("·", size=13, color=GRIS),
+            ft.Text(cuenta, size=12, color=GRIS, expand=3,
+                    max_lines=1, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS,
+                    tooltip=f"Cuenta origen: {cuenta}"),
+        ]
+        if editable:
+            izq_items.append(ft.IconButton(
+                ft.Icons.ACCOUNT_BALANCE, icon_size=16,
+                tooltip="Cambiar la cuenta origen de esta dispersión",
+                on_click=lambda _e, dd=d: self._dialogo_cuenta_origen(dd)))
+        total = self._total_folio(folio)
+        der = ft.Row(
+            [ft.Text("TOTAL FOLIO", size=11, weight=ft.FontWeight.BOLD, color=GRIS),
+             ft.Text(_fmt_moneda(total), size=13, weight=ft.FontWeight.BOLD,
+                     no_wrap=True,
+                     tooltip=f"Total de la dispersión {folio}: {_fmt_moneda(total)}")],
+            spacing=6, tight=True, vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        info = ft.Row(
+            [ft.Row(izq_items, spacing=6, expand=True,
+                    vertical_alignment=ft.CrossAxisAlignment.CENTER), der],
+            vertical_alignment=ft.CrossAxisAlignment.CENTER)
+        return Cabecera(
+            [SegmentoCabecera(n_cols, info, alineacion=None,
+                              padding=ft.Padding.only(left=10, right=10))],
+            alto=40)
 
     def _tabla_resumen(self, folios: list[dict], categoria: str,
                        ancho: float) -> ft.Control:
         """Tabla de resumen (TablaResponsiva, columnas porcentuales) para una
-        categoría de moneda, con su fila TOTAL y la columna de acciones. Una fila por
-        (proveedor, cuenta destino)."""
+        categoría de moneda: una BANDA por dispersión (folio) seguida de sus filas
+        —una por (proveedor, cuenta destino)—, y al cierre la fila TOTAL de la tabla.
+
+        Las filas llegan agrupadas por folio en el orden en que se dispersaron."""
+        cols = self._cols_resumen(categoria)
+        n_cols = len(cols)
         tabla = TablaResponsiva(
-            self.page, self._cols_resumen(categoria),
-            ancho_inicial=ancho, alto_fila=46)
+            self.page, cols, ancho_inicial=ancho, alto_fila=46)
 
         def negrita(texto: str) -> ft.Control:
             return ft.Text(str(texto or ""), size=12, weight=ft.FontWeight.BOLD,
                            max_lines=1, no_wrap=True,
                            overflow=ft.TextOverflow.ELLIPSIS)
 
-        filas: list[FilaDatos] = []
-        tot_prin, tot_mxn = 0.0, 0.0
+        # Agrupa por folio conservando el orden de aparición.
+        grupos: dict = {}
+        orden: list = []
         for d in folios:
-            monto = d.get("monto") or 0
-            tot_prin += monto
-            celdas: list = [
-                d.get("empresa") or "",
-                d.get("cuenta_origen") or "—",
-                d.get("proveedor") or "—",
-                self._cuenta_destino_mostrar(d, categoria) or "—",
-                _fmt_moneda(monto),
-            ]
-            if categoria == "usd_pesos":
-                mxn = self._monto_mxn_fila(d)
-                if mxn is not None:
-                    tot_mxn += mxn
-                celdas.append(_fmt_moneda(mxn) if mxn is not None else "N/A")
-            celdas.append(self._acciones_resumen(d, categoria))
-            # En modo 'errores', las filas NO subidas (pendientes) se resaltan en
-            # amarillo para que el usuario adjunte/reintente su comprobante.
-            pendiente = (self._resumen_modo == "errores"
-                         and self._id_fila(d) not in self._subidos)
-            filas.append(FilaDatos(
-                celdas, bgcolor=_AMARILLO_PENDIENTE if pendiente else None))
-        # Fila TOTAL (en negrita; celdas de texto para poder resaltarlas). Las celdas
-        # vacías corresponden a Cuenta origen, Proveedor y Cuenta destino.
-        total_celdas: list = [
-            negrita("TOTAL"), "", "", "", negrita(_fmt_moneda(tot_prin))]
+            folio = d.get("folio")
+            if folio not in grupos:
+                grupos[folio] = []
+                orden.append(folio)
+            grupos[folio].append(d)
+
+        filas: list = []
+        tot_prin, tot_mxn = 0.0, 0.0
+        for folio in orden:
+            del_folio = grupos[folio]
+            filas.append(self._banda_folio(del_folio[0], n_cols))
+            for d in del_folio:
+                monto = d.get("monto") or 0
+                tot_prin += monto
+                celdas: list = [
+                    d.get("proveedor") or "—",
+                    d.get("cuenta_destino") or "—",
+                ]
+                if categoria == "usd_pesos":
+                    celdas.append(self._cuenta_pesos_mostrar(d) or "—")
+                celdas.append(_fmt_moneda(monto))
+                if categoria == "usd_pesos":
+                    mxn = self._monto_mxn_fila(d)
+                    if mxn is not None:
+                        tot_mxn += mxn
+                    celdas.append(_fmt_moneda(mxn) if mxn is not None else "N/A")
+                celdas.append(self._acciones_resumen(d, categoria))
+                # En modo 'errores', las filas NO subidas (pendientes) se resaltan en
+                # amarillo para que el usuario adjunte/reintente su comprobante.
+                pendiente = (self._resumen_modo == "errores"
+                             and self._id_fila(d) not in self._subidos)
+                filas.append(FilaDatos(
+                    celdas, bgcolor=_AMARILLO_PENDIENTE if pendiente else None))
+        # Fila TOTAL de la tabla (suma de lo VISIBLE aquí, a diferencia del TOTAL
+        # FOLIO de cada banda). Las celdas vacías corresponden a Cuenta destino y
+        # —en 'usd_pesos'— Cuenta pesos.
+        total_celdas: list = [negrita("TOTAL"), ""]
+        if categoria == "usd_pesos":
+            total_celdas.append("")
+        total_celdas.append(negrita(_fmt_moneda(tot_prin)))
         if categoria == "usd_pesos":
             total_celdas.append(negrita(_fmt_moneda(tot_mxn) if tot_mxn else "N/A"))
         total_celdas.append("")
@@ -2704,17 +2970,18 @@ class SeccionDispersionNoPemex:
         tabla.set_contenido(filas)
         return tabla.control
 
-    def _cuenta_destino_mostrar(self, d: dict, categoria: str) -> str:
-        """Cuenta destino a mostrar en el resumen: la cuenta beneficiaria del
-        proveedor y, en 'USD pago en MXN', la Cuenta Origen EN PESOS seleccionada para
-        ese par (la cuenta a la que se hace el pago en pesos)."""
-        if categoria == "usd_pesos":
-            clave, par = d.get("clave") or "", d.get("par")
-            cuenta = (self._cuenta_pesos_por_grupo.get(clave, {}).get(par)
-                      or self._clabe_pesos_por_grupo.get(clave, {}).get(par))
-            if cuenta:
-                return cuenta
-        return d.get("cuenta_destino") or ""
+    def _cuenta_pesos_mostrar(self, d: dict) -> str:
+        """Cuenta Origen EN PESOS elegida para el par de una fila 'USD pago en MXN':
+        la cuenta de la que sale el pago en pesos.
+
+        Es la que da nombre al TXT generado ('… Pesos 7045', los últimos 4 dígitos de
+        su CLABE), así que es el dato que permite vincular cada fila del resumen con
+        su archivo. Si no está el texto de la cuenta, cae a la CLABE. '' si el par no
+        tiene cuenta en pesos (no debería pasar: es requerida antes de dispersar)."""
+        clave, par = d.get("clave") or "", d.get("par")
+        return (self._cuenta_pesos_por_grupo.get(clave, {}).get(par)
+                or self._clabe_pesos_por_grupo.get(clave, {}).get(par)
+                or "")
 
     def _monto_mxn_fila(self, d: dict) -> float | None:
         """Equivalente en MXN del Saldo Programado (USD) del par: USD × T.C. del DOF
@@ -2910,15 +3177,24 @@ class SeccionDispersionNoPemex:
         if self._resumen_modo == "errores":
             return ft.Text("Ocurrieron errores al subir los comprobantes",
                            size=13, weight=ft.FontWeight.BOLD, color=NARANJA)
+        # Los archivos se acotan al número de dispersiones: si el usuario eliminó del
+        # resumen la última fila de un folio, ese folio ya no se cuenta pero su
+        # descarga sí sigue en _disp_resultados_txt (que no guarda el folio y no se
+        # puede reconciliar). Sin el tope saldrían absurdos tipo '1 dispersión y 2
+        # archivos'.
         return ft.Text(
             f"Se generaron {n_dispersiones} dispersiones y se recuperaron "
-            f"{descargados} archivos.",
+            f"{min(descargados, n_dispersiones)} archivos.",
             size=13, weight=ft.FontWeight.W_500, color=GRIS)
 
     def _mostrar_resumen_ejemplo(self, _e=None) -> None:
         """PRUEBAS: rellena el estado con datos de ejemplo y abre el modal de resumen,
-        para revisar el diseño y dar retro sin ejecutar una dispersión real. Solo con la
-        dispersión en MXN (folio 286, ACP Combustibles)."""
+        para revisar el diseño y dar retro sin ejecutar una dispersión real.
+
+        El ejemplo cubre los tres casos que cambian el layout: un folio con DOS
+        beneficiarios (para ver la banda agrupando), un SEGUNDO folio de la misma
+        empresa y cuenta origen (para comprobar que no se mezclan) y una entrada 'USD
+        pago en MXN' (columna Cuenta pesos + Total MXN + regenerar TXT)."""
         def fila(folio, empresa, clave, moneda, origen, par, monto, docs, id_prov):
             # `docs`: lista de nu_FolioDocumento del grupo (uno por MOVIMIENTO). El
             # grupo (proveedor+cuenta) muestra 1 fila agregada, pero conserva todos sus
@@ -2926,7 +3202,8 @@ class SeccionDispersionNoPemex:
             # el id del proveedor (para el select 'id - nombre' del RPA de subida).
             return {
                 "folio": folio, "empresa": empresa, "clave": clave, "moneda": moneda,
-                "cuenta_origen": origen, "proveedor": par[0], "cuenta_destino": par[1],
+                "cuenta_origen": origen, "fecha": _fmt_fecha(datetime.date.today()),
+                "proveedor": par[0], "cuenta_destino": par[1],
                 "par": par, "monto": monto, "id_proveedor": id_prov,
                 "folio_documento": docs[0] if docs else "",
                 "folios_documento": list(docs),
@@ -2943,24 +3220,40 @@ class SeccionDispersionNoPemex:
         par_valero = ("VALERO MARKETING AND SUPPLY DE MEXICO",
                       "BANCO 110 - 110180000776465174")
 
+        # Segundo folio de la MISMA empresa y cuenta origen: comprueba que las bandas
+        # no se fusionan y que cada una lleva su propio TOTAL FOLIO.
+        par_otro = ("TRANSPORTES Y EQUIPOS DEL NOROESTE",
+                    "BANREGIO - 058744000012345678")
+        # Entrada USD pago en MXN (otra empresa/moneda), para ver esa tabla completa.
+        origen_ps = "BANREGIO NAVOJOA DLLS"
+        clave_ps = "Petro Smart - USD"
+        par_wind = ("ALMACENADORA DE GAS WINDSTAR, S.A. DE C.V.",
+                    "SANTANDER - 014164655049324435")
+
         self._folios_dispersados = [
             fila("286", "ACP Combustibles", clave_acp, "MXN", origen_acp,
                  par_trion, 1523170.19, ["146"], 1146),
             fila("286", "ACP Combustibles", clave_acp, "MXN", origen_acp,
                  par_valero, 2404645.38,
                  ["3657735499", "3657735500", "3657735451"], 3657),
+            fila("287", "ACP Combustibles", clave_acp, "MXN", origen_acp,
+                 par_otro, 84200.50, ["4471"], 4471),
+            fila("762", "Petro Smart", clave_ps, "USD", origen_ps,
+                 par_wind, 25122.73, ["B38268", "B38269"], 7620),
         ]
-        # 1 dispersión (folio 286), 1 layout recuperado.
-        self._disp_resultados_txt = [{"ok": True}]
+        # 3 dispersiones (folios 286, 287 y 762) con su layout recuperado.
+        self._disp_resultados_txt = [{"ok": True}, {"ok": True}, {"ok": True}]
         self._disp_carpeta_txt = None
-        # Sin dispersiones USD pago en MXN en este ejemplo.
-        self._pesos_por_grupo = {}
-        self._cuenta_pesos_por_grupo = {}
-        self._clabe_pesos_por_grupo = {}
-        self._concepto_prov_por_grupo = {}
-        self._ref_prov_por_grupo = {}
+        # El par de Petro Smart va marcado 'pagar en pesos': así aparece la tabla
+        # 'USD pago en MXN' con sus columnas extra.
+        self._pesos_por_grupo = {clave_ps: {par_wind}}
+        self._cuenta_pesos_por_grupo = {
+            clave_ps: {par_wind: "BBVA BANCOMER 012744001230117045 PETRO SMART"}}
+        self._clabe_pesos_por_grupo = {clave_ps: {par_wind: "012744001230117045"}}
+        self._concepto_prov_por_grupo = {clave_ps: {par_wind: "PAGO FACT PSC NA"}}
+        self._ref_prov_por_grupo = {clave_ps: {par_wind: "B38268"}}
         self._pesos_generados = []
-        self._tipo_cambio = None
+        self._tipo_cambio = 17.2195
         self._tc_fecha = _fecha_tc_texto()
         self._pesos_error = None
         self._comprobantes = {}
@@ -3267,6 +3560,215 @@ class SeccionDispersionNoPemex:
         vinculados (íconos de la columna 'Acciones'), sin cerrar+reabrir (no apila)."""
         self._mostrar_resumen_dispersion()
 
+    def _confirmar_eliminar_fila(self, d: dict) -> None:
+        """Pide confirmación antes de quitar un movimiento del resumen. Es destructivo
+        (borra su comprobante vinculado) y devuelve sus solicitudes a la tabla."""
+        prov = d.get("proveedor") or "—"
+        cuenta = d.get("cuenta_destino") or "—"
+        folio = d.get("folio")
+
+        def eliminar(_e=None) -> None:
+            self.page.pop_dialog()
+            self._eliminar_fila_resumen(d)
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Eliminar movimiento"),
+            content=ft.Column(
+                [ft.Text(f"Se quitará del resumen del folio {folio}:", size=13),
+                 ft.Text(f"{prov} · {cuenta}", size=13,
+                         weight=ft.FontWeight.BOLD),
+                 ft.Text(
+                     "Sus solicitudes volverán a la tabla para poder dispersarlas de "
+                     "nuevo, y el total del folio bajará. En el SIPP la dispersión "
+                     "sigue como está: hay que corregirla ahí por separado.",
+                     size=12, color=NARANJA)],
+                spacing=8, tight=True),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _e: self.page.pop_dialog()),
+                ft.FilledButton("Eliminar", icon=ft.Icons.DELETE_OUTLINE,
+                                on_click=eliminar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
+
+    def _eliminar_fila_resumen(self, d: dict) -> None:
+        """Quita un movimiento del resumen y libera sus solicitudes.
+
+        Pasos: saca la fila de `_folios_dispersados`, limpia el estado que se indexa
+        por ella (comprobante, subido) y por su PAR dentro del grupo (solo si ninguna
+        otra fila lo usa), regenera el TXT en pesos si aplica —para que el archivo ya
+        no la incluya— y devuelve sus solicitudes a la tabla de la empresa.
+        """
+        idf = self._id_fila(d)
+        clave = d.get("clave") or ""
+        par = d.get("par") or (d.get("proveedor"), d.get("cuenta_destino"))
+        era_pesos = self._rango_moneda_fila(d) == 2
+
+        self._folios_dispersados = [
+            f for f in self._folios_dispersados if self._id_fila(f) != idf]
+        self._comprobantes.pop(idf, None)
+        self._subidos.discard(idf)
+
+        # El par solo se limpia si NINGUNA otra fila del mismo grupo lo usa (un grupo
+        # puede haberse dispersado en más de un folio).
+        sigue_usado = any(
+            (f.get("clave") or "") == clave
+            and (f.get("par") or (f.get("proveedor"), f.get("cuenta_destino"))) == par
+            for f in self._folios_dispersados)
+        if not sigue_usado:
+            pares = self._pesos_por_grupo.get(clave)
+            if pares is not None:
+                pares.discard(par)
+                if not pares:
+                    self._pesos_por_grupo.pop(clave, None)
+            for dic in (self._clabe_pesos_por_grupo, self._cuenta_pesos_por_grupo,
+                        self._concepto_prov_por_grupo, self._ref_prov_por_grupo,
+                        self._ref_dom_por_grupo):
+                por_par = dic.get(clave)
+                if por_par is not None:
+                    por_par.pop(par, None)
+                    if not por_par:
+                        dic.pop(clave, None)
+
+        # El TXT en pesos agrupa varios pares por cuenta origen: hay que reescribirlo
+        # sin este movimiento. Se le pasan TODOS los pares que quedan porque
+        # _regenerar_txt_pesos reemplaza los dicts del grupo completos, no fusiona.
+        aviso_txt = ""
+        if era_pesos and not sigue_usado:
+            restantes = sorted(self._pesos_por_grupo.get(clave) or set())
+            if restantes:
+                clabes = self._clabe_pesos_por_grupo.get(clave, {})
+                conceptos = self._concepto_prov_por_grupo.get(clave, {})
+                refs = self._ref_prov_por_grupo.get(clave, {})
+                ok, msg = self._regenerar_txt_pesos(
+                    d,
+                    {p: clabes.get(p, "") for p in restantes},
+                    {p: conceptos.get(p, "") for p in restantes},
+                    {p: refs.get(p, "") for p in restantes})
+                aviso_txt = f" {msg}" if not ok else " Se regeneró el TXT en pesos."
+            else:
+                # Sin pares en pesos: se borran los archivos del grupo.
+                for p in [x for x in self._pesos_generados
+                          if x.get("empresa") == clave]:
+                    try:
+                        os.remove(p.get("archivo") or "")
+                    except OSError:
+                        pass
+                    self._pesos_generados.remove(p)
+                aviso_txt = " Se eliminó el TXT en pesos del grupo."
+
+        liberados = self._liberar_movimientos(clave, par)
+        detalle = (f" Se liberaron {liberados} solicitud(es)." if liberados
+                   else " No se pudieron liberar sus solicitudes (sin conciliación).")
+        self.app.avisar("Movimiento eliminado del resumen." + detalle + aviso_txt,
+                        VERDE if liberados else NARANJA)
+
+        if not self._folios_dispersados:
+            # Sin filas el modal quedaría vacío: se cierra en vez de dejar el hueco.
+            self._cerrar_resumen_luego(None)
+            return
+        self._mostrar_resumen_dispersion()
+
+    def _liberar_movimientos(self, clave: str, par: tuple) -> int:
+        """Devuelve a la tabla de su empresa las solicitudes del `par` dentro del
+        grupo `clave`, para poder volver a dispersarlas. Devuelve cuántas liberó.
+
+        Los movimientos originales solo viven en la conciliación; el filtro por par es
+        el mismo de `_filas_resumen_de_empresa` y `_regenerar_txt_pesos`. Se reusa
+        `volcar_reportes`, que recrea la tabla del grupo si había quedado vacía y se
+        retiró del árbol, y evita duplicados."""
+        conc = self._conc_dispersion
+        if conc is None:
+            return 0
+        emp = next((e for e in conc.validas if e.empresa == clave), None)
+        if emp is None:
+            return 0
+        prov, cuenta = par
+        movs = [m for m in emp.movimientos
+                if m.proveedor == prov and m.cuenta_bancaria == cuenta]
+        if not movs:
+            return 0
+        self.volcar_reportes(movs)
+        return len(movs)
+
+    def _dialogo_cuenta_origen(self, folio_dict: dict) -> None:
+        """Modal para cambiar la Cuenta Origen de una dispersión (por FOLIO).
+
+        Es la cuenta con la que la dispersión quedó registrada en SIPP. Cambiarla aquí
+        actualiza el registro de la app; corregirla en SIPP es aparte (ver
+        `_aplicar_cuenta_origen`). Las opciones son TODAS las cuentas de la empresa
+        —`_cuentas_de_empresa`, igual que el selector del encabezado de tabla—, no las
+        de `_clabes_de_empresa`, que están filtradas a las que sirven para el TXT en
+        pesos y son otra cosa."""
+        folio = folio_dict.get("folio")
+        empresa = folio_dict.get("empresa") or ""   # nombre limpio, NUNCA 'clave'
+        actual = folio_dict.get("cuenta_origen") or ""
+        opciones = self._cuentas_de_empresa(empresa)
+        if not opciones:
+            self.app.avisar(
+                f"No hay cuentas de dispersión cargadas para «{empresa}». Revisa el "
+                "catálogo de cuentas en Configuración.", NARANJA)
+            return
+        dd = ft.Dropdown(
+            label=_label_requerido("Cuenta Bancaria Origen"), width=420,
+            enable_filter=True, editable=True,
+            value=actual if actual in opciones else None,
+            options=[ft.dropdown.Option(key=c, text=c) for c in opciones])
+
+        def guardar(_e=None) -> None:
+            nueva = (dd.value or "").strip()
+            if not nueva:
+                self.app.avisar("Elige una cuenta origen.", NARANJA)
+                return
+            if nueva == actual:
+                self.page.pop_dialog()
+                return
+            n = self._aplicar_cuenta_origen(folio, nueva)
+            self.page.pop_dialog()
+            self.app.avisar(
+                f"Cuenta origen del folio {folio} actualizada en {n} movimiento(s). "
+                "Recuerda cambiarla también en el SIPP.", VERDE)
+            self._mostrar_resumen_dispersion()
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Cuenta origen — folio {folio}",
+                          weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                content=ft.Column(
+                    [ft.Text(f"Actual: {actual or '—'}", size=12, color=GRIS),
+                     dd,
+                     ft.Text(
+                         "El cambio aplica a todos los movimientos de esta "
+                         "dispersión. En el SIPP hay que actualizarla por separado; "
+                         "mientras no coincidan, el robot no confirmará su pago.",
+                         size=11, color=NARANJA)],
+                    spacing=12, tight=True),
+                width=460, height=170),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda _e: self.page.pop_dialog()),
+                ft.FilledButton("Guardar", icon=ft.Icons.SAVE, on_click=guardar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
+
+    def _aplicar_cuenta_origen(self, folio, cuenta: str) -> int:
+        """Fija `cuenta` como Cuenta Origen en TODAS las filas de `folio` y anota el
+        cambio como pendiente de reflejar en SIPP. Devuelve cuántas filas cambió.
+
+        Es el punto de enganche para automatizar la edición en el portal: cuando se
+        implemente, basta con leer `_cuentas_origen_pendientes_sipp` y disparar el
+        paso RPA sobre esos folios."""
+        n = 0
+        for d in self._folios_dispersados:
+            if d.get("folio") == folio:
+                d["cuenta_origen"] = cuenta
+                n += 1
+        if n:
+            self._cuentas_origen_pendientes_sipp[folio] = cuenta
+        return n
+
     def _dialogo_regenerar_txt(self, folio_dict: dict) -> None:
         """Modal para regenerar los TXT en pesos de una dispersión USD pago en MXN.
         Como la Cuenta Origen se elige POR PROVEEDOR, muestra una fila por cada par
@@ -3385,7 +3887,8 @@ class SeccionDispersionNoPemex:
             prov, cuenta = par
             movs = [m for m in emp.movimientos
                     if m.proveedor == prov and m.cuenta_bancaria == cuenta]
-            usd = sum((m.saldo_programado or 0) for m in movs)
+            # Con las notas de crédito descontadas (ver total_a_pagar).
+            usd = reporte_dispersion.total_a_pagar(movs)
             pesos = round(usd * tc, 2)
             concepto = (conceptos_par.get(par) or emp.concepto_pago or "").strip()
             referencia = (refs_par.get(par) or "").strip()
@@ -3421,9 +3924,7 @@ class SeccionDispersionNoPemex:
             else:  # BBVA / Bancomer (ancho fijo) — formato por defecto
                 contenido = exportador_devoluciones.generar_bancomer(
                     registros, clabe_dig, str(folio or ""))
-            sufijo = f"Pesos {clabe_dig[-4:]}" if clabe_dig else "Pesos"
-            nombre = _sanear_archivo(
-                self._nombre_txt(folio_dict) + " " + sufijo) + ".txt"
+            nombre = self._nombre_txt_pesos(folio_dict, clabe_dig)
             ruta = os.path.join(carpeta, nombre)  # sobrescribe (mismo nombre)
             try:
                 with open(ruta, "w", encoding="latin-1", newline="") as fh:
@@ -3718,30 +4219,36 @@ class SeccionDispersionNoPemex:
                 etiqueta = "TOTAL GENERAL PROG."
             else:
                 prov_txt, cta_txt = str(prov or "—"), str(cuenta or "")
+                # Los Text llevan `expand` (no `tight`) para que el Row les FIJE un
+                # ancho: sin eso toman su ancho natural, el '…' nunca entra y el texto
+                # se desborda encimándose con el total de la derecha. El reparto 3/2
+                # da más espacio al proveedor, que suele ser el más largo.
                 izq = ft.Row(
                     [ft.Text(prov_txt, size=13, weight=ft.FontWeight.BOLD,
-                             max_lines=1, no_wrap=True,
+                             max_lines=1, no_wrap=True, expand=3,
                              overflow=ft.TextOverflow.ELLIPSIS,
-                             tooltip=prov_txt if len(prov_txt) > 40 else None),
+                             tooltip=prov_txt),
                      ft.Text("·", size=13, color=GRIS),
                      ft.Text(cta_txt, size=12, weight=ft.FontWeight.BOLD, color=GRIS,
-                             max_lines=1, no_wrap=True,
+                             max_lines=1, no_wrap=True, expand=2,
                              overflow=ft.TextOverflow.ELLIPSIS,
-                             tooltip=cta_txt if len(cta_txt) > 34 else None)],
-                    spacing=8, tight=True, expand=True,
+                             tooltip=cta_txt or None)],
+                    spacing=8, expand=True,
                     vertical_alignment=ft.CrossAxisAlignment.CENTER)
                 etiqueta = "TOTAL PROG."
             tam = 14 if general else 13
             der_items = [
                 ft.Text(etiqueta, size=11, weight=ft.FontWeight.BOLD, color=GRIS),
-                ft.Text(_fmt_moneda(total), size=tam, weight=ft.FontWeight.BOLD),
+                ft.Text(_fmt_moneda(total), size=tam, weight=ft.FontWeight.BOLD,
+                        no_wrap=True, tooltip=f"{etiqueta} {_fmt_moneda(total)}"),
             ]
             if total_pesos is not None:
                 der_items += [
                     ft.Text("· Equiv. MXN", size=11, weight=ft.FontWeight.BOLD,
                             color=GRIS),
                     ft.Text(_fmt_moneda(total_pesos), size=tam,
-                            weight=ft.FontWeight.BOLD),
+                            weight=ft.FontWeight.BOLD, no_wrap=True,
+                            tooltip=f"Equivalente en MXN {_fmt_moneda(total_pesos)}"),
                 ]
             der = ft.Row(der_items, spacing=6, tight=True,
                          vertical_alignment=ft.CrossAxisAlignment.CENTER)
@@ -3767,12 +4274,14 @@ class SeccionDispersionNoPemex:
         tot_pesos = 0.0
         for (prov, cuenta) in orden:
             movs = grupos[(prov, cuenta)]
-            grupo_prog = sum(m.saldo_programado or 0 for m in movs)
+            # Los TOTALES van sin notas de crédito (la factura ligada ya las trae
+            # descontadas); las filas de detalle sí las muestran, en negativo.
+            grupo_prog = reporte_dispersion.total_a_pagar(movs)
             es_pesos = mostrar_pesos and (prov, cuenta) in pesos_set
             grupo_pesos = round(grupo_prog * tc, 2) if es_pesos else None
             filas.append(banda(prov, cuenta, grupo_prog, grupo_pesos))
+            tot_prog += grupo_prog
             for m in movs:
-                tot_prog += m.saldo_programado or 0
                 celdas: list = [
                     m.folio, m.folio_factura,
                     _fmt_moneda(m.total_factura),

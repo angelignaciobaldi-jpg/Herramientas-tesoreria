@@ -37,9 +37,10 @@ import re
 import shutil
 import sys
 import threading
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable
+from typing import Awaitable, Callable
 from urllib.parse import unquote
 
 # Carpeta del proyecto (dos niveles arriba de este archivo: core/ -> raíz). Los
@@ -182,6 +183,68 @@ def _ruta_unica(ruta: str) -> str:
     while os.path.exists(f"{base} ({n}){ext}"):
         n += 1
     return f"{base} ({n}){ext}"
+
+
+def _norm_texto(texto: str) -> str:
+    """Normaliza un texto para compararlo con el de una celda: quita acentos,
+    colapsa espacios y baja a minúsculas. Es el equivalente en Python de `_JS_NORM`,
+    para poder comparar del lado de Python lo que se leyó del DOM."""
+    s = unicodedata.normalize("NFD", str(texto or ""))
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def _celda(celdas: list[str], i: int) -> str:
+    """Texto de la celda `i` de una fila, o '' si esa columna no existe. Evita que
+    una fila con menos <td> de los esperados reviente la comparación."""
+    return celdas[i] if 0 <= i < len(celdas) else ""
+
+
+def _verificar_fila_dispersion(
+    esperado: dict, celdas: list[str],
+) -> str | None:
+    """Comprueba que la fila de la tabla de dispersiones corresponde de verdad a la
+    dispersión que se quiere marcar. Devuelve None si todo casa, o el detalle del
+    primer campo que NO coincide (para reportarlo sin hacer clic).
+
+    La fila se ubica por folio, pero marcar un pago no se deshace: antes de pulsar se
+    contrastan además empresa, cuenta bancaria, fecha y total. Un campo esperado vacío
+    no se verifica (p. ej. si no se capturó la fecha de la dispersión).
+
+    `celdas` son los textos de los <td> de la fila, en el orden de la tabla.
+    """
+    empresa_fila = _celda(celdas, SesionSipp._COL_DISP_EMPRESA)
+    empresa = _norm_texto(esperado.get("empresa"))
+    if empresa and empresa not in _norm_texto(empresa_fila):
+        return (f"empresa: se esperaba «{esperado.get('empresa')}» y la fila dice "
+                f"«{empresa_fila}»")
+
+    # La cuenta de SIPP y la de la tabla pueden venir con distinto detalle (una
+    # incluye el número y la otra no), así que basta con que una contenga a la otra.
+    cuenta_fila = _celda(celdas, SesionSipp._COL_DISP_CUENTA)
+    cuenta_esp = _norm_texto(esperado.get("cuenta"))
+    if cuenta_esp and _norm_texto(cuenta_fila) and not (
+            cuenta_esp in _norm_texto(cuenta_fila)
+            or _norm_texto(cuenta_fila) in cuenta_esp):
+        return (f"cuenta: se esperaba «{esperado.get('cuenta')}» y la fila dice "
+                f"«{cuenta_fila}»")
+
+    fecha_fila = _celda(celdas, SesionSipp._COL_DISP_FECHA)
+    fecha = _norm_texto(esperado.get("fecha"))
+    if fecha and fecha != _norm_texto(fecha_fila):
+        return (f"fecha: se esperaba «{esperado.get('fecha')}» y la fila dice "
+                f"«{fecha_fila}»")
+
+    total_fila = _celda(celdas, SesionSipp._COL_DISP_TOTAL)
+    # El total esperado ya viene neto de notas de crédito (ver
+    # reporte_dispersion.total_a_pagar), que es justo como lo muestra el SIPP.
+    total = esperado.get("total")
+    if total is not None:
+        montos = SesionSipp._montos_en_texto(total_fila)
+        if not any(abs(m - float(total)) < 0.01 for m in montos):
+            return (f"total: se esperaba {float(total):,.2f} y la fila dice "
+                    f"«{total_fila}»")
+    return None
 
 
 class ErrorSipp(Exception):
@@ -421,6 +484,9 @@ _JS_FILA_DISPERSION = r"""(args) => {
     const {repeat, folio, empresa} = args;
     """ + _JS_NORM + r"""
     const f = norm(folio), e = norm(empresa);
+    // Sin folio no se busca: con f = '' el `=== f` casaría con cualquier celda
+    // vacía y devolvería una fila ARBITRARIA. Mejor no encontrar nada.
+    if (!f) return -1;
     const filas = [...document.querySelectorAll('[ng-repeat="' + repeat + '"]')];
     for (let i = 0; i < filas.length; i++) {
         const tds = [...filas[i].querySelectorAll('td')].map(td => norm(td.innerText));
@@ -1470,6 +1536,21 @@ class SesionSipp:
     _NG_REPEAT_DISPERSIONES = "item in listadoDispersionesPagosCombustible"
     _NG_LAYOUT_DISPERSION = "generarLayoutDispersion(item)"
     _TAB_DISPERSIONES = "Dispersiones (No Pemex)"
+    # Botón 'Confirmar Pago' de cada fila: marca la dispersión como PAGADA. OJO: no
+    # se deshabilita cuando ya se pagó, se OCULTA (Angular le pone la clase ng-hide
+    # por su ng-show="item.ID_ESTATUS == 1113 && item.SN_DISPERSIONGENERADA"), así
+    # que hay que consultar visibilidad, no 'disabled'.
+    _NG_GUARDAR_PAGO_DISPERSION = "guardarPagoDispersion(item)"
+    # Índices de columna de esa tabla (ver core/ejemplos/paginadispersion.html):
+    # 0 Folio · 1 Empresa · 2 Cuenta Bancaria · 3 Fecha Pago · 4 Total · 5 Estatus
+    # · 6 Acciones.
+    _COL_DISP_EMPRESA = 1
+    _COL_DISP_CUENTA = 2
+    _COL_DISP_FECHA = 3
+    _COL_DISP_TOTAL = 4
+    _COL_DISP_ESTATUS = 5
+    # Texto de la columna Estatus cuando la dispersión ya está pagada.
+    _ESTATUS_PAGADA = "pagada"
 
     # --- Subida de comprobantes: pestaña 'Proveedores (No Pemex)' -------------
     # Filtros de la pestaña (ng-model), botón de búsqueda (ng-click), contenedor
@@ -1753,6 +1834,12 @@ class SesionSipp:
                 # Tras 'Aceptar' aparece un diálogo de confirmación; aceptarlo es lo
                 # que dispara la carga de la dispersión (y el XHR de cuentas).
                 await self._confirmar_aviso_si_hay(timeout=self.TIMEOUT_ELEMENTO)
+                # El portal puede encadenar un SEGUNDO aviso (el de confirmar la
+                # operación tras el de los folios seleccionados). Se le da medio
+                # segundo para abrirlo y se acepta también; si no sale, no espera de
+                # más y sigue igual que con un solo aviso.
+                await page.wait_for_timeout(500)
+                await self._confirmar_aviso_si_hay(timeout=2_000)
                 await info.value
         except PlaywrightTimeoutError:
             # No se detectó el XHR de cuentas; seleccionar_cuenta_origen tiene su
@@ -1906,15 +1993,25 @@ class SesionSipp:
         return folio
 
     # -------------------------------- descarga de layouts (TXT) de dispersión
-    async def _ir_a_tab_dispersiones(self) -> None:
+    async def _ir_a_tab_dispersiones(self, navegar: bool = False) -> None:
         """Abre la pestaña 'Dispersiones (No Pemex)' (el <li> que contiene el
-        <uib-tab-heading> con ese texto) SOBRE LA PÁGINA ACTUAL, donde se listan las
-        dispersiones ya generadas.
+        <uib-tab-heading> con ese texto), donde se listan las dispersiones ya
+        generadas. Es una de las pestañas del tabset del DashboardTesor, vecina de
+        'Proveedores (No Pemex)'.
 
-        Importante: NO se re-navega a 'Registrar Dispersión'. Tras el último Guardar,
-        el sistema ya deja al robot en la pantalla con el tabset; volver a navegar por
-        el menú lo sacaría de ahí. Solo se cambia de pestaña desde donde quedó."""
+        `navegar=False` (por defecto) opera SOBRE LA PÁGINA ACTUAL: tras el último
+        Guardar de una dispersión el sistema ya deja al robot en esa pantalla, y
+        recargar lo sacaría de ahí.
+
+        `navegar=True` entra primero al DashboardTesor. Es lo que necesita quien llega
+        de fuera (p. ej. el marcado de pagos, que arranca recién iniciada la sesión).
+        Se va DIRECTO al tabset: no hay que pasar por la opción de menú 'Registrar
+        Dispersión (No Pemex)', que abre el alta de dispersiones y no hace falta."""
         page = self._exigir_pagina()
+        if navegar:
+            await page.goto(
+                self.URL_DASHBOARD_TESOR, wait_until="domcontentloaded",
+                timeout=self.TIMEOUT_NAV)
         # ui-bootstrap transcluye el <uib-tab-heading> dentro del <a
         # uib-tab-heading-transclude ng-click="select()">, que es el elemento
         # clicable de la pestaña. El tabset puede tardar un instante en renderizar
@@ -1950,6 +2047,9 @@ class SesionSipp:
                 state="attached", timeout=self.TIMEOUT_ELEMENTO)
         except PlaywrightTimeoutError:
             pass  # puede estar vacía; cada descarga lo maneja fila por fila
+        if navegar:
+            # Al recargar vuelve el chat flotante de productivo, que tapa los botones.
+            await self._ocultar_flotantes()
 
     async def descargar_layouts_dispersion(
         self, items: list[dict], carpeta_destino: str,
@@ -1983,7 +2083,12 @@ class SesionSipp:
                     fila = page.locator(filas_sel).nth(idx)
                     boton = fila.locator(
                         f'[ng-click="{self._NG_LAYOUT_DISPERSION}"]').first
-                    if await boton.count():
+                    # El botón SIEMPRE está en el DOM: cuando no aplica, Angular solo
+                    # lo OCULTA (ng-hide por su ng-show). count() no distingue, así
+                    # que hay que preguntar por visibilidad. Sin esto, el click se
+                    # queda esperando los 10 s de actionability sobre un botón oculto
+                    # —y otros 2 más el expect_download— en CADA dispersión.
+                    if await boton.count() and await boton.is_visible():
                         async with page.expect_download(
                             timeout=self.TIMEOUT_DESCARGA) as info:
                             await boton.click(timeout=self.TIMEOUT_ELEMENTO)
@@ -2004,6 +2109,121 @@ class SesionSipp:
             if progreso:
                 progreso(i, total)
         return resultados
+
+    async def marcar_pagos_dispersion(
+        self, items: list[dict],
+        progreso: Callable[[int, int], None] | None = None,
+        punto_control: Callable[[], Awaitable[None]] | None = None,
+    ) -> list[dict]:
+        """Marca como PAGADA cada dispersión de `items` en la tabla de dispersiones
+        generadas (botón 'Confirmar Pago' -> guardarPagoDispersion(item)).
+
+        `items` son dicts con 'folio', 'empresa', 'cuenta' (la cuenta origen elegida
+        en SIPP, NO la cuenta en pesos del TXT), 'fecha' (DD/MM/AAAA) y 'total' (en la
+        moneda de la dispersión). La fila se ubica por folio, pero como marcar un pago
+        no se deshace, antes de pulsar se verifica que empresa, cuenta, fecha y total
+        de la fila coincidan; si algo no cuadra NO se hace clic.
+
+        Devuelve, por item, {folio, empresa, estado, detalle} con estado:
+          'marcada'       se pulsó y el estatus pasó a PAGADA
+          'ya_pagada'     ya estaba pagada (o el botón no está disponible): no es error
+          'no_encontrada' no hay fila con ese folio/empresa en la tabla
+          'no_coincide'   la fila existe pero algún campo no casa (detalle lo dice)
+          'error'         falló la interacción (se captura diagnóstico)
+
+        Un item que falle NO aborta el resto. Entra por su cuenta al DashboardTesor y
+        abre la pestaña de dispersiones, así que se puede llamar recién iniciada la
+        sesión sin pasar por el alta de dispersiones.
+
+        `punto_control` se espera ANTES de cada item (fuera del try, para que su
+        RpaDetenido no se confunda con un fallo del item): confirmar un pago no se
+        deshace, así que si el usuario detiene el robot hay que parar de inmediato y
+        no seguir marcando el resto.
+        """
+        page = self._exigir_pagina()
+        await self._ir_a_tab_dispersiones(navegar=True)
+        filas_sel = f'[ng-repeat="{self._NG_REPEAT_DISPERSIONES}"]'
+        resultados: list[dict] = []
+        total = len(items)
+        for i, it in enumerate(items, start=1):
+            if punto_control:
+                await punto_control()
+            folio = str(it.get("folio") or "").strip()
+            empresa = str(it.get("empresa") or "").strip()
+            estado, detalle = "error", ""
+            try:
+                idx = await page.evaluate(
+                    _JS_FILA_DISPERSION,
+                    {"repeat": self._NG_REPEAT_DISPERSIONES,
+                     "folio": folio, "empresa": empresa},
+                )
+                if idx is None or idx < 0:
+                    estado = "no_encontrada"
+                    detalle = (f"No se encontró la dispersión {folio} de «{empresa}» "
+                               "en la tabla de dispersiones.")
+                else:
+                    fila = page.locator(filas_sel).nth(idx)
+                    celdas = await fila.locator("td").all_inner_texts()
+                    estatus = _celda(celdas, self._COL_DISP_ESTATUS)
+                    if self._ESTATUS_PAGADA in _norm_texto(estatus):
+                        estado = "ya_pagada"
+                    elif (problema := _verificar_fila_dispersion(it, celdas)):
+                        estado, detalle = "no_coincide", problema
+                    else:
+                        boton = fila.locator(
+                            f'[ng-click="{self._NG_GUARDAR_PAGO_DISPERSION}"]').first
+                        # El botón se OCULTA (ng-hide) cuando ya no aplica; que no
+                        # esté visible se trata como 'ya pagada', no como error.
+                        if not await boton.count() or not await boton.is_visible():
+                            estado = "ya_pagada"
+                        elif await self._confirmar_pago_fila(fila, boton):
+                            estado = "marcada"
+                        else:
+                            detalle = ("Se pulsó 'Confirmar Pago' pero el estatus no "
+                                       "cambió a PAGADA.")
+            except Exception as exc:  # noqa: BLE001 — un fallo no aborta el resto
+                await self._capturar_diagnostico("dispersion_marcar_pago")
+                detalle = str(exc)
+            resultados.append({"folio": folio, "empresa": empresa,
+                               "estado": estado, "detalle": detalle})
+            if progreso:
+                progreso(i, total)
+        return resultados
+
+    async def _confirmar_pago_fila(self, fila, boton) -> bool:
+        """Pulsa 'Confirmar Pago' de una fila, acepta el aviso y espera a que su
+        Estatus pase a PAGADA. True si lo logró."""
+        page = self._exigir_pagina()
+        try:
+            async with page.expect_response(
+                    lambda r: "cfproxy" in r.url.lower(), timeout=self.TIMEOUT_NAV):
+                await self._click_seguro(boton)
+                # El clic abre un aviso de confirmación; aceptarlo es lo que dispara
+                # el guardado (mismo patrón que el layout y el adjunto). El portal
+                # puede encadenar un segundo aviso: se le da medio segundo y se acepta
+                # también, sin esperar de más si solo hubo uno.
+                await self._confirmar_aviso_si_hay(timeout=3_000)
+                await page.wait_for_timeout(500)
+                await self._confirmar_aviso_si_hay(timeout=2_000)
+        except PlaywrightTimeoutError:
+            pass  # el XHR es heurístico; la verificación real es el estatus
+        return await self._esperar_estatus_pagada(fila)
+
+    async def _esperar_estatus_pagada(self, fila, timeout: int = 5_000) -> bool:
+        """Relee la celda de Estatus de `fila` hasta que diga PAGADA o se agote el
+        tiempo. Angular reescribe la fila en su digest, así que el cambio no es
+        inmediato tras aceptar el aviso."""
+        limite = asyncio.get_event_loop().time() + timeout / 1000
+        while asyncio.get_event_loop().time() < limite:
+            try:
+                celdas = await fila.locator("td").all_inner_texts()
+                estatus = _celda(celdas, self._COL_DISP_ESTATUS)
+                if self._ESTATUS_PAGADA in _norm_texto(estatus):
+                    return True
+            except Exception:  # noqa: BLE001 — la fila puede re-renderizarse
+                pass
+            await asyncio.sleep(0.25)
+        return False
 
     # ==================================== subida de comprobantes (Proveedores)
     async def ir_a_tab_proveedores_no_pemex(self) -> None:

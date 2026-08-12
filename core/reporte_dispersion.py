@@ -22,6 +22,16 @@ from dataclasses import dataclass
 import openpyxl
 
 
+# Clave de 'Tipo de factura' de las notas de crédito. Sus importes SIEMPRE van en
+# negativo: una nota de crédito resta de lo que se le paga al proveedor, así que al
+# sumarla con el resto de sus documentos el neto sale solo.
+TIPO_NOTA_CREDITO = "NC"
+
+# Los tres campos monetarios de una solicitud. Se declaran antes de la clase porque
+# __post_init__ los recorre para aplicarles el signo de las notas de crédito.
+_IMPORTES = ("total_factura", "saldo_factura", "saldo_programado")
+
+
 @dataclass
 class FilaSolicitud:
     """Un renglón del reporte de solicitudes de pago (una factura/solicitud)."""
@@ -53,6 +63,26 @@ class FilaSolicitud:
     clabe_interbancaria_proveedor: str = ""
     id_proveedor: int | None = None
 
+    def __post_init__(self) -> None:
+        """Deja en NEGATIVO los importes de las notas de crédito ('NC').
+
+        Va aquí y no en la lectura para que la regla valga igual venga la fila del
+        Excel o de la API, y para que no se pueda construir una FilaSolicitud 'NC'
+        con importes positivos por descuido.
+
+        Se usa -abs() en vez de invertir el signo: así el resultado no depende de
+        cómo lo mande el origen (que a veces ya trae el negativo) y reconstruir la
+        fila —p. ej. al recargar un reporte— no lo vuelve positivo.
+
+        Es lo que hace que `total_a_pagar` descuente las NC con una simple suma.
+        """
+        if not es_nota_credito(self):
+            return
+        for campo in _IMPORTES:
+            valor = getattr(self, campo)
+            if valor is not None:
+                setattr(self, campo, -abs(valor))
+
     def clave(self) -> tuple:
         """Identidad de la fila para evitar duplicados al recargar reportes."""
         return (
@@ -62,6 +92,26 @@ class FilaSolicitud:
             self.total_factura, self.saldo_factura, self.saldo_programado,
             self.moneda, self.producto, self.comentarios,
         )
+
+
+def es_nota_credito(fila) -> bool:
+    """True si la fila es una nota de crédito ('NC')."""
+    return (getattr(fila, "tipo", "") or "").strip().upper() == TIPO_NOTA_CREDITO
+
+
+def total_a_pagar(movimientos) -> float:
+    """Suma de Saldo Programado de lo que REALMENTE se dispersa.
+
+    Las notas de crédito SÍ entran, y restan. El reporte trae la factura con su
+    importe completo y la NC como un renglón aparte, así que hay que descontarla para
+    llegar al total correcto; el SIPP ya muestra ese neto en su propia pantalla.
+    La resta sale sola porque `FilaSolicitud.__post_init__` deja los importes de las
+    NC en negativo.
+
+    Es la única forma correcta de totalizar un grupo de movimientos para pagar: usarla
+    en vez de sumar `saldo_programado` a mano, para que la regla viva en un solo sitio.
+    """
+    return round(sum((m.saldo_programado or 0) for m in movimientos), 2)
 
 
 # Encabezado en el Excel -> campo de FilaSolicitud.
@@ -82,7 +132,7 @@ _COLUMNAS = {
     "Producto": "producto",
     "Comentarios": "comentarios",
 }
-_CAMPOS_NUMERICOS = {"total_factura", "saldo_factura", "saldo_programado"}
+_CAMPOS_NUMERICOS = set(_IMPORTES)
 
 
 def _texto(valor) -> str:

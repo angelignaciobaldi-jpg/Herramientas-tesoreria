@@ -60,8 +60,11 @@ def fecha_referencia(hoy: datetime.date | None = None) -> datetime.date:
 
 
 def _url(dfecha: str, hfecha: str) -> str:
-    d = urllib.parse.quote(dfecha, safe="")
-    h = urllib.parse.quote(hfecha, safe="")
+    # Las diagonales de la fecha van LITERALES (safe="/"), no como %2F: el DOF
+    # dejó de aceptar la forma codificada y responde con una redirección a
+    # Error.php, que no trae ninguna fila de datos.
+    d = urllib.parse.quote(dfecha, safe="/")
+    h = urllib.parse.quote(hfecha, safe="/")
     return (f"https://www.dof.gob.mx/indicadores_detalle.php?"
             f"cod_tipo_indicador={_COD_USD}&dfecha={d}&hfecha={h}")
 
