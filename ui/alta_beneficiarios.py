@@ -323,10 +323,9 @@ class FilaBeneficiario:
         if not ruta or not os.path.exists(ruta):
             self.seccion.avisar("No se encontró el archivo original de este registro.", ROJO)
             return
-        try:
-            os.startfile(ruta)  # Windows: abre en el visor predeterminado
-        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
-            self.seccion.avisar(f"No se pudo abrir el archivo: {exc}", ROJO)
+        # Vía el shell de la app y no os.startfile: es lo que se encarga de que el
+        # visor salga POR ENCIMA de la app (ver AppTesoreria.abrir_en_sistema).
+        self.seccion.app.abrir_en_sistema(ruta)
 
 
 class SeccionAltaBeneficiarios:
@@ -1699,10 +1698,9 @@ class SeccionAltaBeneficiarios:
         except Exception as exc:  # noqa: BLE001 — se reporta al usuario
             self.avisar(f"No se pudo generar la carpeta: {exc}", ROJO)
             return
-        try:
-            os.startfile(carpeta)  # abre la carpeta generada en el explorador
-        except Exception:  # noqa: BLE001 — abrir es opcional
-            pass
+        # Vía el shell de la app: es lo que hace que el Explorador salga POR ENCIMA
+        # de la app (ver AppTesoreria.abrir_en_sistema).
+        self.app.abrir_en_sistema(carpeta)
         self.avisar("Carpeta de alta generada (" + ", ".join(resumen) + ").", VERDE)
 
     async def _exportar_alta_banregio(self, guardados) -> None:

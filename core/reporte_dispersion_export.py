@@ -30,26 +30,30 @@ _AZUL = "FF317FB1"
 _GRIS_TOTAL = "FFE0E0E0"
 _FUENTE = "Arial"
 
-# Encabezados de la tabla, en orden (mismas 15 columnas que el reporte del SIPP).
+# Encabezados de la tabla, en orden (las 15 columnas del reporte del SIPP más
+# 'Equiv. MXN', que es propia de la app: el equivalente en pesos de los proveedores
+# USD marcados 'pagar en pesos').
 _ENCABEZADOS = [
     "Folio", "Tipo de factura", "Folio Factura", "Empresa", "Proveedor",
     "Fecha Factura", "Fecha Vencimiento", "Tipo Solicitud", "Moneda", "Producto",
     "Total Factura", "Saldo Factura", "Saldo Programado", "Cuenta Bancaria",
-    "Comentarios",
+    "Comentarios", "Equiv. MXN",
 ]
-# Columnas (1-based) con formato de moneda: Total/Saldo Factura y Saldo Programado.
-_COLS_MONTO = {11, 12, 13}
+# Columnas (1-based) con formato de moneda: Total/Saldo Factura, Saldo Programado y
+# el equivalente en MXN.
+_COLS_MONTO = {11, 12, 13, 16}
 # Fila 'TOTAL PROGRAMADO' del cierre de grupo: etiqueta en 'Cuenta Bancaria' (N) y
 # el importe en 'Comentarios' (O), tal como lo coloca el reporte del SIPP.
 _COL_TOTAL_ETIQUETA = 14
 _COL_TOTAL_VALOR = 15
+_COL_EQUIV_MXN = 16
 _FMT_MONEDA = '"$"#,##0.00'
 
-# Anchos de columna (A..O), copiados del reporte original para que se vea igual.
+# Anchos de columna (A..P), copiados del reporte original para que se vea igual.
 _ANCHOS = {
     "A": 13.33, "B": 8.33, "C": 16.66, "D": 16.66, "E": 46.66, "F": 13.33,
     "G": 13.33, "H": 13.33, "I": 13.33, "J": 20.0, "K": 13.33, "L": 13.33,
-    "M": 13.33, "N": 41.66, "O": 41.66,
+    "M": 13.33, "N": 41.66, "O": 41.66, "P": 15.0,
 }
 
 # Caracteres no permitidos por Excel en el nombre de una hoja.
@@ -98,10 +102,11 @@ def _un_valor(filas: list[FilaSolicitud], campo: str, plural: str) -> str:
     return next(iter(distintos)) if len(distintos) == 1 else plural
 
 
-def _bloque_filtros(ws, empresa: str, filas: list[FilaSolicitud], filtros: dict) -> None:
+def _bloque_filtros(ws, empresa: str, filas: list[FilaSolicitud], filtros: dict,
+                    con_tipo_cambio: bool = False) -> None:
     """Rellena el área de metadatos B3:G6 (etiqueta a la izquierda, valor a la
     derecha), igual que el reporte del SIPP pero con 'Fecha Vencimiento' en lugar
-    de 'Sucursal'."""
+    de 'Sucursal'. Con `con_tipo_cambio` añade el TC en la fila 7."""
     ws.merge_cells("C4:D4")
     ws.merge_cells("G4:H4")
     # Columna izquierda.
@@ -118,19 +123,37 @@ def _bloque_filtros(ws, empresa: str, filas: list[FilaSolicitud], filtros: dict)
     _etiqueta(ws, "F5", "Tipo Solicitud:")
     _valor(ws, "G5", filtros.get("tipo_solicitud", "Todos"))
     _etiqueta(ws, "F6", "Fecha Fin:");        _valor(ws, "G6", filtros.get("fecha_fin", ""))
+    # Fila 7: tipo de cambio. Solo en las hojas con proveedores marcados 'pagar en
+    # pesos' (es con el que se calcula 'Equiv. MXN'); en las demás la fila queda en
+    # blanco y el reporte se ve como el del SIPP.
+    if con_tipo_cambio and filtros.get("tipo_cambio"):
+        _etiqueta(ws, "B7", "Tipo de cambio:")
+        _valor(ws, "C7", filtros["tipo_cambio"])
 
 
-def _fila_datos(f: FilaSolicitud) -> list:
-    """Valores de una fila en el orden de _ENCABEZADOS (todos leídos del reporte)."""
-    return [
+def _fila_datos(f: FilaSolicitud, equiv_mxn: float | None = None,
+                con_equiv: bool = False) -> list:
+    """Valores de una fila en el orden de _ENCABEZADOS.
+
+    `con_equiv` decide si la fila incluye la columna 'Equiv. MXN'; se omite en las
+    hojas sin proveedores en pesos, para que salgan idénticas al reporte del SIPP.
+    `equiv_mxn` es el Saldo Programado convertido a pesos: solo lo traen las filas de
+    proveedores marcados 'pagar en pesos'. En el resto de una hoja que SÍ lleva la
+    columna, la celda queda vacía (None), que es más honesto que un 0: significa 'no
+    aplica', no 'cero pesos'."""
+    valores = [
         f.folio, f.tipo, f.folio_factura, f.empresa, f.proveedor,
         f.fecha_factura, f.fecha_vencimiento, f.tipo_solicitud, f.moneda, f.producto,
         _monto(f.total_factura), _monto(f.saldo_factura), _monto(f.saldo_programado),
         f.cuenta_bancaria, f.comentarios,
     ]
+    if con_equiv:
+        valores.append(None if equiv_mxn is None else round(equiv_mxn, 2))
+    return valores
 
 
-def _construir_hoja(ws, empresa: str, filas: list[FilaSolicitud], filtros: dict) -> None:
+def _construir_hoja(ws, empresa: str, filas: list[FilaSolicitud], filtros: dict,
+                    pares_pesos: set | None = None, tc: float | None = None) -> None:
     # --- Título (A1:G1) ---
     ws.merge_cells("A1:G1")
     tit = ws["A1"]
@@ -140,12 +163,21 @@ def _construir_hoja(ws, empresa: str, filas: list[FilaSolicitud], filtros: dict)
     ws.row_dimensions[1].height = 22.5
     # NOTA: la celda J1 (impreso por / fecha) se deja VACÍA a propósito.
 
-    # --- Bloque de filtros (B3:G6) ---
-    _bloque_filtros(ws, empresa, filas, filtros)
+    # El tipo de cambio y la columna 'Equiv. MXN' solo aparecen en las hojas con al
+    # menos un proveedor marcado 'pagar en pesos' (y con tipo de cambio disponible).
+    # En las demás no aportan nada y el reporte sale idéntico al del SIPP.
+    pares_pesos = pares_pesos or set()
+    con_equiv = bool(pares_pesos) and bool(tc)
+    encabezados = _ENCABEZADOS if con_equiv else _ENCABEZADOS[:-1]
 
-    # --- Encabezados de la tabla (fila 8) ---
-    fila_enc = 8
-    for col, titulo in enumerate(_ENCABEZADOS, start=1):
+    # --- Bloque de filtros (B3:G6, más el TC en la 7 si aplica) ---
+    _bloque_filtros(ws, empresa, filas, filtros, con_equiv)
+
+    # --- Encabezados de la tabla (fila 9) ---
+    # Van una fila más abajo que en el reporte del SIPP: el bloque de filtros ocupa
+    # hasta la 7 (el tipo de cambio) y se deja la 8 en blanco como separación.
+    fila_enc = 9
+    for col, titulo in enumerate(encabezados, start=1):
         c = ws.cell(row=fila_enc, column=col, value=titulo)
         c.font = Font(name=_FUENTE, size=10, bold=True, color="FFFFFFFF")
         c.fill = PatternFill("solid", fgColor=_AZUL)
@@ -164,7 +196,13 @@ def _construir_hoja(ws, empresa: str, filas: list[FilaSolicitud], filtros: dict)
     for cuenta in orden:
         grupo = grupos[cuenta]
         for f in grupo:
-            for col, valor in enumerate(_fila_datos(f), start=1):
+            # Equivalente en MXN solo para los pares marcados 'pagar en pesos'; el
+            # resto de la hoja va vacío.
+            equiv = None
+            if con_equiv and (f.proveedor, f.cuenta_bancaria) in pares_pesos:
+                equiv = (f.saldo_programado or 0) * tc
+            for col, valor in enumerate(
+                    _fila_datos(f, equiv, con_equiv), start=1):
                 c = ws.cell(row=fila, column=col, value=valor)
                 c.font = Font(name=_FUENTE, size=10)
                 if col in _COLS_MONTO:
@@ -189,11 +227,14 @@ def _construir_hoja(ws, empresa: str, filas: list[FilaSolicitud], filtros: dict)
 
     # --- Ancho de columnas y paneles fijos (título + filtros + encabezado) ---
     for col, ancho in _ANCHOS.items():
+        if col == "P" and not con_equiv:
+            continue  # esa columna no existe en esta hoja
         ws.column_dimensions[col].width = ancho
-    ws.freeze_panes = "A9"
+    ws.freeze_panes = "A10"
 
 
-def generar(ruta: str, seleccion: dict[str, list[FilaSolicitud]], filtros: dict) -> None:
+def generar(ruta: str, seleccion: dict[str, list[FilaSolicitud]], filtros: dict,
+            pares_pesos: dict | None = None, tc: float | None = None) -> None:
     """Crea el reporte XLSX en `ruta`, con una hoja por grupo empresa+moneda.
 
     Args:
@@ -204,15 +245,22 @@ def generar(ruta: str, seleccion: dict[str, list[FilaSolicitud]], filtros: dict)
             de las filas.
         filtros: valores del bloque de metadatos ya resueltos por la UI:
             fecha_inicio, fecha_fin, fecha_vencimiento ('N/A' si no aplica),
-            folio ('Todos' si no aplica) y tipo_solicitud ('Todos' o concatenado).
+            folio ('Todos' si no aplica), tipo_solicitud ('Todos' o concatenado) y,
+            opcional, tipo_cambio (texto ya formateado; si falta, no se imprime).
+        pares_pesos: {clave: {(proveedor, cuenta), ...}} de los proveedores marcados
+            'pagar en pesos'. Solo esas filas llevan 'Equiv. MXN'.
+        tc: tipo de cambio con el que se calcula esa columna. Sin él (o sin pares),
+            la columna queda vacía y el reporte se ve como el del SIPP.
     """
+    pares_pesos = pares_pesos or {}
     wb = openpyxl.Workbook()
     wb.remove(wb.active)  # se crea una hoja por grupo; se quita la de por defecto
     usados: set[str] = set()
     for clave, filas in seleccion.items():
         ws = wb.create_sheet(title=_nombre_hoja(clave, usados))
         empresa = filas[0].empresa if filas else clave
-        _construir_hoja(ws, empresa, filas, filtros)
+        _construir_hoja(ws, empresa, filas, filtros,
+                        pares_pesos.get(clave) or set(), tc)
     if not wb.sheetnames:  # sin selección: deja un libro válido (no debería pasar)
         wb.create_sheet(title="Sin datos")
     wb.save(ruta)
