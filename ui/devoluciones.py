@@ -1280,10 +1280,9 @@ class SeccionDevoluciones:
         except Exception as exc:  # noqa: BLE001 — se reporta al usuario
             self.app.avisar(f"No se pudo generar la dispersión: {exc}", ROJO)
             return
-        try:
-            os.startfile(carpeta)  # abre la carpeta generada
-        except Exception:  # noqa: BLE001 — abrirla es opcional
-            pass
+        # Vía el shell de la app: es lo que hace que el Explorador salga POR ENCIMA
+        # de la app (ver AppTesoreria.abrir_en_sistema).
+        self.app.abrir_en_sistema(carpeta)
         self.app.avisar(
             f"{len(generados)} archivo(s) TXT generados: " + ", ".join(generados), VERDE)
 

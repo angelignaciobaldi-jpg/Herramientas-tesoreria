@@ -96,19 +96,62 @@ class AppTesoreria:
 
     def abrir_en_sistema(self, ruta: str) -> None:
         """Abre un archivo o carpeta en el programa predeterminado (Explorador/visor)
-        y lo trae AL FRENTE de la app. En Windows, una ventana recién lanzada no puede
-        robar el foco por el 'foreground lock'; además, si la app quedó 'siempre
-        encima', el Explorador saldría detrás. Por eso: (1) se quita el topmost y (2)
-        se autoriza a la ventana que se abre a tomar el foco (AllowSetForegroundWindow).
-        Best-effort: si algo falla, se abre igual con os.startfile."""
+        y lo trae AL FRENTE de la app.
+
+        Windows no deja que una ventana recién lanzada robe el foco ('foreground
+        lock'): solo puede cedérselo un proceso que ya lo tenga, o que haya recibido
+        el último evento de entrada. `AllowSetForegroundWindow` sirve justo para
+        cederlo… pero FALLA EN SILENCIO si quien la llama no cumple eso, y en la app
+        empaquetada el proceso de Python no es el que tiene el foco (lo tiene la
+        ventana de Flutter). Resultado: el visor abría detrás y el usuario creía que
+        el botón no había hecho nada.
+
+        Por eso el lanzamiento se DELEGA en `explorer.exe`: el shell de Windows sí
+        tiene derecho a poner ventanas al frente, así que lo que abra sale encima sin
+        depender de quién lo pidió. Se conserva `os.startfile` como respaldo.
+
+        Ojo con el orden: primero se comprueba que la ruta exista, porque explorer
+        con una ruta inválida NO falla, abre Documentos — y el usuario se quedaría
+        mirando una carpeta que no pidió sin ningún mensaje de error.
+
+        No aplica al navegador del RPA (lo lanza Playwright por su cuenta): ese debe
+        seguir quedándose en segundo plano.
+        """
+        # La ruta vacía se descarta ANTES de normalizar: os.path.abspath("") devuelve
+        # el directorio de trabajo, que sí existe, y acabaríamos abriéndole al usuario
+        # una carpeta cualquiera en vez de avisarle que no hay nada que abrir.
+        crudo = str(ruta or "").strip()
+        if not crudo:
+            self.avisar("No hay ningún archivo o carpeta que abrir.",
+                        ft.Colors.RED_700)
+            return
+        ruta = os.path.abspath(crudo)
+        if not os.path.exists(ruta):
+            self.avisar(f"No se encontró: {ruta}", ft.Colors.RED_700)
+            return
         self._fijar_topmost(False)  # por si un diálogo previo lo dejó activo
-        if sys.platform == "win32":
+        if sys.platform != "win32":
             try:
-                import ctypes
-                # ASFW_ANY (-1): permite que el próximo proceso lanzado tome el foco.
-                ctypes.windll.user32.AllowSetForegroundWindow(-1)
-            except Exception:  # noqa: BLE001 — el traer-al-frente no es crítico
-                pass
+                os.startfile(ruta)  # noqa: S606
+            except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+                self.avisar(f"No se pudo abrir: {exc}", ft.Colors.RED_700)
+            return
+        try:
+            import ctypes
+            # ASFW_ANY (-1): cede el foco al próximo proceso lanzado. Se conserva
+            # porque cuando SÍ tenemos derecho a cederlo ahorra el rodeo; cuando no,
+            # simplemente devuelve 0 y manda el explorer.exe de abajo.
+            ctypes.windll.user32.AllowSetForegroundWindow(-1)
+        except Exception:  # noqa: BLE001 — el traer-al-frente no es crítico
+            pass
+        # La ruta va ENTRECOMILLADA en una cadena, no como lista: explorer.exe parsea
+        # su propia línea de comandos y, sin comillas, parte las rutas con coma.
+        try:
+            import subprocess
+            subprocess.Popen(f'explorer "{ruta}"')  # noqa: S603 — ruta ya validada
+            return
+        except Exception:  # noqa: BLE001 — se intenta la vía directa
+            pass
         try:
             os.startfile(ruta)  # noqa: S606 — abre en el visor/Explorador predeterminado
         except Exception as exc:  # noqa: BLE001 — se reporta al usuario

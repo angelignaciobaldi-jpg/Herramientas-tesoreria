@@ -6,9 +6,17 @@ Lee un Excel SENCILLO para filtrar las cuentas en la pantalla de Dispersión
   - ``id Empresa``          -> FK al id de la empresa (ver EMPRESAS en la pantalla).
   - ``Cuenta``              -> la cuenta que se MUESTRA en el selector y por la que
                                el RPA busca la cuenta.
+  - ``numeroCuenta``        -> número de cuenta "pelón" (opcional). Sirve para casar
+                               un comprobante cuando el nombre de la cuenta no trae
+                               dígitos: hay cuentas con nombres como 'PETRO SMART
+                               HERMOSILLO BBVA', y el comprobante del banco las
+                               identifica por su número.
   - ``CLABE interbancaria`` -> la CLABE de origen que se usa como cuenta origen del
                                TXT en pesos (opcional; se muestra en su propio
                                selector).
+
+Solo ``id Empresa`` y ``Cuenta`` son obligatorias: los Excel que no traigan las otras
+dos siguen siendo válidos y esas columnas quedan vacías.
 
 Es el complemento por-empresa del catálogo bancario general (`cuentas_bancarias`).
 Se consulta por id de empresa (`cuentas_por_id_empresa`, `clabes_por_id_empresa`).
@@ -35,11 +43,18 @@ from .extractores import validar_clabe
 # El Excel lo actualiza el usuario, así que va junto al .exe (no empaquetado).
 RUTA_EXCEL = os.path.join(rutas.DATOS, "Cuentas dispersion", "CUENTAS DISPERSION.xlsx")
 # Copia en caché (permite seguir trabajando aunque el Excel esté abierto/bloqueado).
-_RUTA_CACHE = os.path.join(rutas.DATOS, "_cuentas_dispersion_cache.json")
+# El nombre lleva versión: al cambiar la FORMA del registro (p. ej. al sumar
+# 'numero') un caché viejo devolvería registros incompletos, así que se cambia el
+# archivo y el anterior simplemente se ignora.
+_RUTA_CACHE = os.path.join(rutas.DATOS, "_cuentas_dispersion_cache_v2.json")
 
 # Encabezados aceptados (normalizados) para cada columna.
 _HDR_ID = ("id empresa",)
 _HDR_CUENTA = ("cuenta",)
+# Número de cuenta (opcional): respaldo para casar comprobantes cuando el nombre de
+# la cuenta no trae dígitos.
+_HDR_NUMERO = ("numerocuenta", "numero cuenta", "numero de cuenta",
+               "num cuenta", "no cuenta", "no. cuenta")
 # CLABE interbancaria (opcional): cuenta origen del TXT en pesos.
 _HDR_CLABE = ("clabe interbancaria", "clabe")
 
@@ -87,9 +102,10 @@ def _texto_cuenta(valor) -> str:
 
 def _leer_excel(ruta: str) -> dict[int, list[dict]]:
     """Lee el Excel. Devuelve {} si no se puede (no existe, bloqueado, formato
-    inesperado). Columnas por ENCABEZADO: 'id Empresa', 'Cuenta' y, opcional,
-    'CLABE interbancaria'. Cada empresa mapea a una lista de registros
-    {'cuenta': str, 'clabe': str} (sin duplicados)."""
+    inesperado). Columnas por ENCABEZADO: 'id Empresa' y 'Cuenta' (obligatorias) y,
+    opcionales, 'numeroCuenta' y 'CLABE interbancaria'. Cada empresa mapea a una
+    lista de registros {'cuenta': str, 'numero': str, 'clabe': str} (sin duplicados);
+    las columnas opcionales ausentes quedan como ''."""
     catalogo: dict[int, list[dict]] = {}
     if openpyxl is None or not os.path.exists(ruta):
         return catalogo
@@ -111,7 +127,8 @@ def _leer_excel(ruta: str) -> dict[int, list[dict]]:
                 idx[clave] = i
         i_id = next((idx[h] for h in _HDR_ID if h in idx), None)
         i_cta = next((idx[h] for h in _HDR_CUENTA if h in idx), None)
-        i_clabe = next((idx[h] for h in _HDR_CLABE if h in idx), None)  # opcional
+        i_num = next((idx[h] for h in _HDR_NUMERO if h in idx), None)    # opcional
+        i_clabe = next((idx[h] for h in _HDR_CLABE if h in idx), None)   # opcional
         if i_id is None or i_cta is None:
             return catalogo  # no es el Excel esperado -> {}
 
@@ -123,13 +140,15 @@ def _leer_excel(ruta: str) -> dict[int, list[dict]]:
                 continue
             id_emp = _id_empresa(col(fila, i_id))
             cuenta = _texto_cuenta(col(fila, i_cta))
+            numero = _texto_cuenta(col(fila, i_num)) if i_num is not None else ""
             clabe = _texto_cuenta(col(fila, i_clabe)) if i_clabe is not None else ""
             if id_emp is None or not cuenta:
                 continue
             registros = catalogo.setdefault(id_emp, [])
             if not any(r["cuenta"] == cuenta and r["clabe"] == clabe
                        for r in registros):  # sin duplicar por empresa
-                registros.append({"cuenta": cuenta, "clabe": clabe})
+                registros.append(
+                    {"cuenta": cuenta, "numero": numero, "clabe": clabe})
     finally:
         wb.close()
     return catalogo
@@ -222,6 +241,25 @@ class CatalogoCuentasDispersion:
         None. Ordenadas (alfabético) y sin duplicar, para el selector."""
         cuentas = {r.get("cuenta", "") for r in self._registros(id_empresa)}
         return sorted(c for c in cuentas if c)
+
+    def identificadores_de_cuenta(self, id_empresa, cuenta: str) -> list[str]:
+        """Todo lo que identifica a `cuenta` en un comprobante bancario, en orden de
+        preferencia: **Cuenta > numeroCuenta > CLABE**. Sin vacíos.
+
+        Existe porque el comprobante trae la cuenta enmascarada por sus últimos
+        dígitos, y hay cuentas cuyo nombre no tiene ninguno (p. ej. 'PETRO SMART
+        HERMOSILLO BBVA'): con solo el nombre, esa regla de casado nunca se cumple.
+        Devolviendo los tres candidatos, quien compara puede probarlos todos.
+
+        Si `cuenta` no está en el catálogo devuelve solo el texto recibido, para que
+        el llamador siga teniendo algo con que comparar."""
+        objetivo = (cuenta or "").strip()
+        for r in self._registros(id_empresa):
+            if r.get("cuenta", "") == objetivo:
+                vals = [objetivo, r.get("numero", ""), r.get("clabe", "")]
+                # dict.fromkeys: quita repetidos conservando el orden de preferencia.
+                return list(dict.fromkeys(v for v in vals if v))
+        return [objetivo] if objetivo else []
 
     def clabes_por_id_empresa(self, id_empresa) -> list[str]:
         """CLABEs interbancarias VÁLIDAS de una empresa por su id (cuenta origen del
