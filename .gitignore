@@ -68,7 +68,7 @@ Codigo macro excel
 dispersion_prueba.txt
 reporte_devoluciones.xlsx
 logo_test.png
-_cuentas_dispersion_cache.json
+_cuentas_dispersion_cache*.json
 
 #descargas del rpa
 descargas/

@@ -3,10 +3,13 @@
 Toma los movimientos SELECCIONADOS por el usuario en la tabla (agrupados por
 empresa) y prepara/valida la información antes de mandarla al RPA:
 
-  1. Valida que cada movimiento traiga los campos requeridos.
-  2. Agrupa por cuenta bancaria y concilia, por cuenta, que el total del importe
+  1. Parte cada empresa por CUENTA DE ORIGEN: el SIPP solo admite una por
+     dispersión, así que elegir cuentas distintas por proveedor obliga a generar
+     una dispersión (y un folio) por cada cuenta.
+  2. Valida que cada movimiento traiga los campos requeridos.
+  3. Agrupa por cuenta bancaria y concilia, por cuenta, que el total del importe
      (Saldo Facturado) coincida con el total del Saldo Programado.
-  3. Marca cada empresa como 'válida' (sin errores y con >= 1 movimiento) para
+  4. Marca cada dispersión como 'válida' (sin errores y con >= 1 movimiento) para
      que el RPA itere solo sobre esas.
 
 No depende de la interfaz (Flet); opera sobre FilaSolicitud, por lo que es
@@ -93,10 +96,16 @@ class GrupoCuenta:
 
 @dataclass
 class EmpresaDispersion:
-    """Movimientos seleccionados de una empresa, agrupados y validados."""
+    """UNA dispersión: los movimientos de una empresa que se pagan con la MISMA
+    cuenta de origen, ya agrupados y validados.
+
+    `empresa` es la clave 'Empresa - Moneda' y NO es única: si el usuario eligió
+    cuentas de origen distintas por proveedor, la misma clave produce varias
+    EmpresaDispersion (una por cuenta), porque el SIPP solo admite una cuenta de
+    origen por dispersión. El par (`empresa`, `cuenta`) sí identifica a cada una."""
 
     empresa: str
-    movimientos: list[FilaSolicitud]           # seleccionados de la empresa
+    movimientos: list[FilaSolicitud]           # los de ESTA cuenta de origen
     grupos: list[GrupoCuenta] = field(default_factory=list)
     errores: list[str] = field(default_factory=list)
     # Datos de pago elegidos por el usuario en la tabla (cuenta de origen +
@@ -164,6 +173,30 @@ def _agrupar_por_cuenta(movimientos: list[FilaSolicitud]) -> list[GrupoCuenta]:
     return grupos
 
 
+def _partir_por_cuenta_origen(
+    movimientos: list[FilaSolicitud], cuenta_general: str,
+    cuentas_prov: dict[tuple, str],
+) -> list[tuple[str, list[FilaSolicitud]]]:
+    """Reparte los movimientos por la cuenta de ORIGEN con la que se van a pagar,
+    en orden de aparición: `(cuenta, movimientos)`.
+
+    La cuenta de cada movimiento es la INDIVIDUAL de su par (proveedor, cuenta
+    beneficiario) si el usuario le eligió una, y la general si no. Como el SIPP
+    admite una sola cuenta de origen por dispersión, cada bloque de esta lista
+    acabará siendo una dispersión (y un folio) distinta. Si todos comparten la
+    misma cuenta —el caso habitual— sale un solo bloque y no hay partición."""
+    por_cuenta: dict[str, list[FilaSolicitud]] = {}
+    orden: list[str] = []
+    for m in movimientos:
+        cuenta = cuentas_prov.get(
+            (m.proveedor, m.cuenta_bancaria)) or cuenta_general or ""
+        if cuenta not in por_cuenta:
+            por_cuenta[cuenta] = []
+            orden.append(cuenta)
+        por_cuenta[cuenta].append(m)
+    return [(c, por_cuenta[c]) for c in orden]
+
+
 def conciliar(
     seleccion_por_empresa: dict[str, list[FilaSolicitud]],
     datos_pago: dict[str, dict] | None = None,
@@ -171,29 +204,41 @@ def conciliar(
     """Concilia y valida la selección. `seleccion_por_empresa` mapea cada empresa
     (clave 'Empresa - Moneda') a sus movimientos SELECCIONADOS. `datos_pago`, si se
     provee, mapea la MISMA clave a los datos de pago elegidos en la tabla (cuenta,
-    concepto_pago, referencia_pago), que se adjuntan a cada empresa. Devuelve un
-    Conciliacion con, por empresa, los grupos por cuenta y los errores encontrados."""
+    cuentas_prov, concepto_pago, referencia_pago).
+
+    Devuelve un Conciliacion con los grupos por cuenta y los errores encontrados. Una
+    empresa produce UNA EmpresaDispersion por cada cuenta de ORIGEN distinta entre sus
+    movimientos (ver `_partir_por_cuenta_origen`): todas comparten la clave
+    'Empresa - Moneda' en `.empresa` y se distinguen por `.cuenta`. Lo normal es que
+    salga una sola, como antes de que se pudiera elegir cuenta por proveedor."""
     datos_pago = datos_pago or {}
     empresas: list[EmpresaDispersion] = []
     for empresa, movimientos in seleccion_por_empresa.items():
         if not movimientos:
             continue
-        errores = _validar_requeridos(movimientos)
-        grupos = _agrupar_por_cuenta(movimientos)
-        for g in grupos:
-            if not g.cuadra:
-                errores.append(
-                    f"Cuenta '{g.cuenta_bancaria}': el importe facturado "
-                    f"(${g.total_importe:,.2f}) no coincide con el programado "
-                    f"(${g.total_programado:,.2f})."
-                )
         pago = datos_pago.get(empresa, {})
-        empresas.append(EmpresaDispersion(
-            empresa, movimientos, grupos, errores,
-            cuenta=pago.get("cuenta", ""),
-            concepto_pago=pago.get("concepto_pago", ""),
-            referencia_pago=pago.get("referencia_pago", ""),
-        ))
+        bloques = _partir_por_cuenta_origen(
+            movimientos, pago.get("cuenta", ""), pago.get("cuentas_prov") or {})
+        for cuenta, movs in bloques:
+            errores = _validar_requeridos(movs)
+            grupos = _agrupar_por_cuenta(movs)
+            for g in grupos:
+                if not g.cuadra:
+                    errores.append(
+                        f"Cuenta '{g.cuenta_bancaria}': el importe facturado "
+                        f"(${g.total_importe:,.2f}) no coincide con el programado "
+                        f"(${g.total_programado:,.2f})."
+                    )
+            if not cuenta:
+                errores.append(
+                    "Falta la Cuenta Bancaria Origen: no se eligió ni la general "
+                    "ni una individual para estos proveedores.")
+            empresas.append(EmpresaDispersion(
+                empresa, movs, grupos, errores,
+                cuenta=cuenta,
+                concepto_pago=pago.get("concepto_pago", ""),
+                referencia_pago=pago.get("referencia_pago", ""),
+            ))
     return Conciliacion(empresas)
 
 
