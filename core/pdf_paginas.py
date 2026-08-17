@@ -14,14 +14,14 @@ reparto contra las dispersiones funciona sin cambiar ni una regla de casado.
 Materializar los archivos no es opcional: el RPA de subida adjunta rutas reales
 en el navegador, así que las páginas tienen que existir en disco.
 
-Dependencia: PyMuPDF (fitz), ya usado en `core.ocr`.
+Dependencia: PyMuPDF (módulo `pymupdf`), ya usado en `core.ocr`.
 """
 
 from __future__ import annotations
 
 import os
 
-import fitz  # PyMuPDF
+import pymupdf
 
 
 class ErrorPdf(Exception):
@@ -41,11 +41,11 @@ def _ruta_libre(ruta: str) -> str:
     return f"{base} ({n}){ext}"
 
 
-def _abrir(ruta_pdf: str) -> "fitz.Document":
+def _abrir(ruta_pdf: str) -> "pymupdf.Document":
     """Abre el PDF o lanza ErrorPdf con un mensaje que nombra el archivo."""
     nombre = os.path.basename(ruta_pdf)
     try:
-        doc = fitz.open(ruta_pdf)
+        doc = pymupdf.open(ruta_pdf)
     except Exception as exc:  # noqa: BLE001 — se traduce a un error propio
         raise ErrorPdf(f"«{nombre}»: no se pudo abrir el PDF ({exc}).") from exc
     if doc.needs_pass:
@@ -98,7 +98,7 @@ def rasterizar_pagina(
         ancho = max(80, min(int(ancho_px), ANCHO_MAXIMO))
         escala = ancho / pag.rect.width if pag.rect.width else 1
         try:
-            pix = pag.get_pixmap(matrix=fitz.Matrix(escala, escala), alpha=False)
+            pix = pag.get_pixmap(matrix=pymupdf.Matrix(escala, escala), alpha=False)
             return pix.tobytes("png"), pix.width, pix.height
         except Exception as exc:  # noqa: BLE001 — se traduce a un error propio
             raise ErrorPdf(
@@ -132,7 +132,7 @@ def separar_paginas(ruta_pdf: str, carpeta_destino: str) -> list[str]:
         for i in range(doc.page_count):
             destino = _ruta_libre(
                 os.path.join(carpeta_destino, f"{base} p{i + 1}.pdf"))
-            nuevo = fitz.open()
+            nuevo = pymupdf.open()
             try:
                 nuevo.insert_pdf(doc, from_page=i, to_page=i)
                 nuevo.save(destino)
