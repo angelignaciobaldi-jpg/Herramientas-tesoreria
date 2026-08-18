@@ -36,7 +36,7 @@ try:
 except ImportError:  # openpyxl es opcional; sin él, el catálogo queda vacío.
     openpyxl = None
 
-from . import rutas
+from . import instalador_catalogo, rutas
 from .exportador_devoluciones import banco_formato
 from .extractores import validar_clabe
 
@@ -180,38 +180,19 @@ def instalar_excel(ruta_origen: str) -> int:
     """Instala el Excel elegido en RUTA_EXCEL de forma TRANSACCIONAL y devuelve
     cuántas empresas quedaron con cuentas.
 
-    Respalda el actual, copia el nuevo y lo LEE para validarlo; si no se reconoce
-    (formato inesperado), hace ROLLBACK y lanza ExcelCuentasDispersionInvalido. Si
-    es válido, invalida el caché."""
-    import shutil
-
-    os.makedirs(os.path.dirname(RUTA_EXCEL), exist_ok=True)
-    respaldo = None
-    if os.path.exists(RUTA_EXCEL):
-        respaldo = RUTA_EXCEL + ".bak"
-        shutil.copyfile(RUTA_EXCEL, respaldo)
-    try:
-        shutil.copyfile(ruta_origen, RUTA_EXCEL)
-        catalogo = _leer_excel(RUTA_EXCEL)
+    Respalda el actual, copia el nuevo y lo LEE para validarlo; si no se reconoce,
+    hace ROLLBACK y lanza ExcelCuentasDispersionInvalido. Si es válido, invalida el
+    caché. La mecánica (incluidos los casos de archivo bloqueado y de elegir el
+    archivo desde su propia ruta) vive en `core.instalador_catalogo`."""
+    def validar(catalogo):
         if not catalogo:
             raise ExcelCuentasDispersionInvalido(
                 "El archivo no tiene el formato esperado (columnas 'id Empresa' y "
                 "'Cuenta')."
             )
-    except Exception:
-        if respaldo is not None:
-            shutil.copyfile(respaldo, RUTA_EXCEL)
-        elif os.path.exists(RUTA_EXCEL):
-            os.remove(RUTA_EXCEL)
-        raise
-    finally:
-        if respaldo is not None and os.path.exists(respaldo):
-            os.remove(respaldo)
-    try:
-        if os.path.exists(_RUTA_CACHE):
-            os.remove(_RUTA_CACHE)
-    except OSError:
-        pass
+
+    catalogo = instalador_catalogo.instalar(
+        ruta_origen, RUTA_EXCEL, _leer_excel, validar, _RUTA_CACHE)
     return len(catalogo)
 
 
