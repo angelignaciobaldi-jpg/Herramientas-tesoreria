@@ -5,7 +5,7 @@ Estrategia híbrida (decidida con el usuario):
   - PDF escaneado / página sin texto -> se rasteriza la página y se aplica OCR.
   - Imagen (JPG/PNG/TIFF)         -> OCR directo.
 
-Dependencias: PyMuPDF (fitz) para leer/rasterizar PDF, Pillow + pytesseract
+Dependencias: PyMuPDF (módulo `pymupdf`) para leer/rasterizar PDF, Pillow + pytesseract
 para el OCR. El motor Tesseract es local (offline): los documentos NO salen
 del equipo.
 """
@@ -20,7 +20,7 @@ import subprocess
 import tempfile
 import time
 
-import fitz  # PyMuPDF
+import pymupdf
 import pytesseract
 from PIL import Image
 
@@ -214,7 +214,7 @@ def _texto_confiable(texto: str) -> bool:
     return normales / len(texto) >= _UMBRAL_TEXTO_CONFIABLE
 
 
-def _ocr_pagina(pagina: "fitz.Page", psm: int | None = None, cancelado=None) -> str:
+def _ocr_pagina(pagina: "pymupdf.Page", psm: int | None = None, cancelado=None) -> str:
     pix = pagina.get_pixmap(dpi=_DPI_OCR)
     # Rasterizar ya costó; antes de pagar el Tesseract de esta página, se mira si
     # entretanto pidieron cancelar. El propio _ocr_imagen también es cancelable
@@ -243,7 +243,7 @@ def _texto_pdf(ruta: str, forzar_ocr: bool = False, psm: int | None = None,
     """
     partes: list[str] = []
     uso_ocr = False
-    with fitz.open(ruta) as doc:
+    with pymupdf.open(ruta) as doc:
         for pagina in doc:
             if cancelado is not None and cancelado():
                 raise OCRCancelado(ruta)

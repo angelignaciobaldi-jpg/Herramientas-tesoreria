@@ -59,6 +59,15 @@ jobs:
         shell: pwsh
         run: python scripts/smoke_import.py
 
+      # Candado de ambiente: la release 0.6.15 se publico apuntando a
+      # test.sipp.petroil.dev porque un PR dejo intercambiadas las dos lineas de
+      # BASE_URL, y el AutoUpdater la repartio a todos los usuarios. Aqui se
+      # valida el valor EFECTIVO de la URL antes de compilar: si no es la de
+      # produccion, el job FALLA y no se genera ni se publica el instalador.
+      - name: Verificar que apunte al SIPP productivo (falla si es test)
+        shell: pwsh
+        run: python scripts/verificar_produccion.py
+
       # 1. Compilar la app con flet pack (onedir). Incluye el driver de Playwright
       #    via --collect-all. NO empaqueta Chromium: se descarga en la 1ra
       #    ejecución del RPA en la PC del usuario. tessdata no va (no está en el

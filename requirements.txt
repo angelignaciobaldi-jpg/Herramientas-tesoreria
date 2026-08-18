@@ -1,7 +1,7 @@
 # Herramienta Integral de Tesorería — dependencias
 # (sqlite3 viene incluido con Python; no se lista)
 flet>=0.85         # interfaz de escritorio (Material)
-PyMuPDF>=1.24      # lectura y rasterizado de PDF (módulo 'fitz')
+PyMuPDF>=1.24.3    # lectura y rasterizado de PDF (módulo 'pymupdf')
 pytesseract>=0.3.10  # conector al motor Tesseract (binario aparte)
 Pillow>=10.0       # manejo de imágenes para el OCR
 openpyxl>=3.1      # lectura del Excel de cuentas / reporte de devoluciones
