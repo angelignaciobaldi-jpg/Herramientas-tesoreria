@@ -532,6 +532,10 @@ class SesionSipp:
     # --- Tiempos de espera (ms) ---
     TIMEOUT_NAV = 30_000        # navegación / carga de página
     TIMEOUT_ELEMENTO = 10_000   # aparición de un elemento
+    # Espera de la respuesta de una SUBIDA de archivo. Es corta a propósito: no
+    # confirmarla no impide nada (el archivo ya se envió al fijarlo en el file
+    # chooser), así que agotarla solo cuesta tiempo muerto por cada comprobante.
+    TIMEOUT_SUBIDA = 8_000
     TIMEOUT_LOGIN_OK = 5_000    # confirmación de inicio de sesión (requisito: 5 s)
     # Descarga de un layout (TXT) de dispersión: arranca casi al instante tras
     # confirmar (archivos diminutos), así que no tiene caso esperar TIMEOUT_NAV; con
@@ -1660,7 +1664,13 @@ class SesionSipp:
 
         El conteo se lee del propio payload del XHR (JSON con QUERY.DATA), lo que
         es inmediato y fiable: no depende del DOM ni de filas de una búsqueda
-        anterior."""
+        anterior.
+
+        Si entre los resultados hay solicitudes YA VENCIDAS, el portal interpone un
+        aviso ("...fecha de vencimiento anterior a la fecha actual") que hay que
+        aceptar antes de poder marcar nada: mientras está abierto, los clics sobre
+        la tabla no llegan. Se acepta aquí y no en el paso siguiente para que
+        cualquier flujo que busque quede con el modal ya utilizable."""
         page = self._exigir_pagina()
         boton = page.locator(f'[ng-click="{self._NG_BUSCAR}"]:visible').first
         try:
@@ -1673,6 +1683,10 @@ class SesionSipp:
             raise ErrorSipp(
                 "No respondió la búsqueda de solicitudes (Buscar)."
             ) from exc
+        # El aviso de vencidas sale DESPUÉS de la respuesta (lo pinta Angular con
+        # los datos ya recibidos), así que se busca aquí. Si no hay vencidas no
+        # aparece y se sigue de largo.
+        await self._confirmar_aviso_con_texto(self._RE_AVISO_VENCIDAS)
         try:
             datos = json.loads(await resp.text())
             return len(datos.get("QUERY", {}).get("DATA", []))
@@ -1816,6 +1830,13 @@ class SesionSipp:
         confirmación y ESPERA a que termine el XHR que carga las cuentas de origen
         (listar_cuentasBancarias). Así la cuenta de origen ya tendrá opciones."""
         page = self._exigir_pagina()
+        # Red de seguridad: el aviso de solicitudes vencidas se acepta al buscar,
+        # pero si tardó en pintarse pudo quedarse abierto. Marcar las filas no se
+        # entera (se hace por JS, que atraviesa el backdrop), pero este botón sí se
+        # pulsa de verdad y el backdrop lo bloquearía, con un error engañoso de
+        # "no se encontró el botón 'Aceptar'". Se re-comprueba con un timeout corto:
+        # si no hay aviso, cuesta menos de un segundo.
+        await self._confirmar_aviso_con_texto(self._RE_AVISO_VENCIDAS, timeout=800)
         boton = page.locator(
             f'[ng-click="{self._NG_ACEPTAR_SOLICITUDES}"]:visible').first
         # Se registra la espera del XHR ANTES de aceptar (el XHR se dispara al
@@ -2447,11 +2468,17 @@ class SesionSipp:
                 timeout=self.TIMEOUT_ELEMENTO) as fc_info:
                 await self._click_seguro(boton)
             fc = await fc_info.value
-            # Envolver set_files en expect_response para capturar el XHR de subida,
-            # aunque dispare de inmediato al fijar el archivo.
+            # Se espera la respuesta de la subida para no seguir antes de tiempo.
+            #
+            # OJO con el filtro: las llamadas JSON del portal pasan por
+            # 'cfproxy.cfc?_=<func>', pero una subida es un POST multipart a OTRO
+            # endpoint, así que buscar 'cfproxy' aquí NO casaba nunca y se agotaba el
+            # timeout completo en CADA comprobante. Ahora se reconoce por lo que sí
+            # define a una subida —un POST que no es un recurso estático— y con un
+            # timeout corto, porque no confirmarla es inofensivo.
             try:
                 async with page.expect_response(
-                    lambda r: "cfproxy" in r.url.lower(), timeout=self.TIMEOUT_NAV,
+                    self._es_respuesta_subida, timeout=self.TIMEOUT_SUBIDA,
                 ) as up:
                     await fc.set_files(ruta_pdf, timeout=self.TIMEOUT_ELEMENTO)
                     await self._confirmar_aviso_si_hay(timeout=2_000)
@@ -2463,6 +2490,25 @@ class SesionSipp:
             return False
         await page.wait_for_timeout(500)  # respiro para que Angular refleje la subida
         return True
+
+    # Recursos estáticos que el navegador pide todo el tiempo y que nunca son la
+    # respuesta de una subida.
+    _RE_ESTATICO = re.compile(
+        r"\.(?:js|css|png|jpe?g|gif|svg|ico|woff2?|ttf|map)(?:\?|$)", re.I)
+
+    @classmethod
+    def _es_respuesta_subida(cls, respuesta) -> bool:
+        """True si la respuesta parece la de la subida del archivo.
+
+        Se identifica por el MÉTODO (una subida es POST) y descartando recursos
+        estáticos, en vez de por una URL concreta: el endpoint de carga no es el
+        mismo proxy que usan las llamadas JSON del portal, y atarlo a un nombre fue
+        justo lo que hacía esperar de más."""
+        try:
+            return (respuesta.request.method == "POST"
+                    and not cls._RE_ESTATICO.search(respuesta.url or ""))
+        except Exception:  # noqa: BLE001 — una respuesta ilegible no es la subida
+            return False
 
     async def _indice_fila_por_importe(self, botones, importe: float) -> int:
         """Índice del botón cuya fila (tr ancestro) muestra un importe ≈ `importe`
@@ -2531,6 +2577,68 @@ class SesionSipp:
             return True
         except PlaywrightTimeoutError:
             return False
+
+    # Aviso que el portal muestra tras 'Buscar' cuando entre los resultados hay
+    # solicitudes ya vencidas. Se reconoce por un fragmento SIN acentos del mensaje
+    # ("...fecha de vencimiento anterior a la fecha actual"), para que un cambio de
+    # tildes o de puntuación no lo deje de encontrar.
+    _RE_AVISO_VENCIDAS = re.compile(
+        r"vencimiento\s+anterior\s+a\s+la\s+fecha\s+actual", re.I)
+    # Cuánto se espera a que aparezca. Corto: si no sale, no debe retrasar cada
+    # búsqueda más de lo necesario.
+    TIMEOUT_AVISO = 2_500
+
+    async def _confirmar_aviso_con_texto(
+        self, patron: "re.Pattern", timeout: int | None = None,
+    ) -> bool:
+        """Si aparece un aviso cuyo TEXTO casa con `patron`, pulsa su 'Aceptar'.
+        Devuelve True si lo hizo. Best-effort: no lanza si no aparece.
+
+        A diferencia de `_confirmar_aviso_si_hay`, aquí NO vale pulsar cualquier
+        'Aceptar' visible: mientras el modal de solicitudes está abierto, su propio
+        botón 'Aceptar' también lo está, y pulsarlo cerraría el modal SIN haber
+        marcado nada. Por eso se busca primero el contenedor del aviso y se pulsa el
+        botón de DENTRO; el respaldo excluye explícitamente el botón del modal."""
+        page = self._exigir_pagina()
+        limite = (timeout or self.TIMEOUT_AVISO) / 1000
+        fin = asyncio.get_event_loop().time() + limite
+        contenedores = (
+            ".modal:visible", ".sweet-alert:visible", ".bootbox:visible",
+            "[role='dialog']:visible",
+        )
+        # Respaldo: cualquier 'Aceptar' visible que NO sea el del modal de
+        # solicitudes (ese acepta la selección, no un aviso).
+        sel_respaldo = (
+            "button:visible:not([ng-click='%s'])" % self._NG_ACEPTAR_SOLICITUDES)
+        while True:
+            for css in contenedores:
+                try:
+                    dlg = page.locator(css).filter(has_text=patron)
+                    if not await dlg.count():
+                        continue
+                    boton = dlg.first.get_by_role(
+                        "button", name=re.compile(r"^\s*aceptar\s*$", re.I))
+                    if await boton.count():
+                        await self._click_seguro(boton.first)
+                        return True
+                except Exception:  # noqa: BLE001 — un selector que no aplique no aborta
+                    continue
+            try:
+                cuerpo = await page.locator("body").inner_text(timeout=1_000)
+            except Exception:  # noqa: BLE001 — la página pudo estar navegando
+                cuerpo = ""
+            if patron.search(cuerpo or ""):
+                try:
+                    boton = page.locator(sel_respaldo).filter(
+                        has_text=re.compile(r"^\s*aceptar\s*$", re.I))
+                    if await boton.count():
+                        await self._click_seguro(boton.first)
+                        return True
+                except Exception:  # noqa: BLE001 — best-effort
+                    pass
+            if asyncio.get_event_loop().time() >= fin:
+                return False
+            await asyncio.sleep(0.2)
 
     async def confirmar_aviso(self) -> None:
         """Pulsa 'Aceptar' en el modal de confirmación (HTML, no nativo) que el
