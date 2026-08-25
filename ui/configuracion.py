@@ -413,7 +413,7 @@ class SeccionConfiguracion:
     def _recargar_catalogos(self) -> None:
         """Refresca en caliente las pantallas que consultan el catálogo de
         cuentas (para que el Excel nuevo se refleje sin reabrir la app)."""
-        for pantalla in ("devoluciones", "dispersion_no_pemex"):
+        for pantalla in ("devoluciones", "dispersion_no_pemex", "saldos"):
             try:
                 getattr(self.app, pantalla).recargar_catalogo()
             except Exception:  # noqa: BLE001 — no debe romper el guardado
