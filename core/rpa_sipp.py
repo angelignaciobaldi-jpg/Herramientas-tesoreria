@@ -530,17 +530,39 @@ class SesionSipp:
     URL_REPORTE_CUENTAS = BASE_URL + "/index.cfm#/ProveedoresCuentasBancariasReporte"
 
     # --- Tiempos de espera (ms) ---
-    TIMEOUT_NAV = 30_000        # navegación / carga de página
-    TIMEOUT_ELEMENTO = 10_000   # aparición de un elemento
+    TIMEOUT_NAV = 60_000        # navegación / carga de página
+    TIMEOUT_ELEMENTO = 20_000   # aparición de un elemento
+    # Espera de la RESPUESTA de una consulta al backend (buscar solicitudes,
+    # listar cuentas, guardar la dispersión). Es aparte de TIMEOUT_NAV y mucho
+    # más larga a propósito.
+    #
+    # Estas esperas dependen de cuánto tarde el SIPP en resolver la consulta, no
+    # de la red ni del navegador. En un día normal la búsqueda de solicitudes
+    # responde en segundos, pero cuando el sistema se pone lento se han medido
+    # picos de 40 a 60 s: con los 30 s de TIMEOUT_NAV el RPA se rendía justo
+    # cuando el servidor todavía venía en camino, y el usuario tenía que repetir
+    # todo el proceso.
+    #
+    # Dos minutos dan holgura de 2x sobre el peor pico visto. Agotarlos no cuesta
+    # nada cuando el sistema va bien —la espera termina en cuanto llega la
+    # respuesta, no consume el tiempo completo—; lo que sí cuesta es rendirse
+    # antes de tiempo.
+    TIMEOUT_CONSULTA = 120_000
     # Espera de la respuesta de una SUBIDA de archivo. Es corta a propósito: no
     # confirmarla no impide nada (el archivo ya se envió al fijarlo en el file
     # chooser), así que agotarla solo cuesta tiempo muerto por cada comprobante.
     TIMEOUT_SUBIDA = 8_000
-    TIMEOUT_LOGIN_OK = 5_000    # confirmación de inicio de sesión (requisito: 5 s)
-    # Descarga de un layout (TXT) de dispersión: arranca casi al instante tras
-    # confirmar (archivos diminutos), así que no tiene caso esperar TIMEOUT_NAV; con
-    # esto, si un layout no genera descarga, se descarta rápido y se sigue.
-    TIMEOUT_DESCARGA = 12_000
+    # Confirmación de inicio de sesión. Eran 5 s por un requisito temprano, pero
+    # es la PRIMERA espera de todo el proceso: en un día en que el SIPP va lento,
+    # el redirect de login.html a index.cfm tarda más que eso y el RPA se caía
+    # antes de empezar. Alargarla no puede dar un resultado incorrecto —solo
+    # tarda más en avisar de un login que de verdad falló—.
+    TIMEOUT_LOGIN_OK = 20_000
+    # Descarga de un layout (TXT) de dispersión. Sigue siendo más corto que
+    # TIMEOUT_NAV para que un layout que no genera descarga se descarte sin colgar
+    # el lote, pero 12 s se quedaban cortos cuando el servidor tarda en armarlo:
+    # los archivos son diminutos, lo que cuesta es que el SIPP los produzca.
+    TIMEOUT_DESCARGA = 30_000
 
     def __init__(self, headless: bool = False, slow_mo: int = 0, zoom: float = 0.8):
         self.headless = headless
@@ -593,7 +615,7 @@ class SesionSipp:
     # ------------------------------------------------------------ login
     async def login(self, usuario: str, contrasena: str) -> None:
         """Inicia sesión en el portal. Lanza ErrorSipp si faltan credenciales o
-        no se confirma el acceso al panel interno en 5 s."""
+        no se confirma el acceso al panel interno (ver TIMEOUT_LOGIN_OK)."""
         if not usuario or not contrasena:
             raise ErrorSipp("Faltan credenciales para iniciar sesión en el SIPP.")
         page = self._exigir_pagina()
@@ -639,7 +661,7 @@ class SesionSipp:
     async def _verificar_login(self) -> None:
         """Confirma que se entró al panel interno. El acceso correcto redirige
         de login.html a index.cfm; además se busca un elemento exclusivo de la
-        sesión iniciada. Lanza ErrorSipp si no se confirma en 5 s."""
+        sesión iniciada. Lanza ErrorSipp si no se confirma a tiempo."""
         page = self._exigir_pagina()
         # Señal principal: salir de login.html hacia la aplicación (index.cfm).
         try:
@@ -660,8 +682,9 @@ class SesionSipp:
             await self._primer_visible(señales, "panel interno", timeout=self.TIMEOUT_LOGIN_OK)
         except ErrorSipp as exc:
             raise ErrorSipp(
-                "No se confirmó el inicio de sesión en el SIPP: no se llegó al panel "
-                "interno en 5 s. Revisa las credenciales o el localizador de éxito."
+                "No se confirmó el inicio de sesión en el SIPP: no se llegó al "
+                "panel interno a tiempo. Revisa las credenciales o el "
+                "localizador de éxito."
             ) from exc
 
     # ------------------------------------------- empresa / sucursal (chosen)
@@ -1675,7 +1698,8 @@ class SesionSipp:
         boton = page.locator(f'[ng-click="{self._NG_BUSCAR}"]:visible').first
         try:
             async with page.expect_response(
-                lambda r: self._FUNC_BUSCAR in r.url, timeout=self.TIMEOUT_NAV,
+                lambda r: self._FUNC_BUSCAR in r.url,
+                timeout=self.TIMEOUT_CONSULTA,
             ) as info:
                 await boton.click(timeout=self.TIMEOUT_ELEMENTO)
             resp = await info.value
@@ -1843,7 +1867,8 @@ class SesionSipp:
         # confirmar la aceptación de las solicitudes).
         try:
             async with page.expect_response(
-                lambda r: self._FUNC_CUENTAS in r.url, timeout=self.TIMEOUT_NAV,
+                lambda r: self._FUNC_CUENTAS in r.url,
+                timeout=self.TIMEOUT_CONSULTA,
             ) as info:
                 try:
                     await boton.click(timeout=self.TIMEOUT_ELEMENTO)
@@ -1998,7 +2023,8 @@ class SesionSipp:
             f'[ng-click="{self._NG_GUARDAR_DISPERSION}"]:visible').first
         try:
             async with page.expect_response(
-                lambda r: self._FUNC_GUARDAR in r.url, timeout=self.TIMEOUT_NAV,
+                lambda r: self._FUNC_GUARDAR in r.url,
+                timeout=self.TIMEOUT_CONSULTA,
             ) as info:
                 # Clic robusto: si un overlay lo intercepta, cae a clic DOM.
                 await self._click_seguro(boton)
@@ -2584,9 +2610,13 @@ class SesionSipp:
     # tildes o de puntuación no lo deje de encontrar.
     _RE_AVISO_VENCIDAS = re.compile(
         r"vencimiento\s+anterior\s+a\s+la\s+fecha\s+actual", re.I)
-    # Cuánto se espera a que aparezca. Corto: si no sale, no debe retrasar cada
-    # búsqueda más de lo necesario.
-    TIMEOUT_AVISO = 2_500
+    # Cuánto se espera a que aparezca. Es un compromiso: cuando NO hay vencidas
+    # se agota entero y retrasa esa búsqueda, pero si el aviso llega tarde y no se
+    # acepta, queda tapando la tabla y los clics siguientes NO llegan — un fallo
+    # mudo, sin error, que deja la dispersión a medias. Con el sistema lento el
+    # aviso lo pinta Angular después de una respuesta que ya tardó, así que 2.5 s
+    # se quedaban cortos. Pagar unos segundos de más vale la pena.
+    TIMEOUT_AVISO = 5_000
 
     async def _confirmar_aviso_con_texto(
         self, patron: "re.Pattern", timeout: int | None = None,
