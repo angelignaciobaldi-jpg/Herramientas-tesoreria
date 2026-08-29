@@ -68,6 +68,13 @@ jobs:
         shell: pwsh
         run: python scripts/verificar_produccion.py
 
+      # Casado de comprobantes contra movimientos: si estas reglas se rompen, un
+      # comprobante se sube a la solicitud EQUIVOCADA y eso no se ve hasta que
+      # alguien audita el SIPP. Los casos salen de comprobantes BBVA reales.
+      - name: Pruebas del casado de comprobantes
+        shell: pwsh
+        run: python scripts/prueba_comprobantes.py
+
       # 1. Compilar la app con flet pack (onedir). Incluye el driver de Playwright
       #    via --collect-all. NO empaqueta Chromium: se descarga en la 1ra
       #    ejecución del RPA en la PC del usuario. tessdata no va (no está en el

@@ -28,7 +28,8 @@ import unicodedata
 import flet as ft
 
 from core import (
-    ajustes_api, api, conciliacion, cuentas_dispersion, exportador_devoluciones,
+    ajustes_api, api, comprobantes as _comprobantes, conciliacion,
+    cuentas_dispersion, exportador_devoluciones,
     pdf_paginas, preferencias, reporte_dispersion, reporte_dispersion_export,
     rutas, tipo_cambio,
 )
@@ -139,29 +140,18 @@ def _fecha_tc_texto() -> str:
 
 
 def _ultimos_digitos(texto, n: int = 4) -> str:
-    """Últimos `n` dígitos de un texto, ignorando cualquier no-dígito (espacios,
-    guiones, y máscaras como '*0012'). '' si no hay dígitos. Se usa para casar
-    cuentas/CLABEs por sus últimos dígitos (los comprobantes vienen enmascarados)."""
-    d = re.sub(r"\D", "", str(texto or ""))
-    return d[-n:] if d else ""
+    """Últimos `n` dígitos, ignorando no-dígitos. Ver core.comprobantes."""
+    return _comprobantes.ultimos_digitos(texto, n)
 
 
 def _norm_nombre_doc(nombre: str) -> str:
-    """Normaliza un nombre de archivo para comparar el 'documento_lectura' que devuelve
-    el extractor contra los PDFs subidos: minúsculas, sin espacios en los extremos y sin
-    la extensión '.pdf'. Tolera diferencias de caja/extensión entre lo subido y lo que
-    reporta la API."""
-    s = (nombre or "").strip().lower()
-    return s[:-4] if s.endswith(".pdf") else s
+    """Nombre de archivo normalizado. Ver core.comprobantes."""
+    return _comprobantes.norm_nombre_doc(nombre)
 
 
 def _reducir_nombre_doc(nombre: str) -> str:
-    """Versión aún más laxa de `_norm_nombre_doc`: solo letras y dígitos. Es el último
-    recurso para casar el 'documento_lectura' con el archivo enviado, por si la API
-    cambia espacios por guiones/guiones bajos al reportarlo. Las páginas separadas
-    terminan en 'p1', 'p2'…, que sobreviven a esta reducción y las mantienen
-    distinguibles entre sí."""
-    return re.sub(r"[^a-z0-9]", "", _norm_nombre_doc(nombre))
+    """Nombre de archivo reducido a letras y dígitos. Ver core.comprobantes."""
+    return _comprobantes.reducir_nombre_doc(nombre)
 
 
 # --- Colores de fila por tipo de solicitud -------------------------------
@@ -3960,29 +3950,19 @@ class SeccionDispersionNoPemex:
         return self.catalogo_dispersion.identificadores_de_cuenta(id_empresa, cuenta)
 
     def _comprobante_coincide(self, comprobante: dict, folio_dict: dict) -> dict:
-        """Evalúa las 3 reglas de vinculación de un comprobante (dict de la respuesta
-        del extractor) contra una dispersión (folio). REUTILIZABLE para carga
-        individual y masiva. Devuelve {'origen','beneficiario','total','coincide'}
-        (bools); 'coincide' = las tres reglas se cumplen.
+        """Evalúa las 3 reglas de vinculación de un comprobante contra una
+        dispersión (folio). Devuelve {'origen','beneficiario','total','coincide'}.
 
-        Las cuentas del comprobante vienen enmascaradas (p. ej. '*0012'), así que la
-        comparación es por los ÚLTIMOS dígitos: cuenta origen (regla 1) y CLABE
-        interbancaria del beneficiario vs cuenta destino (regla 2). El total (regla 3)
-        se compara con tolerancia de centavos."""
+        El QUÉ casar sale de `_objetivo_vinculacion` (propio de esta pantalla);
+        el CÓMO casarlo vive en core.comprobantes, compartido con devoluciones.
+        """
         obj = self._objetivo_vinculacion(folio_dict)
-        origen_comp = _ultimos_digitos(comprobante.get("cuenta_origen"))
-        origen_ok = bool(origen_comp) and any(
-            _ultimos_digitos(o) == origen_comp for o in obj["origenes"])
-        destino_comp = _ultimos_digitos(comprobante.get("cuenta_destino"))
-        benef_ok = bool(destino_comp) and any(
-            _ultimos_digitos(b) == destino_comp for b in obj["beneficiarios"])
-        importe = comprobante.get("importe")
-        total_ok = importe is not None and abs(
-            float(importe) - obj["total"]) < 0.01
-        return {
-            "origen": origen_ok, "beneficiario": benef_ok, "total": total_ok,
-            "coincide": origen_ok and benef_ok and total_ok,
-        }
+        return _comprobantes.evaluar_coincidencia(
+            comprobante,
+            _comprobantes.Objetivo(origenes=obj["origenes"],
+                                   beneficiarios=obj["beneficiarios"],
+                                   total=obj["total"]),
+        )
 
     async def _vincular_comprobante_individual(self, fila: dict) -> None:
         """Entrada del botón Agregar/Editar comprobante de una fila del resumen.
@@ -4380,64 +4360,21 @@ class SeccionDispersionNoPemex:
 
     @staticmethod
     def _indices_por_nombre(rutas_pdf: list[str]) -> tuple[dict, dict, dict]:
-        """Índices para resolver el 'documento_lectura' que devuelve el extractor
-        contra las rutas enviadas, de más a menos estricto: nombre exacto, normalizado
-        (sin caja ni '.pdf') y reducido a solo letras y dígitos.
-
-        Los niveles laxos DESCARTAN las claves ambiguas: si dos archivos colapsan al
-        mismo nombre reducido, ninguno se resuelve por ahí y se cae al criterio
-        siguiente, en vez de adivinar y adjuntarle a un movimiento el comprobante de
-        otro."""
-        exacto: dict[str, str] = {}
-        norm: dict[str, str] = {}
-        reducido: dict[str, str] = {}
-        dup_norm: set[str] = set()
-        dup_red: set[str] = set()
-        for ruta in rutas_pdf:
-            base = os.path.basename(ruta)
-            exacto.setdefault(base, ruta)
-            k = _norm_nombre_doc(base)
-            if k in norm and norm[k] != ruta:
-                dup_norm.add(k)
-            norm.setdefault(k, ruta)
-            k2 = _reducir_nombre_doc(base)
-            if k2 in reducido and reducido[k2] != ruta:
-                dup_red.add(k2)
-            reducido.setdefault(k2, ruta)
-        for k in dup_norm:
-            norm.pop(k, None)
-        for k in dup_red:
-            reducido.pop(k, None)
-        return exacto, norm, reducido
+        """Índices para resolver el 'documento_lectura' contra las rutas
+        enviadas. Ver core.comprobantes.indices_por_nombre."""
+        return _comprobantes.indices_por_nombre(rutas_pdf)
 
     @staticmethod
     def _resolver_ruta(nombre: str, indices: tuple[dict, dict, dict]) -> str | None:
-        """Ruta del PDF del que salió una lectura, por su 'documento_lectura'."""
-        exacto, norm, reducido = indices
-        n = (nombre or "").strip()
-        if not n:
-            return None
-        return (exacto.get(n) or norm.get(_norm_nombre_doc(n))
-                or reducido.get(_reducir_nombre_doc(n)))
+        """Ruta del PDF del que salió una lectura. Ver core.comprobantes."""
+        return _comprobantes.resolver_ruta(nombre, indices)
 
     def _repartir_lecturas(
         self, comprobantes: list[dict], rutas_pdf: list[str],
     ) -> tuple[dict[str, list[dict]], int]:
-        """Agrupa las lecturas del extractor por la RUTA del archivo del que salieron.
-
-        Devuelve `(por_archivo, sin_archivo)`; `por_archivo` trae una entrada por cada
-        ruta enviada (lista vacía si no devolvió lectura) y `sin_archivo` cuenta las
-        lecturas cuyo 'documento_lectura' no correspondió a ningún archivo enviado."""
-        indices = self._indices_por_nombre(rutas_pdf)
-        por_archivo: dict[str, list[dict]] = {r: [] for r in rutas_pdf}
-        sin_archivo = 0
-        for c in comprobantes:
-            ruta = self._resolver_ruta(c.get("documento_lectura"), indices)
-            if ruta is None:
-                sin_archivo += 1
-                continue
-            por_archivo[ruta].append(c)
-        return por_archivo, sin_archivo
+        """Agrupa las lecturas del extractor por la RUTA del archivo del que
+        salieron. Ver core.comprobantes.repartir_lecturas."""
+        return _comprobantes.repartir_lecturas(comprobantes, rutas_pdf)
 
     def _vincular_comprobantes_masivo(
         self, comprobantes: list[dict], rutas_pdf: list[str],
