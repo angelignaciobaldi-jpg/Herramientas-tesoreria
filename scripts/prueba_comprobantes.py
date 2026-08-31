@@ -1,4 +1,4 @@
-"""Pruebas de `core.comprobantes` (casado de comprobantes contra movimientos).
+"""Pruebas de `core.comprobantes` y `core.lector_comprobantes`.
 
 Sin dependencias de test externas: se corre con `python scripts/prueba_comprobantes.py`
 y sale con código 1 si algo falla, para poder colgarlo del pipeline igual que
@@ -20,6 +20,7 @@ if _RAIZ not in sys.path:
     sys.path.insert(0, _RAIZ)
 
 from core import comprobantes as c  # noqa: E402
+from core import lector_comprobantes as lc  # noqa: E402
 
 # Lecturas equivalentes a las de los dos comprobantes reales del lote GC MOTORS.
 MISMO_BANCO = {
@@ -149,9 +150,139 @@ def prueba_coincidencia() -> None:
         "objetivo vacío no casa con nada")
 
 
+# --- Lector local de comprobantes ---------------------------------------
+# Los comprobantes reales estan en .gitignore (llevan datos de clientes), asi que
+# las pruebas arman PDFs sinteticos con el MISMO texto que emite BBVA Net Cash,
+# incluidos los acentos ('depósito'/'aplicación') que el lector debe tolerar.
+_PLANTILLA_MISMO_BANCO = """BBVA Net Cash
+  BBVA Net Cash - Pago Mismo Banco
+Datos de la operación
+Tipo de operación: Grupo Pago Mismo Banco
+  Descripción: DEVOLUCIONES GC MOTORS
+  Importe: 3,227.00
+  Cuenta de retiro: 000000000117421184
+  Cuenta de depósito: 012730028914386037
+  Titular de la cuenta: EMPRESA QUE PAGA SA
+  Titular de la cuenta: BENEFICIARIO UNO
+  Fecha de creación: 04/08/2026
+  Fecha de aplicación: 04/08/2026
+  Motivo de pago: APOYO PLACAS
+  Folio de firma: 9485458461
+  Folio único: I333202608041750400010641840
+  Estado: {estado}
+"""
+
+_PLANTILLA_INTERBANCARIO = """BBVA Net Cash
+  BBVA Net Cash - Pago Interbancario
+Datos de la operación
+Tipo de operación: Grupo Pago Interbancario
+  Importe: 1,500.50
+  Cuenta de retiro: 000000000117421184
+  Cuenta de depósito: 137730104690721058
+  Banco beneficiario: BANCOPPEL
+  Fecha de creación: 03/08/2026
+  Fecha de aplicación: 04/08/2026
+  Concepto de pago: APOYO PLACAS
+  Referencia: 0023626
+  Clave de rastreo: 002601002608040000587607
+  Folio interbancario: 0000587607
+  Estado: Operado
+"""
+
+
+def _pdf_con_texto(ruta: str, texto: str) -> str:
+    """Escribe un PDF de una pagina con `texto` en su capa de texto."""
+    import pymupdf
+    doc = pymupdf.open()
+    pagina = doc.new_page()
+    y = 60
+    for linea in texto.splitlines():
+        pagina.insert_text((50, y), linea, fontsize=9)
+        y += 14
+    doc.save(ruta)
+    doc.close()
+    return ruta
+
+
+def prueba_lector() -> None:
+    import tempfile
+    print("\nlector local de comprobantes")
+    tmp = tempfile.mkdtemp(prefix="prueba_comprobantes_")
+
+    mb = _pdf_con_texto(os.path.join(tmp, "mismo banco.pdf"),
+                        _PLANTILLA_MISMO_BANCO.format(estado="Operado"))
+    ib = _pdf_con_texto(os.path.join(tmp, "interbancario.pdf"),
+                        _PLANTILLA_INTERBANCARIO)
+
+    lecturas, errores = lc.leer_varios([mb, ib])
+    check(len(lecturas) == 2 and not errores, "lee las dos variantes sin errores")
+
+    a, b = lecturas
+    check(a["cuenta_origen"] == "000000000117421184",
+          "cuenta de retiro (numero de cuenta con ceros)")
+    check(a["cuenta_destino"] == "012730028914386037", "cuenta de deposito (CLABE)")
+    check(a["importe"] == 3227.00, "importe con separador de miles -> float")
+    check(b["importe"] == 1500.50, "importe con centavos")
+    check(a["documento_lectura"] == "mismo banco.pdf",
+          "documento_lectura = nombre del archivo, como el extractor")
+
+    # La forma debe coincidir con la del extractor para que el casado sea indistinto.
+    for clave in ("documento_lectura", "cuenta_origen", "cuenta_destino", "importe"):
+        check(clave in a, f"expone '{clave}' igual que el extractor")
+
+    print("\n  diferencias entre variantes")
+    check(a["referencia"] == "" and a["clave_rastreo"] == "",
+          "mismo banco NO trae referencia ni clave de rastreo")
+    check(b["referencia"] == "0023626" and b["clave_rastreo"].startswith("0026"),
+          "interbancario SI las trae")
+    check(a["concepto"] == "APOYO PLACAS" and b["concepto"] == "APOYO PLACAS",
+          "concepto sale de 'Motivo de pago' o de 'Concepto de pago'")
+
+    print("\n  referencia para el SIPP (AAAAMMDD)")
+    check(lc.referencia_aaaammdd(a) == "20260804", "fecha de aplicacion -> AAAAMMDD")
+    check(lc.referencia_aaaammdd(b) == "20260804",
+          "usa la de APLICACION, no la de creacion (03/08 en el interbancario)")
+    check(lc.referencia_aaaammdd({"fecha_creacion": "09/12/2026"}) == "20261209",
+          "sin fecha de aplicacion cae a la de creacion")
+    check(lc.referencia_aaaammdd({}) == "",
+          "sin ninguna fecha devuelve vacio (no inventa una referencia)")
+
+    print("\n  estado de la operacion")
+    check(lc.esta_aplicado(a), "'Operado' cuenta como aplicado")
+    pendiente = _pdf_con_texto(
+        os.path.join(tmp, "pendiente.pdf"),
+        _PLANTILLA_MISMO_BANCO.format(estado="En proceso"))
+    (p,), _ = lc.leer_varios([pendiente])
+    check(not lc.esta_aplicado(p), "'En proceso' NO cuenta como aplicado")
+
+    print("\n  el casado funciona igual con la lectura local")
+    objetivo = c.Objetivo(origenes={"0117421184"},
+                          beneficiarios={"012730028914386037"}, total=3227.00)
+    check(c.evaluar_coincidencia(a, objetivo)["coincide"],
+          "una lectura local casa con evaluar_coincidencia")
+    check(not c.evaluar_coincidencia(b, objetivo)["coincide"],
+          "y el comprobante ajeno sigue sin casar")
+
+    print("\n  bordes")
+    roto = os.path.join(tmp, "roto.pdf")
+    with open(roto, "wb") as fh:
+        fh.write(b"esto no es un pdf")
+    lec, err = lc.leer_varios([roto])
+    check(not lec and len(err) == 1, "un PDF ilegible se reporta y no rompe el lote")
+    vacio = _pdf_con_texto(os.path.join(tmp, "vacio.pdf"), "Hoja sin datos de pago")
+    lec2, err2 = lc.leer_varios([vacio])
+    check(not lec2 and len(err2) == 1, "un PDF sin datos de pago se reporta aparte")
+    lec3, err3 = lc.leer_varios([mb, roto, ib])
+    check(len(lec3) == 2 and len(err3) == 1,
+          "el lote continua: 2 leidos y 1 con error")
+
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main() -> int:
     for prueba in (prueba_ultimos_digitos, prueba_nombres, prueba_resolucion_rutas,
-                   prueba_reparto, prueba_coincidencia):
+                   prueba_reparto, prueba_coincidencia, prueba_lector):
         prueba()
     print()
     if _fallos:
