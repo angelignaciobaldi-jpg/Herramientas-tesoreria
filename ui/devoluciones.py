@@ -25,8 +25,9 @@ from datetime import date
 import flet as ft
 
 from core import (
-    api, cuentas_bancarias, exportador_devoluciones, reporte_excel,
-    solicitudes_devolucion,
+    api, comprobantes as _comprobantes, cuentas_bancarias,
+    exportador_devoluciones, lector_comprobantes, pdf_paginas,
+    reporte_excel, solicitudes_devolucion,
 )
 from core.catalogo_bancos import banco_desde_clabe
 from ui.comun import (
@@ -42,13 +43,14 @@ from ui.tabla_responsiva import DER, IZQ, ColumnaTabla, FilaDatos, TablaResponsi
 _COLS = [
     ("", 3, CENTRO, 44),
     ("Folio", 8, CENTRO, 90),
-    ("Empresa solicitante", 13, CENTRO, 150),
-    ("Cliente / Beneficiario", 15, IZQ, 150),
-    ("CLABE Beneficiario", 13, CENTRO, 150),
-    ("Banco destino", 9, CENTRO, 90),
+    ("Empresa solicitante", 12, CENTRO, 150),
+    ("Cliente / Beneficiario", 14, IZQ, 150),
+    ("CLABE Beneficiario", 12, CENTRO, 150),
+    ("Banco destino", 8, CENTRO, 90),
     ("Monto", 8, DER, 90),
-    ("Concepto", 12, IZQ, 130),
+    ("Concepto", 10, IZQ, 130),
     ("Cuenta origen de pago", 11, CENTRO, 150),
+    ("Comprobante", 8, CENTRO, 110),
     ("Acciones", 6, CENTRO, 90),
 ]
 
@@ -90,6 +92,12 @@ class FilaSolicitud:
         self.es_deudor = es_deudor
         self.original = sol          # datos originales del SIPP (None si es manual)
         self.asignacion: dict | None = None  # cuenta origen de pago (paso 2)
+        # Ruta del PDF del comprobante de pago vinculado a esta fila (paso 3).
+        # None mientras no se haya cargado/casado ninguno.
+        self.comprobante: str | None = None
+        # Lectura del comprobante (cuentas, importe, fecha de aplicacion...):
+        # de ella sale la Referencia que el RPA escribira en el SIPP.
+        self.lectura_comprobante: dict | None = None
         # True si esta fila repite (CLABE+monto+beneficiario+empresa) a otra ya
         # capturada; lo recalcula la sección en cada cambio/consulta.
         self.es_duplicado = False
@@ -159,6 +167,17 @@ class FilaSolicitud:
             horizontal_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
+        # Celda de la columna 'Comprobante': un icono que resume el estado y
+        # cuyo tooltip trae el detalle (archivo y referencia que se escribira).
+        self.icono_comprobante = ft.Icon(
+            ft.Icons.ATTACH_FILE, size=18, color=GRIS)
+        self.txt_comprobante = ft.Text("— sin comprobante —", size=11,
+                                       color=GRIS, no_wrap=True)
+        self.celda_comprobante = ft.Row(
+            [self.icono_comprobante, self.txt_comprobante],
+            spacing=4, alignment=ft.MainAxisAlignment.CENTER, tight=True,
+        )
+
         self.acciones = ft.Row(
             [
                 ft.IconButton(
@@ -187,7 +206,7 @@ class FilaSolicitud:
         return FilaDatos(
             [self.chk_sel, self.folio_ctrl, self.dd_empresa, self.tf_cliente,
              self.tf_clabe, self.txt_banco, self.tf_monto, self.tf_concepto,
-             self.txt_origen, self.acciones],
+             self.txt_origen, self.celda_comprobante, self.acciones],
             bgcolor=self.color,
         )
 
@@ -319,6 +338,62 @@ class FilaSolicitud:
         self.asignacion = datos
         self._pintar_origen()
         self.actualizar_color()
+
+    # --------------------------------------------------- comprobante
+    def _pintar_comprobante(self) -> None:
+        """Refleja en la celda si la fila ya tiene comprobante vinculado. El
+        tooltip lleva el archivo y la referencia que se escribira en el SIPP, que
+        es lo que conviene revisar antes de subir."""
+        if not self.comprobante:
+            self.icono_comprobante.name = ft.Icons.ATTACH_FILE
+            self.icono_comprobante.color = GRIS
+            self.txt_comprobante.value = "— sin comprobante —"
+            self.txt_comprobante.color = GRIS
+            self.celda_comprobante.tooltip = None
+            return
+        nombre = os.path.basename(self.comprobante)
+        self.icono_comprobante.name = ft.Icons.CHECK_CIRCLE
+        self.icono_comprobante.color = ft.Colors.GREEN_700
+        self.txt_comprobante.value = nombre[:18] + ("…" if len(nombre) > 18 else "")
+        self.txt_comprobante.color = None
+        detalle = f"Comprobante: {nombre}"
+        ref = lector_comprobantes.referencia_aaaammdd(self.lectura_comprobante or {})
+        if ref:
+            detalle += f"\nReferencia que se escribira: {ref}"
+        else:
+            detalle += ("\nSIN fecha de aplicacion: habra que capturar la "
+                        "referencia a mano.")
+        self.celda_comprobante.tooltip = detalle
+
+    def vincular_comprobante(self, ruta: str, lectura: dict | None = None) -> None:
+        self.comprobante = ruta
+        self.lectura_comprobante = lectura
+        self._pintar_comprobante()
+
+    def quitar_comprobante(self) -> None:
+        self.comprobante = None
+        self.lectura_comprobante = None
+        self._pintar_comprobante()
+
+    def objetivo_comprobante(self) -> "_comprobantes.Objetivo | None":
+        """Qué hay que casar de ESTA fila, o None si aun no se puede casar.
+
+        Se necesitan CLABE destino, monto y una cuenta origen asignada; sin esta
+        ultima ningun comprobante puede coincidir (la regla de cuenta origen
+        fallaria siempre). Se aportan CLABE y numero de cuenta del origen: el
+        comprobante trae el NUMERO de cuenta, y como la CLABE termina en digito
+        verificador, comparar solo contra ella nunca casaria."""
+        clabe, monto_txt, _cliente, _concepto, _empresa = self.valores()
+        a = self.asignacion or {}
+        origenes = {o for o in (a.get("cuenta_origen"), a.get("num_cuenta")) if o}
+        if not (clabe and origenes):
+            return None
+        try:
+            total = float((monto_txt or "").replace(",", ""))
+        except ValueError:
+            return None
+        return _comprobantes.Objetivo(
+            origenes=origenes, beneficiarios={clabe}, total=total)
 
     def limpiar_asignacion(self) -> None:
         self.asignacion = None
@@ -544,6 +619,13 @@ class SeccionDevoluciones:
                     on_click=self._mover_a_alta,
                     tooltip="Copia las filas seleccionadas al módulo de Alta de "
                             "beneficiarios (CLABE, beneficiario, alias y banco).",
+                ),
+                ft.OutlinedButton(
+                    content="Cargar comprobantes", icon=ft.Icons.UPLOAD_FILE,
+                    on_click=self._cargar_comprobantes,
+                    tooltip="Lee los PDF de comprobantes de pago y los vincula "
+                            "con su registro por cuenta origen, cuenta destino "
+                            "e importe.",
                 ),
                 ft.OutlinedButton(
                     content="Generar Excel", icon=ft.Icons.TABLE_VIEW,
@@ -1127,6 +1209,124 @@ class SeccionDevoluciones:
         self.app.avisar(
             f"Cuenta origen de {empresa} ({banco}) asignada a "
             f"{len(seleccionadas)} registro(s).", VERDE)
+
+    # --------------------------------------------------- comprobantes
+    async def _cargar_comprobantes(self, _e=None) -> None:
+        """Lee un lote de comprobantes (PDF) y los vincula con sus registros.
+
+        Los PDF de varias páginas se separan ANTES de leerlos: el banco entrega
+        un solo archivo con un comprobante por página, y al SIPP hay que subir la
+        página que corresponde a cada solicitud, no el documento completo.
+
+        La lectura es LOCAL (core.lector_comprobantes): no necesita red ni token,
+        y es la única que trae la fecha de aplicación, con la que se arma la
+        referencia que el RPA escribirá en el SIPP.
+        """
+        pendientes = [f for f in self.filas if not f.vacia()]
+        if not pendientes:
+            self.app.avisar(
+                "No hay registros a los que vincular comprobantes.", ROJO)
+            return
+        # Sin cuenta origen asignada no hay forma de casar (la regla de cuenta
+        # origen fallaría siempre): se avisa antes de hacer trabajo inútil.
+        objetivos = [(id(f), f.objetivo_comprobante()) for f in pendientes]
+        casables = [(k, o) for k, o in objetivos if o is not None]
+        if not casables:
+            self.app.avisar(
+                "Ningún registro se puede casar todavía: falta asignarles la "
+                "cuenta origen de pago (o les falta CLABE/monto).", ROJO)
+            return
+
+        archivos = await self.app.picker.pick_files(
+            dialog_title="Selecciona los comprobantes de pago (PDF)",
+            allowed_extensions=["pdf"], allow_multiple=True)
+        if not archivos:
+            return
+        elegidos = [a.path for a in archivos if a.path]
+        if not elegidos:
+            return
+
+        try:
+            # En un hilo: separar y leer PDFs es síncrono y congelaría la interfaz.
+            rutas, info_sep = await asyncio.to_thread(self._separar_pdfs, elegidos)
+            lecturas, errores = await asyncio.to_thread(
+                lector_comprobantes.leer_varios, rutas)
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self.app.avisar(f"No se pudieron leer los comprobantes: {exc}", ROJO)
+            return
+
+        # Se respeta lo ya vinculado: ni se reasignan filas que ya tienen
+        # comprobante ni se reparte de nuevo un archivo ya usado. Así la carga
+        # se puede repetir en tandas sin deshacer lo anterior.
+        por_fila = {id(f): f for f in pendientes}
+        ocupados = {k for k, f in por_fila.items() if f.comprobante}
+        usados = {f.comprobante for f in pendientes if f.comprobante}
+        libres = [r for r in rutas if r not in usados]
+        res = _comprobantes.vincular(casables, lecturas, libres, ocupados=ocupados)
+
+        # La lectura se guarda junto al vínculo: de ahí sale la referencia.
+        por_archivo, _ = _comprobantes.repartir_lecturas(lecturas, libres)
+        for clave, ruta in res.asignados.items():
+            leidas = por_archivo.get(ruta) or []
+            por_fila[clave].vincular_comprobante(
+                ruta, leidas[0] if leidas else None)
+        if res.asignados:
+            self._refrescar()
+        self._avisar_vinculacion(res, len(libres), errores, info_sep,
+                                 sin_casar=len(objetivos) - len(casables))
+
+    @staticmethod
+    def _separar_pdfs(rutas: list[str]) -> tuple[list[str], dict]:
+        """Separa a disco los PDF de varias páginas (una página = un archivo).
+
+        Devuelve `(rutas_finales, info)`. Un PDF que no se pueda separar se envía
+        completo: es preferible leerlo entero que perderlo. Los de una sola página
+        se usan tal cual, sin dejar copias sueltas en disco.
+        """
+        finales: list[str] = []
+        info = {"separados": 0, "paginas": 0, "errores": []}
+        for ruta in rutas:
+            carpeta = os.path.join(os.path.dirname(ruta), "_paginas")
+            try:
+                os.makedirs(carpeta, exist_ok=True)
+                paginas = pdf_paginas.separar_paginas(ruta, carpeta)
+            except Exception as exc:  # noqa: BLE001 — se reporta en el resumen
+                info["errores"].append(f"{os.path.basename(ruta)}: {exc}")
+                finales.append(ruta)
+                continue
+            if len(paginas) > 1:
+                info["separados"] += 1
+                info["paginas"] += len(paginas)
+                finales.extend(paginas)
+            else:
+                finales.append(ruta)
+        return finales, info
+
+    def _avisar_vinculacion(self, res, total_archivos: int, errores: list,
+                            info_sep: dict, sin_casar: int) -> None:
+        """Resume qué pasó: cuántos se vincularon y, sobre todo, qué quedó fuera
+        y por qué. Lo que no casa se dice explícito para resolverlo a mano, en vez
+        de descubrirlo hasta el momento de subirlo al SIPP."""
+        partes = []
+        if info_sep.get("separados"):
+            partes.append(f"{info_sep['separados']} PDF separado(s) en "
+                          f"{info_sep['paginas']} página(s)")
+        partes.append(f"{len(res.asignados)} de {total_archivos} vinculado(s)")
+        if res.sin_movimiento:
+            partes.append(f"{len(res.sin_movimiento)} sin registro que coincida")
+        if errores:
+            partes.append(f"{len(errores)} ilegible(s)")
+        if res.sin_archivo:
+            partes.append(f"{res.sin_archivo} lectura(s) sin archivo")
+        if sin_casar:
+            partes.append(f"{sin_casar} registro(s) sin cuenta origen asignada")
+        if not res.asignados:
+            color = ROJO
+        elif res.sin_movimiento or errores or sin_casar:
+            color = NARANJA
+        else:
+            color = VERDE
+        self.app.avisar("Comprobantes: " + "; ".join(partes) + ".", color)
 
     # ------------------------------------------------------- generación
     def _registros(self, filas: list[FilaSolicitud]) -> list[tuple] | None:
