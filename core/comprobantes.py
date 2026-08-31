@@ -164,3 +164,70 @@ def evaluar_coincidencia(comprobante: dict, objetivo: Objetivo) -> dict:
         "origen": origen_ok, "beneficiario": benef_ok, "total": total_ok,
         "coincide": origen_ok and benef_ok and total_ok,
     }
+
+
+# --- Vinculación archivo <-> movimiento ----------------------------------
+@dataclass
+class ResultadoVinculacion:
+    """Qué pasó al repartir un lote de comprobantes entre los movimientos.
+
+    - `asignados`: {clave del movimiento -> ruta del PDF}.
+    - `sin_movimiento`: archivos CON lectura que no casaron con ningún movimiento.
+    - `sin_asignar`: archivos que quedaron libres (incluye los anteriores). Se
+      ofrecen para asignar a mano.
+    - `sin_archivo`: lecturas cuyo 'documento_lectura' no correspondió a ningún
+      archivo enviado.
+    """
+
+    asignados: dict = field(default_factory=dict)
+    sin_movimiento: list = field(default_factory=list)
+    sin_asignar: list = field(default_factory=list)
+    sin_archivo: int = 0
+
+
+def vincular(
+    objetivos: list[tuple],
+    comprobantes: list[dict],
+    rutas_pdf: list[str],
+    ocupados: set | None = None,
+) -> ResultadoVinculacion:
+    """Asigna cada ARCHIVO al movimiento que le corresponde, uno a uno.
+
+    - `objetivos`: [(clave, Objetivo)] en el orden en que se muestran; `clave`
+      identifica al movimiento para quien llama (índice, folio, lo que sea).
+    - `comprobantes`: las lecturas (del extractor o de `core.lector_comprobantes`).
+    - `rutas_pdf`: los archivos que se enviaron a leer.
+    - `ocupados`: claves que YA tienen comprobante y no deben reasignarse.
+
+    Se itera por ARCHIVO y no por lectura: lo que se sube al SIPP es un archivo,
+    así que una lectura cuyo 'documento_lectura' no se pueda resolver no debe
+    producir vínculo. Cada movimiento recibe a lo sumo un archivo y cada archivo va
+    a un solo movimiento: ante la duda es preferible dejarlo sin asignar —queda a
+    la vista para resolverlo a mano— que adjudicarle a alguien el comprobante de
+    otro.
+    """
+    por_archivo, sin_archivo = repartir_lecturas(comprobantes, rutas_pdf)
+    res = ResultadoVinculacion(sin_archivo=sin_archivo)
+    tomados = set(ocupados or ())
+    usados: set[str] = set()
+    for ruta in rutas_pdf:
+        # Un archivo repetido en la lista no debe vincularse dos veces: se
+        # subiria el MISMO comprobante a dos solicitudes distintas.
+        if ruta in usados:
+            continue
+        lecturas = por_archivo.get(ruta) or []
+        clave = next(
+            (k for k, obj in objetivos
+             if k not in tomados
+             and any(evaluar_coincidencia(c, obj)["coincide"] for c in lecturas)),
+            None,
+        )
+        if clave is None:
+            res.sin_asignar.append(ruta)
+            if lecturas:
+                res.sin_movimiento.append(ruta)
+            continue
+        res.asignados[clave] = ruta
+        tomados.add(clave)
+        usados.add(ruta)
+    return res

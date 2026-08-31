@@ -280,9 +280,68 @@ def prueba_lector() -> None:
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+def prueba_vinculacion() -> None:
+    print("\nvinculacion archivo <-> movimiento")
+    rutas = [r"C:\x\DEV GC MOTORS $17,468.00-1.pdf",
+             r"C:\x\DEV GC MOTORS $17,468.00-2.pdf"]
+    # Dos movimientos del MISMO lote: misma cuenta origen y MISMO importe. Solo la
+    # cuenta destino los distingue, que es el caso real del lote GC MOTORS.
+    objetivos = [
+        ("mov-A", c.Objetivo(origenes={"0117421184"},
+                             beneficiarios={"012730028914386037"}, total=3227.00)),
+        ("mov-B", c.Objetivo(origenes={"0117421184"},
+                             beneficiarios={"137730104690721058"}, total=3227.00)),
+    ]
+    res = c.vincular(objetivos, [MISMO_BANCO, INTERBANCARIO], rutas)
+    check(res.asignados == {"mov-A": rutas[0], "mov-B": rutas[1]},
+          "cada comprobante va a SU movimiento pese al importe identico")
+    check(not res.sin_asignar and not res.sin_movimiento and not res.sin_archivo,
+          "no queda nada suelto")
+
+    print("\n  un archivo por movimiento, y viceversa")
+    # Dos movimientos identicos compitiendo por UN solo archivo.
+    gemelos = [("mov-A", objetivos[0][1]), ("mov-A2", objetivos[0][1])]
+    res2 = c.vincular(gemelos, [MISMO_BANCO], [rutas[0]])
+    check(len(res2.asignados) == 1 and "mov-A" in res2.asignados,
+          "un archivo se asigna a un solo movimiento (el primero libre)")
+
+    # El mismo archivo no se reparte dos veces aunque haya dos movimientos que casen.
+    res3 = c.vincular(gemelos, [MISMO_BANCO, MISMO_BANCO], [rutas[0], rutas[0]])
+    check(len(set(res3.asignados.values())) == len(res3.asignados),
+          "ningun archivo se asigna a dos movimientos")
+
+    print("\n  lo que NO casa queda a la vista")
+    ajeno = {**MISMO_BANCO, "cuenta_destino": "999999999999999999"}
+    res4 = c.vincular(objetivos, [ajeno], [rutas[0]])
+    check(not res4.asignados, "un comprobante ajeno no se asigna a nadie")
+    check(res4.sin_movimiento == [rutas[0]],
+          "se reporta como 'sin movimiento que coincida'")
+    check(res4.sin_asignar == [rutas[0]], "y queda libre para asignarlo a mano")
+
+    sin_lectura = c.vincular(objetivos, [], rutas)
+    check(not sin_lectura.asignados and sin_lectura.sin_asignar == rutas,
+          "sin lecturas, todos los archivos quedan libres")
+    check(not sin_lectura.sin_movimiento,
+          "pero NO se reportan como 'sin movimiento' (no se pudieron leer)")
+
+    print("\n  respeta lo ya vinculado")
+    res5 = c.vincular(objetivos, [MISMO_BANCO, INTERBANCARIO], rutas,
+                      ocupados={"mov-A"})
+    check("mov-A" not in res5.asignados, "un movimiento ya ocupado no se reasigna")
+    check(res5.asignados == {"mov-B": rutas[1]}, "los demas si se asignan")
+    check(res5.sin_asignar == [rutas[0]],
+          "el archivo que sobra queda libre, no se fuerza a otro movimiento")
+
+    lectura_huerfana = {**MISMO_BANCO, "documento_lectura": "no enviado.pdf"}
+    res6 = c.vincular(objetivos, [lectura_huerfana], rutas)
+    check(res6.sin_archivo == 1, "una lectura sin archivo se cuenta aparte")
+    check(not res6.asignados, "y no produce vinculo")
+
+
 def main() -> int:
     for prueba in (prueba_ultimos_digitos, prueba_nombres, prueba_resolucion_rutas,
-                   prueba_reparto, prueba_coincidencia, prueba_lector):
+                   prueba_reparto, prueba_coincidencia, prueba_lector,
+                   prueba_vinculacion):
         prueba()
     print()
     if _fallos:
