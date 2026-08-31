@@ -29,6 +29,12 @@ VAR_API_TOKEN = "QUETZALTIC_API_TOKEN"
 # URL base y su Bearer token. La consume core/api.leer_comprobantes_pagos.
 VAR_EXTRACTOR_API_BASE_URL = "QUETZALTIC_EXTRACTOR_API_BASE_URL"
 VAR_EXTRACTOR_API_TOKEN = "QUETZALTIC_EXTRACTOR_API_TOKEN"
+# Portal SIPP: URL base que usa el RPA. SIN definir, la app apunta SIEMPRE al
+# productivo (el default vive en core/rpa_sipp.SesionSipp.BASE_URL_PRODUCTIVO).
+# Existe para poder PROBAR contra el ambiente de pruebas sin editar el codigo:
+# intercambiar las dos lineas del BASE_URL fue lo que mando la release 0.6.15 a
+# test para todos los usuarios.
+VAR_SIPP_BASE_URL = "QUETZALTIC_SIPP_BASE_URL"
 
 _cargado = False
 
@@ -117,3 +123,13 @@ def extractor_api_base_url(requerido: bool = False) -> str | None:
 def extractor_api_token(requerido: bool = False) -> str | None:
     """Bearer token opcional para autenticar con la API extractor de PDF."""
     return obtener(VAR_EXTRACTOR_API_TOKEN, requerido=requerido)
+
+
+def sipp_base_url() -> str | None:
+    """URL base del portal SIPP para el RPA (sin '/' final), o None si no se
+    definio. None = usar el productivo, que es el default del codigo.
+
+    Solo para DESARROLLO/pruebas: se define en el .env del proyecto o como
+    variable del sistema. Nunca se distribuye definida."""
+    valor = obtener(VAR_SIPP_BASE_URL)
+    return valor.rstrip("/") if valor else valor

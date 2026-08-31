@@ -8,6 +8,13 @@ openpyxl>=3.1      # lectura del Excel de cuentas / reporte de devoluciones
 xlwt>=1.3          # generación del archivo .xls de alta para Banregio
 playwright>=1.60   # automatización del navegador para el RPA del SIPP
 
+# Variables de entorno opcionales (.env junto a la app o en la raiz del proyecto):
+#   QUETZALTIC_SIPP_BASE_URL -> portal SIPP contra el que corre el RPA.
+#     Sin definir apunta al PRODUCTIVO. Para probar en local:
+#       QUETZALTIC_SIPP_BASE_URL=https://test.sipp.petroil.dev
+#     NUNCA definirla al compilar un Release: el pipeline falla a proposito
+#     (scripts/verificar_produccion.py).
+#
 # Requisitos externos (no son paquetes de Python):
 #   Tesseract OCR  -> https://github.com/UB-Mannheim/tesseract/wiki
 #   Instalado en:  C:\Program Files\Tesseract-OCR\tesseract.exe

@@ -47,6 +47,8 @@ from urllib.parse import unquote
 # diagnósticos del RPA se guardan aquí para tenerlos siempre a mano en desarrollo.
 _PROYECTO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+from core import entorno
+
 from playwright.async_api import (
     Browser,
     BrowserContext,
@@ -522,8 +524,16 @@ class SesionSipp:
     # --- URLs ---
     # Sistema productivo: nuestras actividades (consultar/descargar anexos) no
     # alteran registros reales, así que se opera directo sobre producción.
-    # BASE_URL = "https://test.sipp.petroil.dev"
-    BASE_URL = "https://sipp.petroil.com.mx"
+    #
+    # El ambiente NO se cambia editando este archivo. Intercambiar dos líneas
+    # aquí fue lo que publicó la release 0.6.15 apuntando a pruebas para todos
+    # los usuarios, así que para probar contra otro ambiente se define la
+    # variable QUETZALTIC_SIPP_BASE_URL (en el .env del proyecto, que no se
+    # versiona, o en el sistema). Sin ella —el caso de cualquier instalación—
+    # la app apunta al productivo, y el candado de CI
+    # (scripts/verificar_produccion.py) comprueba justamente eso.
+    BASE_URL_PRODUCTIVO = "https://sipp.petroil.com.mx"
+    BASE_URL = entorno.sipp_base_url() or BASE_URL_PRODUCTIVO
     URL_LOGIN = BASE_URL + "/login.html"
     URL_CONFIG_SESION = BASE_URL + "/index.cfm#/configuracionsession"
     URL_DASHBOARD_TESOR = BASE_URL + "/#/DashboardTesor"
