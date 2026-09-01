@@ -30,6 +30,10 @@ from core import (
     reporte_excel, solicitudes_devolucion,
 )
 from core.catalogo_bancos import banco_a_mostrar, banco_desde_clabe
+from core.rpa_sipp import (
+    BucleRpa, ControlRpa, ErrorSipp, RpaDetenido, SesionSipp,
+    asegurar_navegador, necesita_navegador,
+)
 from ui.comun import (
     CENTRO, GRIS, ID_POR_EMPRESA, NARANJA, NOMBRES_EMPRESAS, ROJO, VERDE,
     fmt_monto, parse_monto, solo_digitos, tarjeta,
@@ -461,6 +465,16 @@ class SeccionDevoluciones:
     origen de pago y generación de un TXT por empresa origen."""
 
     def __init__(self, app):
+        # --- RPA de subida de comprobantes al SIPP ---
+        # Hilo con su propio loop (el RPA es asincrono y Flet no es
+        # thread-safe); se crea la primera vez que se usa.
+        self.bucle_rpa = None
+        self.sesion_rpa = None
+        self._sub_ctrl = None
+        self._sub_corriendo = False
+        # id(fila) de las que ya se registraron en esta corrida, para no
+        # reintentarlas si se vuelve a pulsar el boton.
+        self._sub_registradas: set = set()
         self.app = app
         self.page = app.page
         self.filas: list[FilaSolicitud] = []
@@ -680,6 +694,14 @@ class SeccionDevoluciones:
                     tooltip="Lee los PDF de comprobantes de pago y los vincula "
                             "con su registro por cuenta origen, cuenta destino "
                             "e importe.",
+                ),
+                ft.OutlinedButton(
+                    content="Subir comprobantes a SIPP",
+                    icon=ft.Icons.CLOUD_UPLOAD,
+                    on_click=self._subir_comprobantes,
+                    tooltip="Registra en el SIPP las devoluciones que ya "
+                            "tienen comprobante vinculado: adjunta el PDF, "
+                            "escribe la referencia y guarda.",
                 ),
                 ft.OutlinedButton(
                     content="Generar Excel", icon=ft.Icons.TABLE_VIEW,
@@ -1388,6 +1410,209 @@ class SeccionDevoluciones:
             color = VERDE
         self.app.avisar("Comprobantes: " + "; ".join(partes) + ".", color)
 
+    # ------------------------------------------- subida al SIPP (RPA)
+    def _filas_a_subir(self) -> list:
+        """Filas con comprobante vinculado, folio y que no se hayan registrado ya
+        en esta corrida. Sin folio no se puede ubicar la solicitud en el SIPP."""
+        return [
+            f for f in self.filas
+            if f.comprobante and f.folio_valor
+            and id(f) not in self._sub_registradas
+        ]
+
+    async def _subir_comprobantes(self, _e=None) -> None:
+        """Pide confirmación y lanza el RPA que registra las devoluciones.
+
+        La confirmación es UNA sola, al inicio del lote: el RPA guarda cada
+        devolución por su cuenta (así se acordó), y preguntar por registro haría
+        inútil automatizarlo. Pero guardar escribe en el SIPP y no se deshace, así
+        que conviene un punto de escape antes de empezar."""
+        if self._sub_corriendo:
+            self.app.avisar("Ya hay una subida en curso.", NARANJA)
+            return
+        filas = self._filas_a_subir()
+        if not filas:
+            sin_comprobante = sum(1 for f in self.filas
+                                  if not f.vacia() and not f.comprobante)
+            sin_folio = sum(1 for f in self.filas
+                            if f.comprobante and not f.folio_valor)
+            detalle = []
+            if sin_comprobante:
+                detalle.append(f"{sin_comprobante} sin comprobante vinculado")
+            if sin_folio:
+                detalle.append(f"{sin_folio} sin folio de solicitud")
+            if self._sub_registradas:
+                detalle.append(f"{len(self._sub_registradas)} ya registrada(s)")
+            self.app.avisar(
+                "No hay nada que subir" + (": " + "; ".join(detalle) if detalle
+                                           else "."), NARANJA)
+            return
+
+        usuario, contrasena = self.app.config.credenciales()
+        if not usuario or not contrasena:
+            self.app.avisar(
+                "Captura tu usuario y contraseña del SIPP en Configuración (⚙).",
+                ROJO)
+            return
+
+        def continuar(_ev=None):
+            self.page.pop_dialog()
+            self.page.run_task(self._ejecutar_subida, filas)
+
+        muestra = [
+            f"• Solicitud {f.folio_valor} — {f.valores()[2] or '(sin nombre)'} — "
+            f"ref. {lector_comprobantes.referencia_aaaammdd(f.lectura_comprobante or {}) or '?'}"
+            for f in filas[:8]
+        ]
+        if len(filas) > 8:
+            muestra.append(f"… y {len(filas) - 8} más.")
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Subir comprobantes al SIPP"),
+            content=ft.Container(
+                content=ft.Column(
+                    [ft.Text(
+                        f"Se registrarán {len(filas)} devolución(es) en el SIPP: se "
+                        "adjunta el comprobante, se escribe la referencia y se "
+                        "guarda. Esto NO se puede deshacer desde la herramienta.",
+                        size=13),
+                     ft.Column([ft.Text(m, size=12, color=GRIS) for m in muestra],
+                               tight=True, spacing=3,
+                               scroll=ft.ScrollMode.AUTO if len(muestra) > 6 else None,
+                               height=200 if len(muestra) > 6 else None)],
+                    tight=True, spacing=10),
+                width=620),
+            actions=[
+                ft.TextButton("Cancelar",
+                              on_click=lambda e: self.page.pop_dialog()),
+                ft.FilledButton("Subir y guardar", on_click=continuar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
+
+    async def _ejecutar_subida(self, filas: list) -> None:
+        """Corre el RPA sobre `filas`. Cada solicitud arranca desde el listado, así
+        que un fallo en una no arrastra a las siguientes."""
+        self._sub_corriendo = True
+        resultados = {"guardada": 0, "ya_estaba": 0, "error": 0}
+        errores: list[str] = []
+        usuario, contrasena = self.app.config.credenciales()
+        try:
+            if necesita_navegador():
+                self.app.avisar("Descargando el navegador del RPA…", VERDE)
+            if self.bucle_rpa is None:
+                self.bucle_rpa = BucleRpa()
+            self._sub_ctrl = ControlRpa(self.bucle_rpa._loop)
+            self.sesion_rpa = SesionSipp(headless=False)
+            sesion, ctrl = self.sesion_rpa, self._sub_ctrl
+
+            async def flujo() -> None:
+                if necesita_navegador():
+                    await asegurar_navegador()
+                await sesion.iniciar()
+                await sesion.login(usuario, contrasena)
+                # La empresa/sucursal de la sesión debe ser la de la solicitud, o
+                # el SIPP no la lista entre las autorizadas. Se agrupa por empresa
+                # para no reconfigurar la sesión en cada fila.
+                for empresa in sorted({(f.valores()[4] or "") for f in filas}):
+                    del_empresa = [f for f in filas
+                                   if (f.valores()[4] or "") == empresa]
+                    if empresa:
+                        await sesion.seleccionar_empresa_sucursal(
+                            empresa, self._sucursal_de(empresa))
+                    await sesion.ir_a_devoluciones()
+                    for i, fila in enumerate(del_empresa, start=1):
+                        await ctrl.punto_control()
+                        folio = fila.folio_valor
+                        lectura = fila.lectura_comprobante or {}
+                        ref = lector_comprobantes.referencia_aaaammdd(lectura)
+                        fecha = lector_comprobantes.fecha_aplicacion_ddmmaaaa(lectura)
+                        if not ref:
+                            errores.append(
+                                f"Solicitud {folio}: el comprobante no trae fecha de "
+                                "aplicación, así que no hay referencia que escribir.")
+                            resultados["error"] += 1
+                            continue
+                        self._sub_avisar(
+                            f"Subiendo {i}/{len(del_empresa)} de {empresa or '—'}: "
+                            f"solicitud {folio}…")
+                        try:
+                            estado = await sesion.registrar_devolucion(
+                                folio, fila.comprobante, ref, fecha)
+                        except RpaDetenido:
+                            raise
+                        except Exception as exc:  # noqa: BLE001 — no aborta el resto
+                            errores.append(f"Solicitud {folio}: {exc}")
+                            resultados["error"] += 1
+                            continue
+                        resultados[estado] = resultados.get(estado, 0) + 1
+                        if estado in ("guardada", "ya_estaba"):
+                            self._sub_registradas.add(id(fila))
+                        if estado == "error":
+                            errores.append(
+                                f"Solicitud {folio}: se abrió pero no se pudo "
+                                "guardar (hay diagnóstico en _diagnostico_rpa).")
+
+            await asyncio.wrap_future(self.bucle_rpa.enviar(flujo()))
+        except RpaDetenido:
+            self.app.avisar("Subida detenida.", NARANJA)
+        except ErrorSipp as exc:
+            self.app.avisar(f"El SIPP no respondió como se esperaba: {exc}", ROJO)
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self.app.avisar(f"Falló la subida: {exc}", ROJO)
+        finally:
+            self._sub_corriendo = False
+            await self._cerrar_sesion_rpa()
+            self._resumen_subida(resultados, errores)
+
+    def _sucursal_de(self, empresa: str) -> str:
+        """Sucursal con la que se abre la sesión del SIPP para `empresa`.
+
+        Las solicitudes de devolución se capturan en la sucursal corporativa, que
+        el portal nombra "<Empresa> Corporativo"."""
+        return f"{empresa} Corporativo"
+
+    def _sub_avisar(self, texto: str) -> None:
+        """Estatus desde el hilo del RPA (Flet no es thread-safe)."""
+        try:
+            self.app.avisar(texto, VERDE)
+        except Exception:  # noqa: BLE001 — avisar nunca debe tumbar el flujo
+            pass
+
+    async def _cerrar_sesion_rpa(self) -> None:
+        """Cierra el navegador del RPA. Best-effort: si falla, no debe tapar el
+        resultado de la subida."""
+        sesion, self.sesion_rpa = self.sesion_rpa, None
+        self._sub_ctrl = None
+        if sesion is None:
+            return
+        try:
+            await asyncio.wrap_future(self.bucle_rpa.enviar(sesion.cerrar()))
+        except Exception:  # noqa: BLE001 — el cierre no propaga errores
+            pass
+
+    def _resumen_subida(self, resultados: dict, errores: list) -> None:
+        """Resume el lote. Se distingue lo GUARDADO de lo que YA ESTABA: esto
+        segundo no es un fallo —el SIPP ya no la lista entre las autorizadas porque
+        se registró antes— y confundirlo con un error haría dudar de un proceso que
+        funcionó."""
+        partes = []
+        if resultados.get("guardada"):
+            partes.append(f"{resultados['guardada']} registrada(s)")
+        if resultados.get("ya_estaba"):
+            partes.append(f"{resultados['ya_estaba']} ya estaban registradas")
+        if resultados.get("error"):
+            partes.append(f"{resultados['error']} con error")
+        if not partes:
+            return
+        color = ROJO if resultados.get("error") else VERDE
+        texto = "Subida al SIPP: " + "; ".join(partes) + "."
+        if errores:
+            texto += " " + errores[0]
+            if len(errores) > 1:
+                texto += f" (y {len(errores) - 1} más)"
+        self.app.avisar(texto, color)
+        self._refrescar()
     # ------------------------------------------------------- generación
     def _registros(self, filas: list[FilaSolicitud]) -> list[tuple] | None:
         """Valida las filas y las devuelve como [(clabe, monto, cliente, concepto)].
