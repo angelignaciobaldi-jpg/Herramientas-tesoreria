@@ -375,6 +375,27 @@ def prueba_banco_clabe() -> None:
     check(cb.codigo_desde_clabe("137730104690721058") == "137", "codigo de 3 digitos")
     check(cb.codigo_desde_clabe("13") == "", "codigo vacio si no alcanza")
 
+    print("\n  autocorreccion del banco mostrado")
+    # Manda la CLABE: es la que decide a donde va el dinero y con la que se arma
+    # el TXT (PTC mismo banco / PSC SPEI, por el prefijo).
+    nombre, corregido = cb.banco_a_mostrar("137730104690721058", "BBVA BANCOMER")
+    check(nombre == "BanCoppel" and corregido,
+          "el caso real se muestra corregido a BanCoppel")
+    nombre, corregido = cb.banco_a_mostrar("012730028914386037", "BBVA BANCOMER")
+    check(nombre == "BBVA Mexico".replace("Mexico", chr(77)+"éxico")
+          and not corregido,
+          "si concuerdan se usa el nombre del catalogo y NO se marca")
+    nombre, corregido = cb.banco_a_mostrar("999730104690721058", "BANORTE")
+    check(nombre == "BANORTE" and not corregido,
+          "prefijo desconocido: se deja lo del SIPP, sin marcar")
+    nombre, corregido = cb.banco_a_mostrar("137730104690721058", "")
+    check(nombre == "BanCoppel" and not corregido,
+          "sin banco del SIPP se deduce de la CLABE, sin marcar")
+    nombre, corregido = cb.banco_a_mostrar("", "BANORTE")
+    check(nombre == "BANORTE" and not corregido,
+          "fila sin CLABE todavia: no se marca nada")
+    nombre, corregido = cb.banco_a_mostrar("", "")
+    check(nombre == "" and not corregido, "sin ningun dato devuelve vacio")
 
 def main() -> int:
     for prueba in (prueba_ultimos_digitos, prueba_nombres, prueba_resolucion_rutas,

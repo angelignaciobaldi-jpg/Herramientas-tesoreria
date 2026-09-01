@@ -187,3 +187,28 @@ def coincide_banco(clabe: str, banco_reportado: str) -> bool | None:
     if junta_e in junta_r or junta_r in junta_e:
         return True
     return False
+
+
+def banco_a_mostrar(clabe: str, banco_reportado: str) -> tuple[str, bool]:
+    """Qué banco destino mostrar en pantalla, y si hubo que corregirlo.
+
+    Devuelve `(nombre, corregido)`:
+      - `nombre`: el banco que dice la CLABE siempre que su prefijo esté en el
+        catálogo; si no, el que reportó el SIPP (para no dejar la celda vacía
+        teniendo el dato).
+      - `corregido`: True solo cuando ambos datos se contradicen, es decir cuando
+        lo mostrado NO es lo que venía en la solicitud.
+
+    Manda la CLABE porque es la que describe lo que va a pasar: el pago viaja por
+    ella y el TXT se arma con su prefijo (`core.exportador_devoluciones` elige
+    entre el layout de mismo banco y el de SPEI justamente por ahí). Mostrar el
+    banco del SIPP hacía creer que el dinero iría a un banco al que no va.
+
+    `corregido=True` NO significa que el registro ya esté bien: la contradicción
+    también puede venir de una CLABE equivocada, y en ese caso el pago se iría a
+    otro lado. Por eso quien llama debe señalarlo para que se revise.
+    """
+    segun_clabe = banco_desde_clabe(codigo_desde_clabe(clabe))
+    reportado = str(banco_reportado or "").strip()
+    corregido = coincide_banco(clabe, reportado) is False
+    return (segun_clabe or reportado or ""), corregido
