@@ -21,6 +21,7 @@ if _RAIZ not in sys.path:
 
 from core import comprobantes as c  # noqa: E402
 from core import lector_comprobantes as lc  # noqa: E402
+from core import catalogo_bancos as cb  # noqa: E402
 
 # Lecturas equivalentes a las de los dos comprobantes reales del lote GC MOTORS.
 MISMO_BANCO = {
@@ -338,10 +339,47 @@ def prueba_vinculacion() -> None:
     check(not res6.asignados, "y no produce vinculo")
 
 
+def prueba_banco_clabe() -> None:
+    """El SIPP guarda el banco como texto aparte de la CLABE, asi que pueden
+    contradecirse. El caso real: CLABE de BanCoppel con "BBVA BANCOMER"."""
+    print("\nvalidacion CLABE vs banco reportado")
+    check(cb.coincide_banco("137730104690721058", "BBVA BANCOMER") is False,
+          "detecta el caso real (CLABE 137 BanCoppel vs BBVA)")
+    check(cb.coincide_banco("137730104690721058", "BANCOPPEL") is True,
+          "acepta el banco correcto")
+    check(cb.coincide_banco("072744001830318174", "SANTANDER") is False,
+          "detecta otra contradiccion (072 Banorte vs Santander)")
+
+    print("\n  nombres que NO coinciden literalmente pero son el mismo banco")
+    check(cb.coincide_banco("012730028914386037", "BBVA BANCOMER") is True,
+          "BBVA Mexico (catalogo) == BBVA BANCOMER (SIPP)")
+    check(cb.coincide_banco("002028700475457474", "CITIBANAMEX") is True,
+          "Banamex == CITIBANAMEX")
+    check(cb.coincide_banco("002028700475457474", "banamex") is True,
+          "no distingue mayusculas")
+    check(cb.coincide_banco("058000000000000000", "BANREGIO S.A. DE C.V.") is True,
+          "ignora la razon social (S.A. de C.V.)")
+
+    print("\n  lo que NO se puede juzgar devuelve None, no False")
+    check(cb.coincide_banco("137730104690721058", "") is None,
+          "sin banco reportado")
+    check(cb.coincide_banco("", "BANORTE") is None, "sin CLABE")
+    check(cb.coincide_banco("12", "BANORTE") is None, "CLABE demasiado corta")
+    check(cb.coincide_banco("999730104690721058", "BANORTE") is None,
+          "prefijo que no esta en el catalogo")
+    check(cb.coincide_banco("137730104690721058", "S.A. de C.V.") is None,
+          "nombre sin ninguna palabra significativa")
+
+    print("\n  el catalogo sigue resolviendo bien")
+    check(cb.banco_desde_clabe("137730104690721058") == "BanCoppel", "137 BanCoppel")
+    check(cb.codigo_desde_clabe("137730104690721058") == "137", "codigo de 3 digitos")
+    check(cb.codigo_desde_clabe("13") == "", "codigo vacio si no alcanza")
+
+
 def main() -> int:
     for prueba in (prueba_ultimos_digitos, prueba_nombres, prueba_resolucion_rutas,
                    prueba_reparto, prueba_coincidencia, prueba_lector,
-                   prueba_vinculacion):
+                   prueba_vinculacion, prueba_banco_clabe):
         prueba()
     print()
     if _fallos:

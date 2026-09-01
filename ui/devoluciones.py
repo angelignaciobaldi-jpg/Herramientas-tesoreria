@@ -29,7 +29,7 @@ from core import (
     exportador_devoluciones, lector_comprobantes, pdf_paginas,
     reporte_excel, solicitudes_devolucion,
 )
-from core.catalogo_bancos import banco_desde_clabe
+from core.catalogo_bancos import banco_desde_clabe, coincide_banco
 from ui.comun import (
     CENTRO, GRIS, ID_POR_EMPRESA, NARANJA, NOMBRES_EMPRESAS, ROJO, VERDE,
     fmt_monto, parse_monto, solo_digitos, tarjeta,
@@ -95,6 +95,9 @@ class FilaSolicitud:
         # Ruta del PDF del comprobante de pago vinculado a esta fila (paso 3).
         # None mientras no se haya cargado/casado ninguno.
         self.comprobante: str | None = None
+        # True si el banco que reporta el SIPP contradice al de la CLABE.
+        # Lo recalcula _pintar_banco() en cada cambio.
+        self.banco_discrepa = False
         # Lectura del comprobante (cuentas, importe, fecha de aplicacion...):
         # de ella sale la Referencia que el RPA escribira en el SIPP.
         self.lectura_comprobante: dict | None = None
@@ -142,6 +145,9 @@ class FilaSolicitud:
             text_align=ft.TextAlign.CENTER, on_change=self._cambio_clabe,
         )
         self.txt_banco = ft.Text("—", size=12, text_align=ft.TextAlign.CENTER)
+        # Banco tal como lo reportó el SIPP (se conserva aunque se edite la
+        # CLABE, para poder seguir contrastando ambos datos).
+        self.banco_reportado = ""
         self.tf_monto = ft.TextField(
             dense=True, text_size=12, content_padding=8,
             text_align=ft.TextAlign.RIGHT, hint_text="0.00", on_change=self._cambio,
@@ -257,9 +263,9 @@ class FilaSolicitud:
         # En deudores el folio es editable: se restaura a su original (vacío).
         if self.es_deudor:
             self.folio_ctrl.value = sol.folio if sol else ""
-        # El banco del SIPP es el de partida; si luego se edita la CLABE, se
-        # recalcula a partir de ella (ver _cambio_clabe).
-        self.txt_banco.value = (sol.banco if sol else "") or "—"
+        # El banco lo reporta el SIPP; _pintar_banco lo contrasta con la CLABE
+        # y marca la celda si se contradicen.
+        self._pintar_banco(sol.banco if sol else "")
         if avisar:
             self.seccion._refrescar()
 
@@ -281,9 +287,50 @@ class FilaSolicitud:
             None if len(limpio) in (0, 18)
             else ft.Text("Debe tener 18 dígitos exactos.", color=ROJO, size=11)
         )
-        self.txt_banco.value = banco_desde_clabe(limpio) or "—"
+        # Cambió la CLABE: se revalúa contra el banco que reportó el SIPP (la
+        # discrepancia puede aparecer o resolverse al corregirla).
+        self._pintar_banco()
         self._cambio()
 
+    # ------------------------------------------------------ banco destino
+    def _pintar_banco(self, reportado: str | None = None) -> None:
+        """Muestra el banco destino y avisa si contradice a la CLABE.
+
+        El SIPP guarda el banco como texto, capturado aparte de la CLABE, así que
+        los dos datos pueden contradecirse (se han visto solicitudes con CLABE de
+        BanCoppel y "BBVA BANCOMER" como banco). Cuando eso pasa se marca la celda
+        en rojo y el tooltip explica ambas versiones.
+
+        NO se corrige solo: el dinero viaja por la CLABE, pero una contradicción
+        puede significar que la equivocada sea la CLABE, y eso solo lo sabe quien
+        revisa la solicitud. Se señala para que lo verifique, no se adivina.
+
+        `reportado` es el banco que dio el SIPP; con None se usa el que ya está
+        en la celda (al reevaluar tras editar la CLABE).
+        """
+        clabe = solo_digitos(self.tf_clabe.value)
+        if reportado is None:
+            reportado = self.banco_reportado
+        self.banco_reportado = reportado or ""
+        segun_clabe = banco_desde_clabe(clabe)
+        # Se muestra lo que reportó el SIPP; si no reportó nada, lo que dice la
+        # CLABE. Así la celda nunca queda vacía teniendo el dato.
+        self.txt_banco.value = self.banco_reportado or segun_clabe or "—"
+        self.banco_discrepa = coincide_banco(clabe, self.banco_reportado) is False
+        if self.banco_discrepa:
+            self.txt_banco.color = ROJO
+            self.txt_banco.weight = ft.FontWeight.BOLD
+            self.txt_banco.tooltip = (
+                f"⚠ El banco no concuerda con la CLABE.\n"
+                f"La CLABE ({clabe[:3]}…) es de {segun_clabe}, "
+                f"pero el SIPP dice {self.banco_reportado}.\n"
+                "Revisa la solicitud antes de dispersar: el pago viaja por la "
+                "CLABE, así que si la equivocada es ella el dinero llegaría a "
+                "otro banco.")
+        else:
+            self.txt_banco.color = None
+            self.txt_banco.weight = None
+            self.txt_banco.tooltip = None
     # ------------------------------------------------------- selección
     def _al_seleccionar(self, _e=None) -> None:
         # El checkbox ya refleja su estado en el cliente; solo se refresca el
@@ -1110,9 +1157,15 @@ class SeccionDevoluciones:
         asignadas = sum(1 for f in self.filas if f.asignacion)
         duplicados = self._num_duplicados()
         aviso_dup = f" · {duplicados} duplicado(s) en rojo" if duplicados else ""
+        # El banco que reporta el SIPP puede contradecir a la CLABE; se cuenta
+        # aparte porque no impide dispersar, pero hay que revisarlo antes.
+        discrepan = sum(1 for f in self.filas if f.banco_discrepa)
+        aviso_banco = (f" · {discrepan} con banco que no concuerda con la CLABE"
+                       if discrepan else "")
         self.txt_contador.value = (
             f"{total} registro(s) ({deudores} deudor(es), {manuales} manual(es)) · "
-            f"{seleccionadas} seleccionado(s) · {asignadas} asignado(s){aviso_dup}"
+            f"{seleccionadas} seleccionado(s) · {asignadas} asignado(s)"
+            f"{aviso_dup}{aviso_banco}"
         )
         grupos = self._grupos_asignados()
         self.txt_grupos.value = (
