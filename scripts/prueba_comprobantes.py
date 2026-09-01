@@ -280,6 +280,20 @@ def prueba_lector() -> None:
     import shutil
     shutil.rmtree(tmp, ignore_errors=True)
 
+    print("\n  fecha de devolucion para el SIPP (DD/MM/AAAA)")
+    check(lc.fecha_aplicacion_ddmmaaaa(a) == "04/08/2026",
+          "fecha de aplicacion tal cual la captura el SIPP")
+    check(lc.fecha_aplicacion_ddmmaaaa(b) == "04/08/2026",
+          "usa la de APLICACION, no la de creacion (03/08 en el interbancario)")
+    check(lc.fecha_aplicacion_ddmmaaaa({"fecha_creacion": "09/12/2026"}) == "09/12/2026",
+          "sin fecha de aplicacion cae a la de creacion")
+    check(lc.fecha_aplicacion_ddmmaaaa({}) == "",
+          "sin ninguna fecha devuelve vacio (se deja lo que prellene el portal)")
+    # Las dos salidas describen el MISMO dia en formatos distintos: la referencia
+    # va en AAAAMMDD y la fecha del formulario en DD/MM/AAAA.
+    d, m, y = lc.fecha_aplicacion_ddmmaaaa(a).split("/")
+    check(lc.referencia_aaaammdd(a) == y + m + d,
+          "referencia y fecha describen el mismo dia")
 
 def prueba_vinculacion() -> None:
     print("\nvinculacion archivo <-> movimiento")

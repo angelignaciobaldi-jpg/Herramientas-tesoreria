@@ -2537,6 +2537,7 @@ class SesionSipp:
     SEL_DEV_ELEGIR_FILA = '[ng-click*="check_SolicitudDevolucion"]'
     SEL_DEV_COMPROBANTE = "#ar_Comprobante"
     SEL_DEV_REFERENCIA = "#de_Referencia_Devolucion"
+    SEL_DEV_FECHA = "#fh_Devolucion"
     SEL_DEV_GUARDAR = '[ng-click="guardarDevolucion(sn_verDetalle)"]'
     SEL_DEV_REGRESAR = '[ng-click="regresar(true)"]'
 
@@ -2627,7 +2628,8 @@ class SesionSipp:
             except Exception:  # noqa: BLE001 — cerrar es best-effort
                 pass
 
-    async def llenar_devolucion(self, ruta_pdf: str, referencia: str) -> None:
+    async def llenar_devolucion(self, ruta_pdf: str, referencia: str,
+                                fecha: str = "") -> None:
         """Adjunta el comprobante y escribe la referencia en el formulario abierto.
 
         El archivo se fija en el <input type=file> directamente (set_input_files),
@@ -2636,6 +2638,11 @@ class SesionSipp:
 
         La referencia se escribe con un evento de Angular explícito porque el
         ng-model no se entera de un cambio hecho solo sobre el value del DOM.
+        `fecha` (DD/MM/AAAA) es la de aplicación del comprobante. El portal
+        prellena ese campo con el día en que se captura, así que sin fijarlo una
+        devolución subida días después del pago quedaría con la fecha equivocada.
+        Vacía deja lo que el portal haya puesto.
+
         Los demás campos (banco, cuenta, importe) vienen precargados y de solo
         lectura: no se tocan."""
         page = self._exigir_pagina()
@@ -2657,7 +2664,32 @@ class SesionSipp:
             }""",
             self.SEL_DEV_REFERENCIA,
         )
+        if fecha:
+            await self._escribir_campo_angular(self.SEL_DEV_FECHA, fecha)
         await page.wait_for_timeout(500)
+
+    async def _escribir_campo_angular(self, selector: str, valor: str) -> None:
+        """Escribe `valor` en un campo y le avisa a Angular.
+
+        Los campos de fecha del portal llevan máscara y no siempre reaccionan a
+        `fill()`; fijar el value y disparar input/change + $apply es lo que sí
+        actualiza el ng-model, que es de donde el portal lee al guardar."""
+        await self._exigir_pagina().evaluate(
+            """([sel, val]) => {
+                const el = document.querySelector(sel);
+                if (!el) return;
+                el.value = val;
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+                if (window.angular) {
+                    const s = angular.element(el).scope();
+                    const m = el.getAttribute('ng-model');
+                    if (s && m) { s[m] = val; }
+                    if (s) { s.$apply(); }
+                }
+            }""",
+            [selector, valor],
+        )
 
     async def guardar_devolucion(self) -> bool:
         """Pulsa 'Guardar Devolución' y espera a que el portal lo acepte.
@@ -2690,7 +2722,7 @@ class SesionSipp:
         return True
 
     async def registrar_devolucion(
-        self, folio: str, ruta_pdf: str, referencia: str,
+        self, folio: str, ruta_pdf: str, referencia: str, fecha: str = "",
     ) -> str:
         """Registra UNA devolución completa. Devuelve por qué terminó:
 
@@ -2706,7 +2738,7 @@ class SesionSipp:
         if not await self.abrir_solicitud_autorizada(folio):
             return "ya_estaba"
         try:
-            await self.llenar_devolucion(ruta_pdf, referencia)
+            await self.llenar_devolucion(ruta_pdf, referencia, fecha)
             guardada = await self.guardar_devolucion()
         except PlaywrightTimeoutError:
             await self._capturar_diagnostico("devolucion_llenado")

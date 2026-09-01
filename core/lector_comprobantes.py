@@ -183,3 +183,21 @@ def referencia_aaaammdd(lectura: dict) -> str:
         if m:
             return f"{m.group(3)}{m.group(2)}{m.group(1)}"
     return ""
+
+
+def fecha_aplicacion_ddmmaaaa(lectura: dict) -> str:
+    """Fecha de aplicación del comprobante como 'DD/MM/AAAA', que es el formato en
+    que el SIPP captura la Fecha de Devolución.
+
+    Es la fecha en que el banco aplicó el pago, no la de hoy: el portal prellena
+    ese campo con el día en que se captura, así que sin fijarlo una devolución
+    subida días después quedaría registrada con la fecha equivocada.
+
+    Devuelve '' si el comprobante no la trae (quien llame debe dejar entonces lo
+    que el portal haya prellenado, en vez de inventar una fecha).
+    """
+    for clave in ("fecha_aplicacion", "fecha_creacion"):
+        m = re.match(r"\s*(\d{2})/(\d{2})/(\d{4})", lectura.get(clave, "") or "")
+        if m:
+            return f"{m.group(1)}/{m.group(2)}/{m.group(3)}"
+    return ""
