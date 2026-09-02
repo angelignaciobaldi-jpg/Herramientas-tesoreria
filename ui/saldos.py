@@ -199,18 +199,31 @@ class SeccionSaldos:
         self._cargando_estado = True
         self.cargando_insumos.visible = True
         self._refrescar(self.cargando_insumos)
+        aviso = None
         try:
             self.guardados = await asyncio.to_thread(
                 saldos_estado.cargar_insumos)
+        except saldos_estado.ErrorEstado as exc:
+            # Se avisa, no se traga: si lo guardado se rompió, el usuario tiene
+            # que enterarse ANTES de generar un reporte con los paneles en cero.
+            self.guardados = {}
+            aviso = str(exc)
         except BaseException as exc:  # noqa: BLE001 — nunca debe tumbar la pantalla
             self._registrar_error(exc, "(lectura de insumos guardados)")
             self.guardados = {}
         finally:
+            # El indicador se apaga AQUÍ, no después de pintar: si el repintado
+            # fallara, dejarlo prendido es lo peor que puede pasar —la pantalla
+            # se queda «Recuperando…» para siempre y parece colgada—.
             self._estado_cargado = True
             self._cargando_estado = False
             self._estado_listo.set()
-        self.cargando_insumos.visible = False
+            self.cargando_insumos.visible = False
+            self._refrescar(self.cargando_insumos)
         self._pintar()
+        if aviso:
+            self.app.avisar("No se recuperaron los insumos: " + aviso, NARANJA,
+                            duracion=ft.Duration(seconds=15))
 
     async def _asegurar_estado(self) -> None:
         """Espera a tener los insumos guardados antes de tocarlos.
@@ -748,6 +761,18 @@ class SeccionSaldos:
         Se listan LAS SEIS aunque estén vacías: así se ve de un vistazo qué falta
         capturar, no solo lo que ya está."""
         filas = []
+        # Acción en bloque, arriba y sobre la misma columna que los botones de
+        # cada renglón: quien viene a empezar de cero no tiene que ir borrando de
+        # uno en uno. Solo aparece si hay algo que borrar.
+        if any(self.guardados.values()):
+            filas.append(ft.Container(
+                content=ft.Row(
+                    [ft.TextButton(
+                        content="Vaciar todo", icon=ft.Icons.DELETE_SWEEP_OUTLINED,
+                        style=ft.ButtonStyle(color=ROJO_BOTON),
+                        on_click=self._confirmar_vaciar_todo)],
+                    alignment=ft.MainAxisAlignment.END),
+                padding=ft.Padding.only(bottom=4)))
         for seccion in saldos_insumos.SECCIONES:
             datos = self.guardados.get(seccion)
             n = _filas_de(datos)
@@ -789,15 +814,91 @@ class SeccionSaldos:
         return filas
 
     async def _olvidar(self, seccion: str) -> None:
-        # Se le pasa lo que ya está en memoria: releer el libro para quitarle una
-        # sección costaría varios segundos con la interfaz congelada.
-        await self._asegurar_estado()
-        self.guardados = await asyncio.to_thread(
-            saldos_estado.olvidar_insumos, seccion, self.guardados)
+        """Vacía una sección. Va con espera porque REESCRIBE el libro entero.
+
+        Quitarle una sección a los insumos obliga a volver a guardar las otras
+        cinco —unas 32 000 filas—, y eso tarda varios segundos. Sin aviso, el
+        botón parecía no hacer nada y el usuario volvía a pulsarlo."""
+        nombre = _NOMBRES_INSUMO.get(seccion, seccion)
+        fallo = None
+        self._abrir_espera(
+            "Vaciando {}…".format(nombre),
+            "Se está reescribiendo el archivo de insumos con lo que queda. "
+            "Puede tardar unos segundos.")
+        try:
+            # Se le pasa lo que ya está en memoria: releer el libro para quitarle
+            # una sección costaría varios segundos más.
+            await self._asegurar_estado()
+            self.guardados = await asyncio.to_thread(
+                saldos_estado.olvidar_insumos, seccion, self.guardados)
+        except BaseException as exc:  # noqa: BLE001 — se reporta abajo, ya cerrado
+            fallo = exc
+        finally:
+            # Antes de avisar nada: el snackbar comparte pila con el modal.
+            self._cerrar_espera()
+        if fallo is not None:
+            self._registrar_error(fallo, saldos_estado.RUTA_INSUMOS)
+            self.app.avisar(f"No se pudo vaciar {nombre}: {fallo}", ROJO)
+            return
         self._pintar()
-        self.app.avisar(
-            "Se vació {}.".format(_NOMBRES_INSUMO.get(seccion, seccion)),
-            NARANJA)
+        self.app.avisar("Se vació {}.".format(nombre), NARANJA)
+
+    def _confirmar_vaciar_todo(self, _e=None) -> None:
+        """Pregunta antes de borrarlo todo. No hay deshacer.
+
+        Recapturar MGC o TESORO significa volver a exportar y subir decenas de
+        miles de filas, así que un clic de más no puede costar eso."""
+        vivas = [_NOMBRES_INSUMO.get(k, k)
+                 for k in saldos_insumos.SECCIONES if self.guardados.get(k)]
+        if not vivas:
+            self.app.avisar("No hay insumos guardados que vaciar.", GRIS)
+            return
+
+        def confirmar(_ev=None):
+            self.page.pop_dialog()
+            self.page.run_task(self._vaciar_todo)
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Vaciar todos los insumos"),
+            content=ft.Text(
+                "Se borrará lo capturado en {}: {}. No se puede deshacer; para "
+                "recuperarlo habría que volver a subir los archivos.".format(
+                    "{} secciones".format(len(vivas)) if len(vivas) > 1
+                    else "1 sección",
+                    ", ".join(vivas))),
+            actions=[
+                ft.TextButton("Cancelar",
+                              on_click=lambda e: self.page.pop_dialog()),
+                ft.FilledButton("Vaciar todo", on_click=confirmar,
+                                color=ft.Colors.WHITE, bgcolor=ROJO),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END))
+
+    async def _vaciar_todo(self) -> None:
+        """Borra el archivo de insumos completo."""
+        fallo = None
+        self._abrir_espera(
+            "Vaciando los insumos…",
+            "Se está borrando lo capturado de todas las secciones.")
+        try:
+            self.guardados = await asyncio.to_thread(
+                saldos_estado.olvidar_insumos)
+            # Ya no hay nada que leer del disco, así que la carga diferida queda
+            # resuelta: sin esto, el próximo `_asegurar_estado` volvería a leer
+            # un archivo que acabamos de borrar.
+            self._estado_cargado = True
+            self._estado_listo.set()
+        except BaseException as exc:  # noqa: BLE001 — se reporta abajo, ya cerrado
+            fallo = exc
+        finally:
+            self._cerrar_espera()
+        if fallo is not None:
+            self._registrar_error(fallo, saldos_estado.RUTA_INSUMOS)
+            self.app.avisar(f"No se pudieron vaciar los insumos: {fallo}", ROJO)
+            return
+        self._pintar()
+        self.app.avisar("Se vaciaron todos los insumos guardados.", NARANJA)
 
     async def _descargar_formato(self, _e=None) -> None:
         """Entrega el libro de insumos para llenarlo y volverlo a subir.

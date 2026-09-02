@@ -16,11 +16,15 @@ Reglas, de más a menos confiable (la primera que resuelve gana):
   1. **CLABE completa** — 18 dígitos con dígito de control. Inequívoca.
   2. **Número de cuenta** — en todas las formas en que el portal puede darlo
      (completo, corto, y el embebido en la CLABE, posiciones 6 a 17).
-  3. **Últimos 4 dígitos dentro de la pestaña** — último recurso, acotado a los
+  3. **Sucursal + últimos 4, dentro de la pestaña** — solo Banamex, que es el
+     único que nombra así sus cuentas: la 7713101 de la sucursal 237 llega en el
+     reporte como «2373101». Son siete u ocho dígitos, no cuatro, y la pareja es
+     única en la pestaña; por eso va antes que la regla de la cola.
+  4. **Últimos 4 dígitos dentro de la pestaña** — último recurso, acotado a los
      siete renglones que el formato no numera (Monex por alias, BX+, y los que se
      capturan a mano en Santander y Banamex), y solo si resuelve único.
 
-Sobre la regla 3 hay que ser explícito, porque es la que puede hacer daño:
+Sobre la regla 4 hay que ser explícito, porque es la que puede hacer daño:
 compartir los últimos cuatro dígitos no significa nada por sí solo. La cuenta
 `16084470201` de Abastecedora y la `388379020201` de Merarid son ambas de Bajío y
 ambas terminan en `0201`. Por eso la regla no se ofrece como desempate general:
@@ -274,18 +278,49 @@ for _banco, _cuenta in CUENTAS_EXCLUIDAS:
 del _banco, _cuenta, _pref
 
 
-def _excluida(linea: LineaSaldo) -> bool:
+def colas_excluidas(plantilla: Plantilla) -> dict:
+    """{prefijo: {terminación}} de las excluidas que se pueden reconocer por cola.
+
+    Hace falta porque Banamex ENMASCARA el número: su reporte manda «**6227», no
+    `8182756227`. Con la lista escrita en números completos, esas cuentas dejarían
+    de reconocerse y volverían a aparecer como cuentas nuevas cada día.
+
+    La guarda es la que hace segura una comparación de cuatro dígitos: una
+    terminación solo se acepta si NO es la de ninguna cuenta que la plantilla
+    tenga en esa pestaña. Así, ante la duda, siempre gana la plantilla y jamás se
+    tira un saldo bueno tomándolo por excluido."""
+    fuera = {}
+    for prefijo, numeros in _EXCLUIDAS_POR_PREFIJO.items():
+        hoja = plantilla.hoja_de_prefijo(prefijo)
+        if not hoja:
+            continue
+        propias = plantilla.colas_de(hoja)
+        colas = {n[-4:] for n in numeros if len(n) >= 4} - propias
+        if colas:
+            fuera[prefijo] = colas
+    return fuera
+
+
+def _excluida(linea: LineaSaldo, colas: dict = None) -> bool:
     """Si esta línea está en la lista de cuentas que no van al reporte.
 
     Se exige que COINCIDAN banco y número. Comparar solo el número invitaría a un
     choque entre bancos distintos —los formatos cortos son de 7 u 8 dígitos— y
-    dejaría fuera un saldo bueno sin que nadie se entere."""
+    dejaría fuera un saldo bueno sin que nadie se entere.
+
+    `colas` añade el reconocimiento por terminación para los portales que
+    enmascaran el número (ver `colas_excluidas`); sin él solo se compara la forma
+    completa."""
     clabe = _digitos(linea.clabe)
     prefijo = clabe[:3] if len(clabe) == 18 else prefijo_banco(linea.banco)
+    formas = _formas_cuenta(linea)
     numeros = _EXCLUIDAS_POR_PREFIJO.get(prefijo)
-    if not numeros:
+    if numeros and any(f in numeros for f in formas):
+        return True
+    porcolas = (colas or {}).get(prefijo)
+    if not porcolas:
         return False
-    return any(f in numeros for f in _formas_cuenta(linea))
+    return any(f[-4:] in porcolas for f in formas if len(f) >= 4)
 
 
 def _casar(linea: LineaSaldo, plantilla: Plantilla):
@@ -301,10 +336,19 @@ def _casar(linea: LineaSaldo, plantilla: Plantilla):
     if destino is not None:
         return destino, "numero"
 
-    # Último recurso, y solo dentro de la pestaña de ese banco. El prefijo sale de
-    # la CLABE cuando la hay y del nombre canónico cuando no.
+    # Las dos últimas reglas van acotadas a la pestaña de ese banco. El prefijo
+    # sale de la CLABE cuando la hay y del nombre canónico cuando no.
     prefijo = clabe[:3] if len(clabe) == 18 else prefijo_banco(linea.banco)
     hoja = plantilla.hoja_de_prefijo(prefijo)
+
+    # Banamex nombra sus cuentas por sucursal + terminación, no por el número
+    # completo: la 7713101 de la sucursal 237 (PETROPLAZAS) puede llegar como
+    # «2373101». Va antes que la cola porque compara siete u ocho dígitos, no
+    # cuatro: identifica la fila, no la insinúa.
+    destino = plantilla.buscar_por_sucursal(hoja, *formas)
+    if destino is not None:
+        return destino, "sucursal"
+
     destino = plantilla.buscar_por_cola(hoja, *formas)
     if destino is not None:
         return destino, "cola"
@@ -319,12 +363,13 @@ def identificar(lineas, plantilla: Plantilla = None) -> Asignacion:
     solo para los duplicados: gana la primera que llegó."""
     plantilla = plantilla or cargar_plantilla()
     res = Asignacion(plantilla=plantilla)
+    colas_fuera = colas_excluidas(plantilla)
 
     for linea in lineas or ():
         # Antes de casar: una cuenta excluida no debe llegar siquiera a la
         # plantilla. Si mañana se le abre un renglón, la exclusión seguiría
         # ganando y el renglón saldría vacío sin explicación.
-        if _excluida(linea):
+        if _excluida(linea, colas_fuera):
             res.excluidas.append(Suelta(
                 linea=linea,
                 motivo="cuenta excluida del reporte a propósito"))

@@ -88,4 +88,6 @@ bncLay*.pdf
 # Registro de fallos al generar el reporte de saldos (ver ui/saldos.py).
 saldos_errores.log
 saldos_insumos.xlsx
+saldos_insumos.xlsx.tmp
+saldos_insumos.dañado.xlsx
 saldos_totales.json
