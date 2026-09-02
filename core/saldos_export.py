@@ -1,382 +1,460 @@
-"""Generación del reporte de saldos en Excel, listo para imprimir.
+"""Genera el libro de saldos: el mismo formato de tesorería, con datos frescos.
 
-Replica la hoja `SALDOS` del formato que tesorería llena a mano: bloques por
-empresa con banco · cuenta · saldo, repartidos en DOS columnas de bloques para que
-todo quepa en una hoja tamaño OFICIO vertical. La configuración de impresión va
-puesta en el archivo (papel, área y márgenes tomados del formato real, y ajuste
-automático a una página), así que el usuario abre y manda a imprimir sin tocar
-nada.
+No dibuja un reporte. Abre el libro base —el formato real, vaciado, con sus 24
+pestañas y sus 746 fórmulas intactas— y pega cada descarga bancaria en su
+pestaña, EN LA FILA QUE LE TOCA A ESA CUENTA. Es el copiar-y-pegar que hoy hace
+el macro a mano, pero colocando por número de cuenta en vez de por el orden en
+que el portal quiso entregar las filas.
 
-Qué NO incluye, y por qué: el formato original tiene además columnas de créditos
-(C-H) y una proyección semanal de flujo (K-O) que se alimentan de las hojas
-`CRÉDITOS`, `MGC`, `PEMEX`, `TESORO`, `NOMINA` e `IMPUESTOS`. Esos datos **no salen
-de los portales bancarios**, así que este módulo no los puede calcular y deja esas
-columnas libres. Es una omisión deliberada, no un olvido.
+De ahí sale la propiedad que hace que valga la pena: **las fórmulas de SALDOS no
+se tocan y quedan correctas por construcción**. `=HSBC!C2` lee la fila 2 de HSBC,
+y la fila 2 de HSBC es la cuenta que debe ser porque nosotros la pusimos ahí. Lo
+mismo vale para SALDOS HORIZOTAL, que sale bien sola sin escribir una línea para
+ella.
 
-La segunda hoja, **Sin identificar**, es tan importante como la primera: lista las
-cuentas que el banco reportó pero que no se pudieron atribuir a una empresa. Sin
-ella, esos saldos desaparecerían del reporte sin dejar rastro, que es justo el
-fallo silencioso que este módulo viene a eliminar.
+Por eso aquí se escriben VALORES solo en las pestañas de descarga y en los
+ledgers de flujo. Ni un total, ni un subtotal, ni el desglose Combustibles/Resto:
+todo eso ya está en el base como fórmula y se recalcula al abrir en Excel.
+
+## Lo que no se inserta
+
+Una cuenta que no está en la plantilla NO se agrega a su pestaña. Insertar una
+fila correría todo lo de abajo y rompería cada referencia que apunte ahí — que es
+exactamente el defecto que este módulo existe para eliminar. Esas cuentas van a
+la pestaña "Cuentas nuevas", con su monto, para que se vean y se decida si el
+formato debe crecer. Las cuentas de CUENTAS_EXCLUIDAS (core/saldos.py) no llegan
+ni ahí: se descartan antes y el libro no deja rastro de ellas, que es justo lo
+que se pide de una exclusión.
+
+## openpyxl no calcula
+
+Las celdas de fórmula salen sin valor cacheado, así que el archivo recién
+generado se ve vacío en cualquier lector que no evalúe (incluido openpyxl). Los
+números aparecen al abrirlo en Excel. Es esperado: el cuadre se verifica ahí.
 """
 
 from __future__ import annotations
 
 import datetime
+import os
 
 import openpyxl
-from openpyxl.styles import Alignment, Border, Color, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
-from openpyxl.worksheet.page import PageMargins
-from openpyxl.worksheet.properties import PageSetupProperties
+from openpyxl.styles import Alignment, Font, PatternFill
+from openpyxl.utils import column_index_from_string, get_column_letter
 
-from .saldos import Resultado, SaldoCuenta
+from .saldos_plantilla import cargar as cargar_plantilla
 
-# --- Geometría, tomada del formato real ---------------------------------
-# Los bloques se reparten en DOS columnas para aprovechar el ancho de la hoja, tal
-# como está armado el formato original.
-_HOJA = "SALDOS"
-_HOJA_SIN = "Sin identificar"
-_FILA_INICIO = 9          # debajo del título y la fecha
-# Alto de referencia del formato original (su área de impresión es A1:U131). Se usa
-# para repartir los bloques en dos columnas parecidas, NO como tope: si hay más
-# cuentas, la hoja crece y Excel ajusta la escala (ver _configurar_impresion).
-_FILA_REFERENCIA = 131
-_ULTIMA_COLUMNA = "U"
-_PAPEL_OFICIO = 5         # PAPERSIZE_LEGAL
+# La hoja que se agrega al final con lo que no cupo en el formato.
+HOJA_EXCEPCIONES = "Cuentas nuevas"
 
-# Geometría de cada región. No son simétricas: en la izquierda el nombre de la
-# empresa va en la columna F (a media banda) y alineado a la izquierda, mientras
-# que en la derecha va en la Q y centrado. La etiqueta 'Total:' también cambia de
-# columna según la región y la divisa. Todo esto está calcado del formato real —
-# parece arbitrario, pero es lo que le da su aspecto reconocible.
-_IZQ = {
-    "banco": "A", "cuenta": "B", "divisa": "H", "saldo": "I",
-    "empresa": "F", "empresa_alin": "left",
-    "total_mxn": "B", "total_otras": "F", "total_alin": "right",
-    "divisa_negrita": False,
-}
-_DER = {
-    "banco": "Q", "cuenta": "R", "divisa": "T", "saldo": "U",
-    "empresa": "Q", "empresa_alin": "center",
-    "total_mxn": "S", "total_otras": "S", "total_alin": "center",
-    "divisa_negrita": True,
-}
+# Rol especial: la celda de la fila SIGUIENTE donde BAJÍO guarda el número de
+# cuenta ('Cuenta: 16084470201Conecta BanBajio').
+_ROL_CUENTA_ABAJO = "_fila_cuenta_abajo"
 
-# Anchos del formato original. Las columnas que no se llenan (C-G, J-P, S) se
-# conservan igual para no alterar el reparto de la página al imprimir.
-_ANCHOS = {
-    "A": 19.7, "B": 13.1, "C": 14.4, "D": 13.1, "E": 15.7, "F": 15.7,
-    "G": 15.7, "H": 15.7, "I": 26.0, "J": 8.1, "K": 19.7, "L": 20.7,
-    "M": 21.1, "N": 18.4, "O": 25.7, "P": 7.4, "Q": 32.7, "R": 13.4,
-    "S": 21.0, "T": 15.1, "U": 25.4,
-}
-_ALTO_FILA = 24.0
-# La hoja original se ve SIN cuadrícula y con zoom al 50 %: con las líneas puestas
-# el aspecto cambia por completo, aunque el contenido sea idéntico. El color de
-# pestaña también es del formato (tema 2, ligeramente oscurecido).
-_ZOOM = 50
-_TAB_TEMA, _TAB_TINTE = 2, -0.1
+# Dónde va el sello de actualización en la hoja SALDOS. Son las celdas que el
+# formato ya usaba para eso (`K3`/`K5` traen las etiquetas 'Fecha:' y 'Hora:').
+# La cabecera lleva DOS pares fecha/hora: L3-L4 son los de hoy y L5-L6 los del
+# día hábil anterior. La hora de hoy va en L4, no en L5: ponerla en L5 pisaba la
+# fecha de la comparativa.
+CELDA_FECHA = "L3"
+CELDA_HORA = "L4"
 
-_FMT_SALDO = "#,##0_);[Red](#,##0)"
-_F_EMPRESA = Font(name="Calibri", size=18, bold=True)
-_F_BANCO = Font(name="Calibri", size=18)
-_F_DATO = Font(name="Calibri", size=16)
-_F_CUENTA = Font(name="Calibri", size=16, color="FF000000")
-_F_DIVISA = Font(name="Calibri", size=16)
-_F_DIVISA_B = Font(name="Calibri", size=16, bold=True)
-_F_TOTAL = Font(name="Calibri", size=16, bold=True)
-_F_TITULO = Font(name="Calibri", size=22, bold=True)
-_F_NOTA = Font(name="Calibri", size=11, color="FF808080")
+_FMT_FECHA = "dd/mm/yyyy"
+_FMT_HORA = "hh:mm"
+# Dos decimales, negativos en rojo entre paréntesis. El formato original recortaba
+# a enteros, lo que hacía que el reporte y el resumen en pantalla no cuadraran a
+# la vista aunque las celdas fueran correctas.
+_FMT_SALDO = "#,##0.00_);[Red](#,##0.00)"
 
-_DER_ALIN = Alignment(horizontal="right")
-_CEN_ALIN = Alignment(horizontal="center")
-_IZQ_ALIN = Alignment(horizontal="left")
-
-# Cada saldo va encajonado arriba y abajo; el total cierra con línea media.
-_BORDE_DATO = Border(top=Side(style="thin"), bottom=Side(style="thin"))
-_BORDE_TOTAL = Border(top=Side(style="thin"), bottom=Side(style="medium"))
-
-
-def _bloques(res: Resultado, nombres: dict) -> list[dict]:
-    """Un bloque por empresa: sus cuentas separadas por moneda.
-
-    Se separan las divisas porque sumar pesos con dólares da una cifra que no
-    significa nada; el formato original hace lo mismo (marca 'DLS' y total aparte).
-    """
-    out: list[dict] = []
-    for id_empresa, saldos in res.por_empresa().items():
-        mxn = [s for s in saldos if s.moneda == "MXN"]
-        otras: dict[str, list[SaldoCuenta]] = {}
-        for s in saldos:
-            if s.moneda != "MXN":
-                otras.setdefault(s.moneda, []).append(s)
-        out.append({
-            "empresa": nombres.get(id_empresa, f"Empresa {id_empresa}"),
-            "id": id_empresa,
-            "mxn": mxn,
-            "otras": otras,
-            # +1 encabezado, +1 total por moneda, +1 línea en blanco al final
-            "alto": (len(mxn) + (2 if mxn else 0)
-                     + sum(len(v) + 2 for v in otras.values()) + 1),
-        })
-    out.sort(key=lambda b: -sum(s.saldo for s in b["mxn"]))
-    return out
-
-
-def _repartir(bloques: list[dict]) -> tuple[list, list]:
-    """Reparte los bloques en dos columnas de alto parecido.
-
-    Se acumula en la izquierda mientras no se pase de la mitad del alto total; el
-    resto va a la derecha. NUNCA se descarta un bloque por falta de espacio: la
-    hoja se alarga y la impresión se ajusta. El formato original sí recorta —su
-    contenido llega a la fila 143 y su área de impresión termina en la 131—, y ese
-    es justo el tipo de pérdida silenciosa que este módulo viene a evitar."""
-    total = sum(b["alto"] for b in bloques)
-    objetivo = total / 2
-    izq, der, acumulado = [], [], 0
-    for b in bloques:
-        if acumulado + b["alto"] / 2 <= objetivo:
-            izq.append(b)
-            acumulado += b["alto"]
-        else:
-            der.append(b)
-    return izq, der
-
-
-def _escribir_bloque(ws, bloque: dict, fila: int, cols: dict) -> int:
-    """Escribe un bloque de empresa y devuelve la fila siguiente."""
-    alin_empresa = (_IZQ_ALIN if cols["empresa_alin"] == "left" else _CEN_ALIN)
-    celda = ws[f"{cols['empresa']}{fila}"]
-    celda.value = bloque["empresa"]
-    celda.font = _F_EMPRESA
-    celda.alignment = alin_empresa
-    ws.row_dimensions[fila].height = _ALTO_FILA
-    fila += 1
-
-    def grupo(saldos, divisa):
-        nonlocal fila
-        for s in saldos:
-            ws.row_dimensions[fila].height = _ALTO_FILA
-            b = ws[f"{cols['banco']}{fila}"]
-            b.value = s.banco
-            b.font = _F_BANCO
-            b.alignment = _IZQ_ALIN
-            # La cuenta va como TEXTO: los últimos dígitos pueden empezar en cero
-            # ('0454') y Excel se los comería si la tratara como número.
-            c = ws[f"{cols['cuenta']}{fila}"]
-            c.value = _cola_visible(s.cuenta)
-            c.font = _F_CUENTA
-            c.alignment = _CEN_ALIN
-            c.number_format = "@"
-            if divisa != "MXN":
-                d = ws[f"{cols['divisa']}{fila}"]
-                d.value = "DLS" if divisa == "USD" else divisa
-                d.font = _F_DIVISA_B if cols["divisa_negrita"] else _F_DIVISA
-                d.alignment = _CEN_ALIN
-            v = ws[f"{cols['saldo']}{fila}"]
-            v.value = s.saldo
-            v.font = _F_DATO
-            v.alignment = _DER_ALIN
-            v.number_format = _FMT_SALDO
-            v.border = _BORDE_DATO
-            fila += 1
-        # Fila de total del grupo. La etiqueta cambia de columna según la divisa:
-        # en la región izquierda el total en pesos se rotula en B y el de dólares
-        # en F, tal como está el formato original.
-        ws.row_dimensions[fila].height = _ALTO_FILA
-        col_etq = cols["total_mxn"] if divisa == "MXN" else cols["total_otras"]
-        etq = ws[f"{col_etq}{fila}"]
-        etq.value = "Total: " if divisa == "MXN" else f"Total {divisa}: "
-        etq.font = _F_TOTAL
-        etq.alignment = (_DER_ALIN if cols["total_alin"] == "right" else _CEN_ALIN)
-        t = ws[f"{cols['saldo']}{fila}"]
-        # Fórmula, no el número ya sumado: así el usuario puede ajustar una cifra a
-        # mano y ver el total actualizarse, que es como usa hoy el formato.
-        ini_f, fin_f = fila - len(saldos), fila - 1
-        col_s = cols["saldo"]
-        t.value = f"=SUM({col_s}{ini_f}:{col_s}{fin_f})" if saldos else 0
-        t.font = _F_TOTAL
-        t.alignment = _DER_ALIN
-        t.number_format = _FMT_SALDO
-        t.border = _BORDE_TOTAL
-        fila += 1
-
-    if bloque["mxn"]:
-        grupo(bloque["mxn"], "MXN")
-    for divisa, saldos in sorted(bloque["otras"].items()):
-        grupo(saldos, divisa)
-    return fila + 1  # línea en blanco entre bloques
-
-
-def _cola_visible(cuenta: str, n: int = 4) -> str:
-    """Los últimos `n` dígitos, que es como el formato identifica cada cuenta.
-
-    Se muestra la cola y no el número completo porque así lo lee el usuario en la
-    hoja impresa (columna 'Cta.'), y porque a esa escala el número entero no cabe.
-    """
-    d = "".join(c for c in str(cuenta or "") if c.isdigit())
-    return d[-n:].rjust(min(n, len(d)), "0") if d else ""
-
-
-def _encabezado(ws, res: Resultado, fecha: datetime.datetime) -> None:
-    """Título, fecha, totales generales y el rótulo 'Cta.' sobre cada región.
-
-    Reproduce la cabecera del formato en lo que este módulo puede calcular. Se
-    omiten los bloques de 'Cobertura' y 'Amortización' (filas 3-7 del original):
-    salen de la hoja CRÉDITOS, que no viene de los portales bancarios."""
-    ws["M1"] = "SALDOS"
-    ws["M1"].font = _F_TITULO
-    ws["M1"].alignment = _CEN_ALIN
-    ws.row_dimensions[1].height = 22.5
-
-    ws["K3"] = "Fecha:"
-    ws["K3"].font = _F_TOTAL
-    ws["K3"].alignment = _DER_ALIN
-    ws["L3"] = fecha.strftime("%d/%m/%Y")
-    ws["L3"].font = _F_DATO
-    ws["K4"] = "Hora:"
-    ws["K4"].font = _F_TOTAL
-    ws["K4"].alignment = _DER_ALIN
-    ws["L4"] = fecha.strftime("%H:%M")
-    ws["L4"].font = _F_DATO
-
-    # Totales generales por divisa, como en el original (P3/Q3 = MX, P4/Q4 = DLS).
-    # No se convierten entre sí: un total que mezcle pesos y dólares no significa
-    # nada. El desglose 'Combustibles / Resto' del formato es una agrupación de
-    # negocio que este módulo no conoce, así que no se inventa.
-    totales: dict[str, float] = {}
-    for s_ in res.identificados:
-        totales[s_.moneda] = totales.get(s_.moneda, 0.0) + s_.saldo
-    ws["P3"] = "MX:"
-    ws["P3"].font = _F_TOTAL
-    ws["P3"].alignment = _DER_ALIN
-    ws["Q3"] = totales.get("MXN", 0.0)
-    ws["Q3"].font = _F_TOTAL
-    ws["Q3"].alignment = _DER_ALIN
-    ws["Q3"].number_format = _FMT_SALDO
-    ws["P4"] = "DLS:"
-    ws["P4"].font = _F_TOTAL
-    ws["P4"].alignment = _DER_ALIN
-    ws["Q4"] = totales.get("USD", 0.0)
-    ws["Q4"].font = _F_TOTAL
-    ws["Q4"].alignment = _DER_ALIN
-    ws["Q4"].number_format = _FMT_SALDO
-
-    # Rótulo de la columna de cuentas, en cada región (fila 8 del original).
-    for cols in (_IZQ, _DER):
-        celda = ws[f"{cols['cuenta']}8"]
-        celda.value = "Cta."
-        celda.font = _F_TOTAL
-        celda.alignment = _CEN_ALIN
-
-    if res.sin_identificar:
-        aviso = ws["A3"]
-        aviso.value = (f"{len(res.sin_identificar)} cuenta(s) sin identificar — "
-                       f"ver la hoja «{_HOJA_SIN}»")
-        aviso.font = Font(name="Calibri", size=12, bold=True, color="FFC00000")
-
-
-def _configurar_impresion(ws, ultima_fila: int) -> None:
-    """Papel, ajuste, área y márgenes: una sola hoja oficio, siempre completa.
-
-    En vez de fijar la escala al 27 % del formato original, se le pide a Excel que
-    ajuste a UNA página (`fitToWidth`/`fitToHeight`). Con una escala fija, el día
-    que se den de alta más cuentas el reporte se imprimiría recortado sin que nadie
-    se entere; ajustando, sale entero aunque la letra encoja un poco. El área
-    también sigue al contenido, nunca al revés."""
-    # Sin cuadrícula: es lo que hace que la hoja se vea como el formato y no como
-    # una tabla de cálculo cualquiera. Afecta a la pantalla, no a la impresión
-    # (imprimir cuadrícula ya viene desactivado por omisión).
-    ws.sheet_view.showGridLines = False
-    ws.sheet_view.zoomScale = _ZOOM
-    ws.sheet_properties.tabColor = Color(theme=_TAB_TEMA, tint=_TAB_TINTE)
-    ws.page_setup.paperSize = _PAPEL_OFICIO
-    ws.page_setup.orientation = "portrait"
-    ws.page_setup.fitToWidth = 1
-    ws.page_setup.fitToHeight = 1
-    ws.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
-    fin = max(_FILA_REFERENCIA, ultima_fila)
-    ws.print_area = f"A1:{_ULTIMA_COLUMNA}{fin}"
-    ws.page_margins = PageMargins(
-        left=0.2362204724409449, right=0.2362204724409449,
-        top=0.7480314960629921, bottom=0.7480314960629921)
-    for col, ancho in _ANCHOS.items():
-        ws.column_dimensions[col].width = ancho
-
-
-_ENC_SIN = (
-    ("Banco", 22), ("Cuenta", 24), ("Titular en el reporte", 44),
-    ("Saldo", 18), ("Moneda", 10), ("Archivo de origen", 40), ("Motivo", 60),
+_ENC_EXCEPCIONES = (
+    ("Tipo", 14),
+    ("Banco", 22),
+    ("Cuenta", 24),
+    ("Titular en el reporte", 44),
+    ("Saldo", 18),
+    ("Moneda", 10),
+    ("Archivo de origen", 40),
+    ("Motivo", 46),
 )
+_AZUL = "FF317FB1"
 
 
-def _hoja_sin_identificar(wb, res: Resultado) -> None:
-    """Las cuentas que el banco reportó y no se pudieron atribuir."""
-    ws = wb.create_sheet(_HOJA_SIN)
-    ws["A1"] = ("Cuentas que reportó el banco y NO se pudieron atribuir a una "
-                "empresa. Complétalas en el catálogo de cuentas.")
-    ws["A1"].font = Font(name="Calibri", size=11, bold=True)
-    for i, (etq, ancho) in enumerate(_ENC_SIN, 1):
-        c = ws.cell(3, i, etq)
-        c.font = Font(name="Calibri", size=10, bold=True, color="FFFFFFFF")
-        c.fill = PatternFill("solid", fgColor="FF317FB1")
-        c.alignment = _CEN_ALIN
-        ws.column_dimensions[get_column_letter(i)].width = ancho
-    fila = 4
-    for item in list(res.sin_identificar) + list(res.duplicados):
-        ln = item.linea
-        motivo = item.motivo
-        if item.candidatos:
-            motivo += " — candidatos: " + "; ".join(item.candidatos[:4])
-        valores = (ln.banco, ln.cuenta, ln.titular, ln.saldo, ln.moneda,
-                   ln.origen, motivo)
-        for i, v in enumerate(valores, 1):
-            c = ws.cell(fila, i, v)
-            c.font = Font(name="Calibri", size=10)
-            if i == 2:      # la cuenta como texto, para no perder ceros
-                c.number_format = "@"
-            if i == 4:
-                c.number_format = _FMT_SALDO
-                c.alignment = _DER_ALIN
+class ErrorExport(Exception):
+    """No se pudo generar el libro."""
+
+
+def _col(hoja, letra, fila):
+    return hoja.cell(fila, column_index_from_string(letra))
+
+
+def _numero_de_cuenta(cols, destino, linea):
+    """El número tal como lo escribe esa pestaña del formato.
+
+    Cuando la fila ya venía numerada en el formato se respeta esa forma. Cuando
+    no —las que se resuelven por los últimos 4 dígitos— hay que elegirla: si la
+    región tiene columna de sucursal aparte, va la cuenta CORTA, porque es lo que
+    llevan sus vecinas y mezclar las dos formas en la misma columna vuelve la
+    pestaña ilegible."""
+    if destino.cuenta:
+        return str(destino.cuenta)
+    if "sucursal" in cols:
+        corta = (linea.extra or {}).get("cuenta_corta")
+        if corta:
+            return str(corta)
+    return str(linea.cuenta)
+
+
+def _escribir_linea(hoja, fila, cols, destino, linea, moneda_formato):
+    """Vuelca el SALDO de una línea leída en su fila canónica.
+
+    La identidad de la fila —número, titular, sucursal…— ya la puso
+    `_escribir_identidad` con los datos del formato; aquí solo va lo que cambia
+    cada día. La excepción son las filas que el formato NO numeraba: ahí el
+    número, la sucursal y el titular salen del propio archivo, porque no hay de
+    dónde más sacarlos."""
+    if not destino.cuenta:
+        if "cuenta" in cols:
+            celda = _col(hoja, cols["cuenta"], fila)
+            celda.value = _numero_de_cuenta(cols, destino, linea)
+            celda.number_format = "@"
+        if "sucursal" in cols:
+            # Banamex reporta sucursal y cuenta en columnas separadas y el lector
+            # las concatena. Al escribir hay que volver a partirlas.
+            corta = str((linea.extra or {}).get("cuenta_corta") or "")
+            completa = str(linea.cuenta or "")
+            if corta and completa.endswith(corta):
+                _col(hoja, cols["sucursal"], fila).value = (
+                    completa[:len(completa) - len(corta)] or None)
+        if "titular" in cols and not destino.titular:
+            _col(hoja, cols["titular"], fila).value = linea.titular or ""
+        if "moneda" in cols:
+            _col(hoja, cols["moneda"], fila).value = moneda_formato
+
+    # El saldo va a la columna de la región y, si algún renglón de SALDOS lee otra
+    # (Banorte tiene uno que toma 'Saldo actual' en vez de 'Disponible'), también
+    # a esa. Solo a esas dos: rellenar columnas que no alimentan nada sería
+    # inventar un dato que el portal no dio.
+    columnas = set()
+    if "saldo" in cols:
+        columnas.add(cols["saldo"])
+    if destino.renglon is not None:
+        columnas.add(destino.renglon.hoja_col)
+    for letra in columnas:
+        celda = _col(hoja, letra, fila)
+        celda.value = linea.saldo
+        celda.number_format = _FMT_SALDO
+
+
+def _escribir_identidad(libro, plantilla):
+    """Repone en cada pestaña lo que identifica a sus cuentas, fila por fila.
+
+    Va ANTES de los saldos y cubre TODAS las filas del mapa, hayan reportado o
+    no. Es lo que hace que una cuenta que el portal no trajo hoy siga apareciendo
+    en su pestaña —con su número, su titular y su sucursal— y solo el saldo en
+    blanco. Antes desaparecía entera: a la vista faltaba una cuenta y nada lo
+    decía.
+
+    Son datos que NO cambian de un día a otro, así que se conservan del formato y
+    no del archivo. El archivo solo aporta el saldo."""
+    for nombre, info in plantilla.hojas.items():
+        hoja = libro[nombre]
+        for fila, entrada in info["filas"].items():
+            fila = int(fila)
+            cols = plantilla.columnas(nombre, fila)
+            for rol, valor in (entrada.get("estaticos") or {}).items():
+                if rol == _ROL_CUENTA_ABAJO:
+                    # BAJÍO guarda el número en la fila de ABAJO, en la columna
+                    # del titular.
+                    letra, destino_fila = cols.get("titular"), fila + 1
+                else:
+                    letra, destino_fila = cols.get(rol), fila
+                if not letra:
+                    continue
+                celda = _col(hoja, letra, destino_fila)
+                celda.value = valor
+                if rol in ("cuenta", "clabe", "sucursal"):
+                    celda.number_format = "@"   # texto: conserva ceros al inicio
+
+
+def _moneda_para(destino, linea):
+    """Divisa en el vocabulario de esa pestaña.
+
+    Cada portal la nombra distinto — BBVA y Banorte dicen 'MXP', Banregio 'MXN',
+    Intercam 'PESOS'. El base conserva la que traía el formato para esa fila; se
+    respeta, y solo se recurre a la del lector cuando no hay."""
+    if destino.moneda:
+        return destino.moneda
+    return (linea.moneda or "MXN").upper()
+
+
+def _escribir_saldos(libro, asignacion):
+    """Pega todas las líneas colocadas en sus pestañas.
+
+    Una cuenta puede ocupar más de una fila —el formato repite algunas en su
+    bloque de "cuentas nuevas"— y el saldo va a todas, igual que cuando se pega a
+    mano."""
+    plantilla = asignacion.plantilla
+    for colocada in asignacion.colocadas.values():
+        destino = colocada.destino
+        for d in (destino,) + tuple(destino.gemelos):
+            cols = plantilla.columnas(d.hoja, d.fila)
+            if not cols:
+                continue
+            _escribir_linea(libro[d.hoja], d.fila, cols, d, colocada.linea,
+                            _moneda_para(d, colocada.linea))
+
+
+def _escribir_ledgers(libro, plantilla, insumos):
+    """Vuelca los insumos de flujo en sus pestañas.
+
+    Los `SUMIF` de SALDOS ya apuntan a estos rangos: basta con poner cada dato en
+    la columna que le toca. De los ledgers de vencimientos se escriben solo las
+    columnas que alguna fórmula lee (fecha e importe) más la referencia, que no
+    alimenta nada pero permite auditar de dónde salió una cifra.
+
+    Un insumo que no vino no se escribe y su panel queda en cero. Que falte el
+    archivo de nómina no puede impedir que salga el reporte de saldos."""
+    escritos = {}
+    for nombre, datos in (insumos or {}).items():
+        info = plantilla.ledgers.get(nombre)
+        if info is None or not datos:
+            continue
+        hoja = _hoja_por_clave(libro, nombre)
+        if info.get("modo") == "copia":
+            escritos[nombre] = _copiar_rangos(hoja, datos)
+            continue
+        escritos[nombre] = _escribir_vencimientos(hoja, info, datos)
+    return escritos
+
+
+def _escribir_vencimientos(hoja, info, filas):
+    """Vuelca un ledger de vencimientos en su pestaña.
+
+    Va la fila COMPLETA, no solo las columnas que alimentan los `SUMIF`: el
+    reporte se coteja contra el sistema de origen, y para eso hacen falta el
+    número de documento, la clase, las fechas y el texto de cabecera. Encima se
+    reescriben fecha e importe ya interpretados, con su formato, porque los
+    `SUMIF` comparan contra fechas reales."""
+    cols = info.get("cols") or {}
+    if not cols:
+        return 0
+    tope = info["fila_fin"]
+    fila = info["fila_ini"]
+    for registro in filas:
+        if fila > tope:
+            break
+        for i, valor in enumerate(registro.get("celdas") or (), start=1):
+            if valor is not None:
+                hoja.cell(fila, i).value = valor
+        # Solo fecha e importe: son los que los `SUMIF` necesitan interpretados.
+        # La referencia ya viaja en `celdas`.
+        for rol in ("fecha", "importe"):
+            letra, valor = cols.get(rol), registro.get(rol)
+            if not letra or valor is None:
+                continue
+            celda = _col(hoja, letra, fila)
+            celda.value = valor
+            celda.number_format = (_FMT_FECHA if rol == "fecha" else _FMT_SALDO)
         fila += 1
-    ws.freeze_panes = "A4"
+    escritas = fila - info["fila_ini"]
+    if escritas < len(filas):
+        # Truncar en silencio dejaría un total que parece bueno y no lo es.
+        raise ErrorExport(
+            "el insumo trae {} filas y en la hoja caben {}; hay que ampliar el "
+            "rango en saldos_mapa.json".format(len(filas), escritas))
+    return escritas
 
 
-def generar(ruta: str, res: Resultado, nombres: dict | None = None,
-            fecha: datetime.datetime | None = None) -> dict:
-    """Escribe el reporte en `ruta`. Devuelve un resumen de lo generado.
+def _copiar_rangos(hoja, datos):
+    """Copia bloques de celdas a sus mismas coordenadas (caso CRÉDITOS)."""
+    total = 0
+    for rango in datos.get("rangos", ()):
+        col_ini = column_index_from_string(rango["col_ini"])
+        for i, valores in enumerate(rango["celdas"]):
+            fila = rango["fila_ini"] + i
+            for j, valor in enumerate(valores):
+                if valor is None:
+                    continue
+                hoja.cell(fila, col_ini + j).value = valor
+                total += 1
+    return total
 
-    `nombres` mapea id de empresa -> nombre a mostrar (lo provee la interfaz desde
-    `ui.comun.EMPRESAS`, para que el núcleo no dependa de la capa de UI).
 
-    El resumen trae `filas`: cuántas ocupó el reporte. Ningún bloque se descarta
-    por espacio — la hoja crece y la impresión se ajusta a una página.
-    """
-    nombres = nombres or {}
+def _hoja_por_clave(libro, clave):
+    """Busca la hoja por su nombre sin acentos ('CREDITOS' -> 'CRÉDITOS')."""
+    import unicodedata
+    objetivo = clave.upper().strip()
+    for nombre in libro.sheetnames:
+        plano = unicodedata.normalize("NFKD", nombre)
+        plano = "".join(c for c in plano if not unicodedata.combining(c))
+        if plano.upper().strip() == objetivo:
+            return libro[nombre]
+    raise ErrorExport("el libro base no tiene la hoja {!r}".format(clave))
+
+
+def _hoja_excepciones(libro, asignacion):
+    """Pestaña con lo que llegó y no cupo en el formato.
+
+    Separa cuentas NUEVAS de DUPLICADAS en una columna, cosa que la versión
+    anterior no hacía: las mezclaba y no había forma de distinguir un hallazgo
+    (se abrió una cuenta) de un aviso (el mismo archivo se subió dos veces).
+
+    Las excluidas NO salen aquí: se descartan en la identificación y el libro no
+    las menciona en ninguna parte."""
+    filas = ([("Nueva", s) for s in asignacion.nuevas]
+             + [("Duplicada", s) for s in asignacion.duplicados])
+    if not filas:
+        return
+    hoja = libro.create_sheet(HOJA_EXCEPCIONES)
+    hoja.sheet_state = "visible"
+
+    hoja["A1"] = "Cuentas que llegaron y no están en el formato"
+    hoja["A1"].font = Font(name="Calibri", size=14, bold=True)
+    hoja["A2"] = ("Para que entren al reporte hay que regenerar la plantilla; "
+                  "insertarlas a mano correría las filas y rompería las fórmulas.")
+    hoja["A2"].font = Font(name="Calibri", size=10, italic=True)
+
+    for i, (titulo, ancho) in enumerate(_ENC_EXCEPCIONES, start=1):
+        celda = hoja.cell(3, i)
+        celda.value = titulo
+        celda.font = Font(name="Calibri", size=11, bold=True, color="FFFFFFFF")
+        celda.fill = PatternFill("solid", fgColor=_AZUL)
+        celda.alignment = Alignment(horizontal="center", vertical="center")
+        hoja.column_dimensions[get_column_letter(i)].width = ancho
+
+    for i, (tipo, suelta) in enumerate(filas, start=4):
+        linea = suelta.linea
+        hoja.cell(i, 1).value = tipo
+        hoja.cell(i, 2).value = linea.banco
+        celda = hoja.cell(i, 3)
+        celda.value = str(linea.cuenta)
+        celda.number_format = "@"
+        hoja.cell(i, 4).value = linea.titular or ""
+        celda = hoja.cell(i, 5)
+        celda.value = linea.saldo
+        celda.number_format = _FMT_SALDO
+        hoja.cell(i, 6).value = linea.moneda
+        hoja.cell(i, 7).value = linea.origen or ""
+        hoja.cell(i, 8).value = suelta.motivo
+
+    hoja.freeze_panes = "A4"
+
+
+def calcular_totales_cabecera(plantilla, asignacion) -> dict:
+    """Los totales de la cabecera de HOY, calculados en Python.
+
+    Hacen falta porque openpyxl no evalúa fórmulas: al generar no se puede LEER
+    lo que dará `Q3`, y ese número hay que guardarlo para que mañana caiga en la
+    fila del día hábil anterior.
+
+    El mapa ya trae cada total aplanado a los renglones que suma —el desglose
+    Combustibles/Resto incluido—, así que aquí solo se suman los saldos que se
+    colocaron. Un renglón sin saldo cuenta como cero, igual que una celda vacía
+    en Excel.
+
+    OJO con el criterio del formato: `S3 + U3` NO da `Q3`. Tres cuentas
+    (Fundación Seren y dos de Operaciones Temáticas) entran al total de pesos y a
+    ningún desglose. Se replica tal cual: es su regla de negocio, no un error
+    nuestro que toque arreglar por dentro."""
+    bandas = {n: b["saldo"] for n, b in plantilla.bandas.items()}
+    valor_por_celda = {}
+    for colocada in asignacion.colocadas.values():
+        renglon = colocada.renglon
+        if renglon is None:
+            continue
+        celda = "{}{}".format(bandas[renglon.banda], renglon.fila)
+        valor_por_celda[celda] = colocada.saldo or 0.0
+
+    return {celda: round(sum(valor_por_celda.get(c, 0.0) for c in celdas), 2)
+            for celda, celdas in (plantilla.totales_cabecera or {}).items()}
+
+
+def _escribir_dia_anterior(libro, plantilla, anterior):
+    """Copia los totales de la corrida anterior a las filas del día hábil previo.
+
+    En el formato manual esas celdas se llenan pegando a mano los totales del
+    reporte de ayer. Aquí se toman del histórico, que guarda una entrada por
+    fecha: se usa la más reciente ANTERIOR a hoy, así regenerar el reporte el
+    mismo día no borra la comparativa contra ayer."""
+    if not anterior:
+        return 0
+    fecha, hora, totales = anterior
+    hoja = libro["SALDOS"]
+    escritas = 0
+    for origen, destino in (plantilla.espejo_totales or {}).items():
+        if origen not in totales:
+            continue
+        celda = hoja[destino]
+        celda.value = totales[origen]
+        celda.number_format = _FMT_SALDO
+        escritas += 1
+    if fecha:
+        celda = hoja[plantilla.celda_fecha_anterior]
+        celda.value = datetime.datetime.fromisoformat(fecha)
+        celda.number_format = _FMT_FECHA
+    if hora:
+        try:
+            celda = hoja[plantilla.celda_hora_anterior]
+            celda.value = datetime.datetime.fromisoformat(fecha + "T" + hora)
+            celda.number_format = _FMT_HORA
+        except ValueError:
+            pass
+    return escritas
+
+
+def _sellar(libro, fecha):
+    """Pone fecha y hora de actualización donde el formato las espera."""
+    hoja = libro["SALDOS"]
+    celda = hoja[CELDA_FECHA]
+    celda.value = datetime.datetime(fecha.year, fecha.month, fecha.day)
+    celda.number_format = _FMT_FECHA
+    celda = hoja[CELDA_HORA]
+    celda.value = fecha
+    celda.number_format = _FMT_HORA
+
+
+def generar(ruta: str, asignacion, insumos: dict = None,
+            fecha: datetime.datetime = None, anterior: tuple = None) -> dict:
+    """Escribe el libro completo en `ruta` y devuelve qué tanto se pudo llenar.
+
+    `asignacion` es lo que devuelve `saldos.identificar()`. `insumos` es opcional:
+    {'CREDITOS': [...], 'PEMEX': [...], ...} con las filas de cada ledger.
+    `anterior` es `(fecha_iso, hora, {celda: total})` de la corrida previa, que se
+    escribe en las filas del día hábil anterior de la cabecera.
+
+    Entre lo que devuelve va `totales_cabecera`: los totales de HOY calculados,
+    para que quien llame los guarde y mañana se los pase como `anterior`."""
+    plantilla = asignacion.plantilla or cargar_plantilla()
     fecha = fecha or datetime.datetime.now()
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = _HOJA
 
-    bloques = _bloques(res, nombres)
-    izq, der = _repartir(bloques)
+    if not os.path.exists(plantilla.ruta_base):
+        raise ErrorExport(
+            "falta el libro base {}. Genéralo con:\n"
+            "  python scripts/derivar_plantilla_saldos.py <formato.xlsx>"
+            .format(plantilla.ruta_base))
 
-    _encabezado(ws, res, fecha)
-    ultima = _FILA_INICIO
-    for lado, cols in ((izq, _IZQ), (der, _DER)):
-        fila = _FILA_INICIO
-        for bloque in lado:
-            fila = _escribir_bloque(ws, bloque, fila, cols)
-        ultima = max(ultima, fila)
-    _configurar_impresion(ws, ultima)
+    libro = openpyxl.load_workbook(plantilla.ruta_base)
+    _escribir_identidad(libro, plantilla)
+    _escribir_saldos(libro, asignacion)
+    ledgers = _escribir_ledgers(libro, plantilla, insumos)
+    _hoja_excepciones(libro, asignacion)
+    totales_cabecera = calcular_totales_cabecera(plantilla, asignacion)
+    comparativas = _escribir_dia_anterior(libro, plantilla, anterior)
+    _sellar(libro, fecha)
+    libro.save(ruta)
 
-    if res.sin_identificar or res.duplicados:
-        _hoja_sin_identificar(wb, res)
-    wb.save(ruta)
+    vacios = asignacion.vacios
     return {
-        "empresas": len(bloques),
-        "cuentas": len(res.identificados),
-        "sin_identificar": len(res.sin_identificar),
-        "duplicados": len(res.duplicados),
-        "filas": ultima,
+        "renglones": asignacion.total_renglones,
+        "llenos": asignacion.llenos,
+        "pegadas": asignacion.pegadas,
+        "vacios": len(vacios),
+        "nuevas": len(asignacion.nuevas),
+        "duplicados": len(asignacion.duplicados),
+        "bancos_faltantes": asignacion.bancos_faltantes(),
+        "totales": asignacion.totales(),
+        "ledgers": ledgers,
+        "ledgers_faltantes": sorted(set(plantilla.ledgers) - set(ledgers)),
+        "totales_cabecera": totales_cabecera,
+        "comparativas": comparativas,
     }

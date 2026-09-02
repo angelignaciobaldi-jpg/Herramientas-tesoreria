@@ -20,6 +20,9 @@ rem si no esta, el OCR usa el Tesseract instalado en el sistema).
 set DATAARGS=
 if exist "Imagenes\" set DATAARGS=%DATAARGS% --add-data "Imagenes:Imagenes"
 if exist "tessdata\" set DATAARGS=%DATAARGS% --add-data "tessdata:tessdata"
+rem core\datos lleva la plantilla del reporte de Saldos (el libro base y su
+rem mapa). Sin ella el modulo no puede generar nada, asi que NO es opcional.
+set DATAARGS=%DATAARGS% --add-data "core/datos:core/datos"
 
 flet pack app.py -n "Tesoreria" -D ^
   --icon "Imagenes\icon.ico" ^

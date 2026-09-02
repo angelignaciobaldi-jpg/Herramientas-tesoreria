@@ -1,0 +1,6761 @@
+{
+ "version": 2,
+ "origen": "derivado de la hoja SALDOS del formato de tesorería",
+ "bandas": [
+  {
+   "nombre": "A-I",
+   "banco": "A",
+   "cuenta": "B",
+   "titulo": "F",
+   "saldo": "I",
+   "moneda": "H"
+  },
+  {
+   "nombre": "K-O",
+   "banco": "K",
+   "cuenta": "L",
+   "titulo": "M",
+   "saldo": "O",
+   "moneda": "N"
+  },
+  {
+   "nombre": "Q-U",
+   "banco": "Q",
+   "cuenta": "R",
+   "titulo": "Q",
+   "saldo": "U",
+   "moneda": "T"
+  }
+ ],
+ "ledgers": {
+  "MGC": {
+   "fila_ini": 2,
+   "fila_fin": 100000,
+   "col_ini": "A",
+   "col_fin": "L",
+   "cols": {
+    "referencia": "A",
+    "importe": "I",
+    "fecha": "J"
+   }
+  },
+  "PEMEX": {
+   "fila_ini": 2,
+   "fila_fin": 100000,
+   "col_ini": "A",
+   "col_fin": "M",
+   "cols": {
+    "referencia": "A",
+    "fecha": "D",
+    "importe": "H"
+   }
+  },
+  "TESORO": {
+   "fila_ini": 2,
+   "fila_fin": 100000,
+   "col_ini": "A",
+   "col_fin": "J",
+   "cols": {
+    "referencia": "A",
+    "importe": "B",
+    "fecha": "E"
+   }
+  },
+  "NOMINA": {
+   "fila_ini": 2,
+   "fila_fin": 100000,
+   "col_ini": "A",
+   "col_fin": "J",
+   "cols": {
+    "referencia": "A",
+    "fecha": "C",
+    "importe": "D"
+   }
+  },
+  "IMPUESTOS": {
+   "fila_ini": 2,
+   "fila_fin": 24,
+   "col_ini": "B",
+   "col_fin": "H",
+   "cols": {},
+   "nota": "el bloque existe pero SALDOS no lo lee"
+  },
+  "CREDITOS": {
+   "fila_ini": 2,
+   "fila_fin": 256,
+   "col_ini": "A",
+   "col_fin": "V",
+   "cols": {},
+   "modo": "copia",
+   "rangos": [
+    [
+     2,
+     139,
+     "C",
+     "F",
+     "solo_numeros"
+    ],
+    [
+     2,
+     118,
+     "L",
+     "V",
+     "solo_numeros"
+    ]
+   ]
+  }
+ },
+ "hojas": {
+  "AFIRME": {
+   "regiones": [
+    {
+     "fila_ini": 3,
+     "fila_fin": 3,
+     "paso": 1,
+     "cols": {
+      "descripcion": "A",
+      "cuenta": "B",
+      "clabe": "C",
+      "moneda": "D",
+      "titular": "E",
+      "saldo": "F",
+      "saldo_total": "G"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    }
+   ],
+   "filas": {
+    "3": {
+     "region": 0,
+     "cuenta": "162112953",
+     "cuenta_norm": "162112953",
+     "titular": "INMOBILIARIA AENEKA SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "descripcion": "LIDER PYME",
+      "cuenta": 162112953,
+      "clabe": "062730001621129538 \t",
+      "moneda": "MXP",
+      "titular": "INMOBILIARIA AENEKA SA DE CV"
+     }
+    }
+   }
+  },
+  "BANAMEX": {
+   "regiones": [
+    {
+     "fila_ini": 3,
+     "fila_fin": 16,
+     "paso": 1,
+     "cols": {
+      "titular": "B",
+      "sucursal": "C",
+      "cuenta": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": "MXN",
+     "cuenta_abajo": false,
+     "nota": ""
+    },
+    {
+     "fila_ini": 19,
+     "fila_fin": 20,
+     "paso": 1,
+     "cols": {
+      "titular": "B",
+      "sucursal": "C",
+      "cuenta": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": "USD",
+     "cuenta_abajo": false,
+     "nota": ""
+    }
+   ],
+   "filas": {
+    "3": {
+     "region": 0,
+     "cuenta": "7713101",
+     "cuenta_norm": "7713101",
+     "titular": "PETROPLAZAS SA DE CV",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "PETROPLAZAS SA DE CV",
+      "sucursal": 237,
+      "cuenta": 7713101,
+      "moneda": "MXN"
+     }
+    },
+    "4": {
+     "region": 0,
+     "cuenta": "7680454",
+     "cuenta_norm": "7680454",
+     "titular": "ABASTECEDORA DE COMBUSTIBL",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ABASTECEDORA DE COMBUSTIBL",
+      "sucursal": 394,
+      "cuenta": 7680454,
+      "moneda": "MXN"
+     }
+    },
+    "5": {
+     "region": 0,
+     "cuenta": "7681809",
+     "cuenta_norm": "7681809",
+     "titular": "ABASTECEDORA DE COMBUSTIBL",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ABASTECEDORA DE COMBUSTIBL",
+      "sucursal": 394,
+      "cuenta": 7681809,
+      "moneda": "MXN"
+     }
+    },
+    "6": {
+     "region": 0,
+     "cuenta": "7681817",
+     "cuenta_norm": "7681817",
+     "titular": "ABASTECEDORA DE COMBUSTIBL",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ABASTECEDORA DE COMBUSTIBL",
+      "sucursal": 394,
+      "cuenta": 7681817,
+      "moneda": "MXN"
+     }
+    },
+    "7": {
+     "region": 0,
+     "cuenta": "7689435",
+     "cuenta_norm": "7689435",
+     "titular": "ABASTECEDORA DE COMBUSTIBL",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ABASTECEDORA DE COMBUSTIBL",
+      "sucursal": 394,
+      "cuenta": 7689435,
+      "moneda": "MXN"
+     }
+    },
+    "8": {
+     "region": 0,
+     "cuenta": "7701596",
+     "cuenta_norm": "7701596",
+     "titular": "ATUNES SA DE CV",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ATUNES SA DE CV",
+      "sucursal": 237,
+      "cuenta": 7701596,
+      "moneda": "MXN"
+     }
+    },
+    "9": {
+     "region": 0,
+     "cuenta": "5579232",
+     "cuenta_norm": "5579232",
+     "titular": "RECICLADO INDUSTRIAL AMWES",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "RECICLADO INDUSTRIAL AMWES",
+      "sucursal": 7001,
+      "cuenta": 5579232,
+      "moneda": "MXN"
+     }
+    },
+    "10": {
+     "region": 0,
+     "cuenta": "2935237",
+     "cuenta_norm": "2935237",
+     "titular": "PETROPLAZAS ESTACIONES SA",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "PETROPLAZAS ESTACIONES SA",
+      "sucursal": 7004,
+      "cuenta": 2935237,
+      "moneda": "MXN"
+     }
+    },
+    "11": {
+     "region": 0,
+     "cuenta": "965783",
+     "cuenta_norm": "965783",
+     "titular": "ACP COMBUSTIBLES SA DE CV",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ACP COMBUSTIBLES SA DE CV",
+      "sucursal": 7004,
+      "cuenta": 965783,
+      "moneda": "MXN"
+     }
+    },
+    "12": {
+     "region": 0,
+     "cuenta": "4197043",
+     "cuenta_norm": "4197043",
+     "titular": "ATUNES Y SARDINAS DE MEXIC",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ATUNES Y SARDINAS DE MEXIC",
+      "sucursal": 7006,
+      "cuenta": 4197043,
+      "moneda": "MXN"
+     }
+    },
+    "13": {
+     "region": 0,
+     "cuenta": "7538363",
+     "cuenta_norm": "7538363",
+     "titular": "MULTISERVICIOS AUTOMOTRICE",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "MULTISERVICIOS AUTOMOTRICE",
+      "sucursal": 114,
+      "cuenta": 7538363,
+      "moneda": "MXN"
+     }
+    },
+    "14": {
+     "region": 0,
+     "cuenta": "7846840",
+     "cuenta_norm": "7846840",
+     "titular": "TRANSPORTES Y EQUIPOS ASAM",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "TRANSPORTES Y EQUIPOS ASAM",
+      "sucursal": 394,
+      "cuenta": 7846840,
+      "moneda": "MXN"
+     }
+    },
+    "15": {
+     "region": 0,
+     "cuenta": "31617886",
+     "cuenta_norm": "31617886",
+     "titular": "ABASTECEDORA DE COMBUSTIBL",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ABASTECEDORA DE COMBUSTIBL",
+      "cuenta": 31617886,
+      "moneda": "MXN"
+     }
+    },
+    "16": {
+     "region": 0,
+     "titular": "PETRO SMART",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "PETRO SMART",
+      "moneda": "MXN"
+     }
+    },
+    "19": {
+     "region": 1,
+     "cuenta": "9137493",
+     "cuenta_norm": "9137493",
+     "titular": "ATUNES SA DE CV",
+     "moneda": "USD",
+     "estaticos": {
+      "titular": "ATUNES SA DE CV",
+      "sucursal": 237,
+      "cuenta": 9137493,
+      "moneda": "USD"
+     }
+    },
+    "20": {
+     "region": 1,
+     "cuenta": "9137728",
+     "cuenta_norm": "9137728",
+     "titular": "ABASTECEDORA DE COMBUSTIBL",
+     "moneda": "USD",
+     "estaticos": {
+      "titular": "ABASTECEDORA DE COMBUSTIBL",
+      "sucursal": 237,
+      "cuenta": 9137728,
+      "moneda": "USD"
+     }
+    }
+   }
+  },
+  "BAJIO": {
+   "regiones": [
+    {
+     "fila_ini": 2,
+     "fila_fin": 20,
+     "paso": 2,
+     "cols": {
+      "titular": "A",
+      "retenido": "B",
+      "saldo": "C"
+     },
+     "moneda_fija": "MXN",
+     "cuenta_abajo": true,
+     "nota": "el número va en la fila siguiente, tras 'Cuenta: '"
+    }
+   ],
+   "filas": {
+    "2": {
+     "region": 0,
+     "cuenta": "16084470201",
+     "cuenta_norm": "16084470201",
+     "titular": "ABASTECEDORA",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ABASTECEDORA",
+      "cuenta": "16084470201",
+      "_fila_cuenta_abajo": "Cuenta: 16084470201Conecta BanBajio",
+      "moneda": "MXN"
+     }
+    },
+    "4": {
+     "region": 0,
+     "cuenta": "16084470305",
+     "cuenta_norm": "16084470305",
+     "titular": "ABASTECEDORA LEM 20",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ABASTECEDORA LEM 20",
+      "cuenta": "16084470305",
+      "_fila_cuenta_abajo": "Cuenta: 16084470305Cuenta de Cheques",
+      "moneda": "MXN"
+     }
+    },
+    "6": {
+     "region": 0,
+     "cuenta": "16084470304",
+     "cuenta_norm": "16084470304",
+     "titular": "ABASTECEDORA LEM 41",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ABASTECEDORA LEM 41",
+      "cuenta": "16084470304",
+      "_fila_cuenta_abajo": "Cuenta: 16084470304Cuenta de Cheques",
+      "moneda": "MXN"
+     }
+    },
+    "8": {
+     "region": 0,
+     "cuenta": "242615700201",
+     "cuenta_norm": "242615700201",
+     "titular": "ACP COMBUSTIBLES",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ACP COMBUSTIBLES",
+      "cuenta": "242615700201",
+      "_fila_cuenta_abajo": "Cuenta: 242615700201Conecta BanBajio GPO",
+      "moneda": "MXN"
+     }
+    },
+    "10": {
+     "region": 0,
+     "cuenta": "169564680201",
+     "cuenta_norm": "169564680201",
+     "titular": "ASAMAZ",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ASAMAZ",
+      "cuenta": "169564680201",
+      "_fila_cuenta_abajo": "Cuenta: 169564680201Conecta BanBajio GPO",
+      "moneda": "MXN"
+     }
+    },
+    "12": {
+     "region": 0,
+     "cuenta": "438877020201",
+     "cuenta_norm": "438877020201",
+     "titular": "ELYON LOGISTICS",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ELYON LOGISTICS",
+      "cuenta": "438877020201",
+      "_fila_cuenta_abajo": "Cuenta: 438877020201Conecta BanBajio GPO",
+      "moneda": "MXN"
+     }
+    },
+    "14": {
+     "region": 0,
+     "cuenta": "137296520201",
+     "cuenta_norm": "137296520201",
+     "titular": "PETRO SMART",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "PETRO SMART",
+      "cuenta": "137296520201",
+      "_fila_cuenta_abajo": "Cuenta: 137296520201Conecta BanBajio GPO",
+      "moneda": "MXN"
+     }
+    },
+    "16": {
+     "region": 0,
+     "cuenta": "137296520301",
+     "cuenta_norm": "137296520301",
+     "titular": "PETRO SMART LEM 20",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "PETRO SMART LEM 20",
+      "cuenta": "137296520301",
+      "_fila_cuenta_abajo": "Cuenta: 137296520301Cuenta de Cheques GPO",
+      "moneda": "MXN"
+     }
+    },
+    "18": {
+     "region": 0,
+     "cuenta": "137296520302",
+     "cuenta_norm": "137296520302",
+     "titular": "PETRO SMART LEM 50",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "PETRO SMART LEM 50",
+      "cuenta": "137296520302",
+      "_fila_cuenta_abajo": "Cuenta: 137296520302Cuenta de Cheques GPO",
+      "moneda": "MXN"
+     }
+    },
+    "20": {
+     "region": 0,
+     "cuenta": "91154600201",
+     "cuenta_norm": "91154600201",
+     "titular": "PETROPLAZAS",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "PETROPLAZAS",
+      "cuenta": "91154600201",
+      "_fila_cuenta_abajo": "Cuenta: 91154600201Conecta BanBajio GPO",
+      "moneda": "MXN"
+     }
+    }
+   }
+  },
+  "BANCOPPEL": {
+   "regiones": [
+    {
+     "fila_ini": 1,
+     "fila_fin": 1,
+     "paso": 1,
+     "cols": {
+      "cuenta": "C",
+      "clabe": "F",
+      "saldo": "I"
+     },
+     "moneda_fija": "MXN",
+     "cuenta_abajo": false,
+     "nota": ""
+    }
+   ],
+   "filas": {
+    "1": {
+     "region": 0,
+     "cuenta": "22000004794",
+     "cuenta_norm": "22000004794",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 22000004794,
+      "clabe": 1.37180220000047e+17,
+      "moneda": "MXN"
+     }
+    }
+   }
+  },
+  "BANREGIO": {
+   "regiones": [
+    {
+     "fila_ini": 2,
+     "fila_fin": 41,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "saldo": "C"
+     },
+     "moneda_fija": "MXN",
+     "cuenta_abajo": false,
+     "nota": ""
+    },
+    {
+     "fila_ini": 45,
+     "fila_fin": 48,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "saldo": "C"
+     },
+     "moneda_fija": "MXN",
+     "cuenta_abajo": false,
+     "nota": "bloque de cuentas nuevas"
+    }
+   ],
+   "filas": {
+    "2": {
+     "region": 0,
+     "cuenta": "114999250012",
+     "cuenta_norm": "114999250012",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114999250012",
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "3": {
+     "region": 0,
+     "cuenta": "114999170019",
+     "cuenta_norm": "114999170019",
+     "titular": "PETROPLAZAS S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114999170019",
+      "titular": "PETROPLAZAS S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "4": {
+     "region": 0,
+     "cuenta": "114998890018",
+     "cuenta_norm": "114998890018",
+     "titular": "TRANSPORTES Y EQUIPOS ASAMAZ S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114998890018",
+      "titular": "TRANSPORTES Y EQUIPOS ASAMAZ S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "5": {
+     "region": 0,
+     "cuenta": "114995110011",
+     "cuenta_norm": "114995110011",
+     "titular": "ATUNES Y SARDINAS DE MEXICO S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114995110011",
+      "titular": "ATUNES Y SARDINAS DE MEXICO S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "6": {
+     "region": 0,
+     "cuenta": "114989340013",
+     "cuenta_norm": "114989340013",
+     "titular": "PETRO SMART COMBUSTIBLES S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114989340013",
+      "titular": "PETRO SMART COMBUSTIBLES S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "7": {
+     "region": 0,
+     "cuenta": "114989340188",
+     "cuenta_norm": "114989340188",
+     "titular": "PETRO SMART COMBUSTIBLES S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114989340188",
+      "titular": "PETRO SMART COMBUSTIBLES S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "8": {
+     "region": 0,
+     "cuenta": "114987480012",
+     "cuenta_norm": "114987480012",
+     "titular": "FORMACION Y DESARROLLO DE LA NIÑEZ A.C.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114987480012",
+      "titular": "FORMACION Y DESARROLLO DE LA NIÑEZ A.C.",
+      "moneda": "MXN"
+     }
+    },
+    "9": {
+     "region": 0,
+     "cuenta": "114983870011",
+     "cuenta_norm": "114983870011",
+     "titular": "OPERADORA DE RECURSOS HUMANOS DE MAZATLAN S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114983870011",
+      "titular": "OPERADORA DE RECURSOS HUMANOS DE MAZATLAN S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "10": {
+     "region": 0,
+     "cuenta": "114981150011",
+     "cuenta_norm": "114981150011",
+     "titular": "PETROIL MARINE S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114981150011",
+      "titular": "PETROIL MARINE S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "11": {
+     "region": 0,
+     "cuenta": "114981070017",
+     "cuenta_norm": "114981070017",
+     "titular": "ACP COMBUSTIBLES S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114981070017",
+      "titular": "ACP COMBUSTIBLES S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "12": {
+     "region": 0,
+     "cuenta": "114978100011",
+     "cuenta_norm": "114978100011",
+     "titular": "AMBIENTAL TEK RESOURCES S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114978100011",
+      "titular": "AMBIENTAL TEK RESOURCES S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "13": {
+     "region": 0,
+     "cuenta": "114978090015",
+     "cuenta_norm": "114978090015",
+     "titular": "PETROIL HOLDING S.A.P.I. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114978090015",
+      "titular": "PETROIL HOLDING S.A.P.I. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "14": {
+     "region": 0,
+     "cuenta": "114978070014",
+     "cuenta_norm": "114978070014",
+     "titular": "PETROIL BRAND S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114978070014",
+      "titular": "PETROIL BRAND S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "15": {
+     "region": 0,
+     "cuenta": "114978060019",
+     "cuenta_norm": "114978060019",
+     "titular": "PETROIL ENERGY HOLDING S.A.P.I. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114978060019",
+      "titular": "PETROIL ENERGY HOLDING S.A.P.I. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "16": {
+     "region": 0,
+     "cuenta": "114977800019",
+     "cuenta_norm": "114977800019",
+     "titular": "OPERADORA TURISTICA OBSERVATORIO 1873 S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114977800019",
+      "titular": "OPERADORA TURISTICA OBSERVATORIO 1873 S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "17": {
+     "region": 0,
+     "cuenta": "114976650013",
+     "cuenta_norm": "114976650013",
+     "titular": "ADMINISTRACION DE SERVICIOS ASKE S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114976650013",
+      "titular": "ADMINISTRACION DE SERVICIOS ASKE S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "18": {
+     "region": 0,
+     "cuenta": "114964090012",
+     "cuenta_norm": "114964090012",
+     "titular": "AEROSERVICIOS AG S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114964090012",
+      "titular": "AEROSERVICIOS AG S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "19": {
+     "region": 0,
+     "cuenta": "114961240021",
+     "cuenta_norm": "114961240021",
+     "titular": "SERVICIO PUERTO DE MAZATLAN S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114961240021",
+      "titular": "SERVICIO PUERTO DE MAZATLAN S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "20": {
+     "region": 0,
+     "cuenta": "114961240013",
+     "cuenta_norm": "114961240013",
+     "titular": "SERVICIO PUERTO DE MAZATLAN S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114961240013",
+      "titular": "SERVICIO PUERTO DE MAZATLAN S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "21": {
+     "region": 0,
+     "cuenta": "114955850021",
+     "cuenta_norm": "114955850021",
+     "titular": "INMOBILIARIA AENEKA S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114955850021",
+      "titular": "INMOBILIARIA AENEKA S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "22": {
+     "region": 0,
+     "cuenta": "114955570010",
+     "cuenta_norm": "114955570010",
+     "titular": "OCEANIK CONSERVACION S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114955570010",
+      "titular": "OCEANIK CONSERVACION S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "23": {
+     "region": 0,
+     "cuenta": "114955010014",
+     "cuenta_norm": "114955010014",
+     "titular": "AENE PRODUCE S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114955010014",
+      "titular": "AENE PRODUCE S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "24": {
+     "region": 0,
+     "cuenta": "114951050020",
+     "cuenta_norm": "114951050020",
+     "titular": "GC MOTORS DE OCCIDENTE S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114951050020",
+      "titular": "GC MOTORS DE OCCIDENTE S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "25": {
+     "region": 0,
+     "cuenta": "114951050046",
+     "cuenta_norm": "114951050046",
+     "titular": "GC MOTORS DE OCCIDENTE S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114951050046",
+      "titular": "GC MOTORS DE OCCIDENTE S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "26": {
+     "region": 0,
+     "cuenta": "114951050011",
+     "cuenta_norm": "114951050011",
+     "titular": "GC MOTORS DE OCCIDENTE S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114951050011",
+      "titular": "GC MOTORS DE OCCIDENTE S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "27": {
+     "region": 0,
+     "cuenta": "114001010013",
+     "cuenta_norm": "114001010013",
+     "titular": "PROGRAMA DE DESARROLLO PARA EL BIENESTAR EMOCIONAL S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114001010013",
+      "titular": "PROGRAMA DE DESARROLLO PARA EL BIENESTAR EMOCIONAL S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "28": {
+     "region": 0,
+     "cuenta": "114001010021",
+     "cuenta_norm": "114001010021",
+     "titular": "PROGRAMA DE DESARROLLO PARA EL BIENESTAR EMOCIONAL S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114001010021",
+      "titular": "PROGRAMA DE DESARROLLO PARA EL BIENESTAR EMOCIONAL S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "29": {
+     "region": 0,
+     "cuenta": "114001020019",
+     "cuenta_norm": "114001020019",
+     "titular": "OBSERVATORIO EXPRESS S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114001020019",
+      "titular": "OBSERVATORIO EXPRESS S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "30": {
+     "region": 0,
+     "cuenta": "114941210011",
+     "cuenta_norm": "114941210011",
+     "titular": "CENTRO DE ESTUDIOS FORMATIVOS SUPERIORES A.C.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114941210011",
+      "titular": "CENTRO DE ESTUDIOS FORMATIVOS SUPERIORES A.C.",
+      "moneda": "MXN"
+     }
+    },
+    "31": {
+     "region": 0,
+     "cuenta": "114931520011",
+     "cuenta_norm": "114931520011",
+     "titular": "ATUNES S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114931520011",
+      "titular": "ATUNES S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "32": {
+     "region": 0,
+     "cuenta": "114931180016",
+     "cuenta_norm": "114931180016",
+     "titular": "SERVICIOS COMPLEMENTARIOS EN EDUCACION S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114931180016",
+      "titular": "SERVICIOS COMPLEMENTARIOS EN EDUCACION S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "33": {
+     "region": 0,
+     "cuenta": "114931170011",
+     "cuenta_norm": "114931170011",
+     "titular": "SERVICIOS EDUCATIVOS IMAA S.C.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114931170011",
+      "titular": "SERVICIOS EDUCATIVOS IMAA S.C.",
+      "moneda": "MXN"
+     }
+    },
+    "34": {
+     "region": 0,
+     "cuenta": "114931150010",
+     "cuenta_norm": "114931150010",
+     "titular": "TRASLADOS ROEH S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114931150010",
+      "titular": "TRASLADOS ROEH S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "35": {
+     "region": 0,
+     "cuenta": "114929980013",
+     "cuenta_norm": "114929980013",
+     "titular": "TAO MOTORS S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114929980013",
+      "titular": "TAO MOTORS S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "36": {
+     "region": 0,
+     "cuenta": "114929960012",
+     "cuenta_norm": "114929960012",
+     "titular": "QUETZALTIC SOLUTIONS S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114929960012",
+      "titular": "QUETZALTIC SOLUTIONS S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "37": {
+     "region": 0,
+     "cuenta": "114928650010",
+     "cuenta_norm": "114928650010",
+     "titular": "ELYON LOGISTICS S.A.P.I. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114928650010",
+      "titular": "ELYON LOGISTICS S.A.P.I. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "38": {
+     "region": 0,
+     "cuenta": "114927340017",
+     "cuenta_norm": "114927340017",
+     "titular": "MAZPARK LOGISTICO S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114927340017",
+      "titular": "MAZPARK LOGISTICO S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "39": {
+     "region": 0,
+     "cuenta": "114926450013",
+     "cuenta_norm": "114926450013",
+     "titular": "PETROPLAZAS AEROPUERTO S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114926450013",
+      "titular": "PETROPLAZAS AEROPUERTO S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "40": {
+     "region": 0,
+     "cuenta": "114926430012",
+     "cuenta_norm": "114926430012",
+     "titular": "DYNAMOTORS S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114926430012",
+      "titular": "DYNAMOTORS S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "41": {
+     "region": 0,
+     "cuenta": "114926420017",
+     "cuenta_norm": "114926420017",
+     "titular": "ELEKTRON MOTORS AMERICA S.A. DE C.V.",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114926420017",
+      "titular": "ELEKTRON MOTORS AMERICA S.A. DE C.V.",
+      "moneda": "MXN"
+     }
+    },
+    "45": {
+     "region": 1,
+     "cuenta": "114974310011",
+     "cuenta_norm": "114974310011",
+     "titular": "MEX CAPITAL NUEVA",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114974310011",
+      "titular": "MEX CAPITAL NUEVA",
+      "moneda": "MXN"
+     }
+    },
+    "46": {
+     "region": 1,
+     "cuenta": "114983150026",
+     "cuenta_norm": "114983150026",
+     "titular": "MEX CAPITAL TRADICIONAL",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114983150026",
+      "titular": "MEX CAPITAL TRADICIONAL",
+      "moneda": "MXN"
+     }
+    },
+    "47": {
+     "region": 1,
+     "cuenta": "114964090012",
+     "cuenta_norm": "114964090012",
+     "titular": "AEROSERVICIOS",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114964090012",
+      "titular": "AEROSERVICIOS",
+      "moneda": "MXN"
+     }
+    },
+    "48": {
+     "region": 1,
+     "cuenta": "114912820012",
+     "cuenta_norm": "114912820012",
+     "titular": "OPERACIONES TEMATICAS",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": "114912820012",
+      "titular": "OPERACIONES TEMATICAS",
+      "moneda": "MXN"
+     }
+    }
+   }
+  },
+  "BANORTE": {
+   "regiones": [
+    {
+     "fila_ini": 2,
+     "fila_fin": 25,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "moneda": "C",
+      "clabe": "D",
+      "saldo_actual": "E",
+      "saldo": "F"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    }
+   ],
+   "filas": {
+    "2": {
+     "region": 0,
+     "cuenta": "0502939411",
+     "cuenta_norm": "502939411",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "0502939411",
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744005029394112"
+     }
+    },
+    "3": {
+     "region": 0,
+     "cuenta": "'0510125198",
+     "cuenta_norm": "510125198",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0510125198",
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744005101251982"
+     }
+    },
+    "4": {
+     "region": 0,
+     "cuenta": "'0837975139",
+     "cuenta_norm": "837975139",
+     "titular": "ACP COMBUSTIBLES SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0837975139",
+      "titular": "ACP COMBUSTIBLES SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744008379751392"
+     }
+    },
+    "5": {
+     "region": 0,
+     "cuenta": "'0844623522",
+     "cuenta_norm": "844623522",
+     "titular": "ACP COMBUSTIBLES SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0844623522",
+      "titular": "ACP COMBUSTIBLES SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744008446235220"
+     }
+    },
+    "6": {
+     "region": 0,
+     "cuenta": "'0820231659",
+     "cuenta_norm": "820231659",
+     "titular": "AGHA SERVICONTROLES SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0820231659",
+      "titular": "AGHA SERVICONTROLES SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744008202316590"
+     }
+    },
+    "7": {
+     "region": 0,
+     "cuenta": "'0309887328",
+     "cuenta_norm": "309887328",
+     "titular": "AMADO SABAS GUZMAN REYNAUD",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0309887328",
+      "titular": "AMADO SABAS GUZMAN REYNAUD",
+      "moneda": "MXP",
+      "clabe": "'072744003098873284"
+     }
+    },
+    "8": {
+     "region": 0,
+     "cuenta": "'0817376514",
+     "cuenta_norm": "817376514",
+     "titular": "ASFALTOS AGREGADOS Y EMULSIONES DE SINALOA SA DE C",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0817376514",
+      "titular": "ASFALTOS AGREGADOS Y EMULSIONES DE SINALOA SA DE C",
+      "moneda": "MXP",
+      "clabe": "'072744008173765144"
+     }
+    },
+    "9": {
+     "region": 0,
+     "cuenta": "'0518689249",
+     "cuenta_norm": "518689249",
+     "titular": "ATUNES SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0518689249",
+      "titular": "ATUNES SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744005186892492"
+     }
+    },
+    "10": {
+     "region": 0,
+     "cuenta": "'0891917412",
+     "cuenta_norm": "891917412",
+     "titular": "ATUNES Y SARDINAS DE MEXICO SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0891917412",
+      "titular": "ATUNES Y SARDINAS DE MEXICO SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744008919174122"
+     }
+    },
+    "11": {
+     "region": 0,
+     "cuenta": "'1320522966",
+     "cuenta_norm": "1320522966",
+     "titular": "ELYON LOGISTICS SAPI DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'1320522966",
+      "titular": "ELYON LOGISTICS SAPI DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744013205229666"
+     }
+    },
+    "12": {
+     "region": 0,
+     "cuenta": "'1160346582",
+     "cuenta_norm": "1160346582",
+     "titular": "GC MOTORS DE OCCIDENTE SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'1160346582",
+      "titular": "GC MOTORS DE OCCIDENTE SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744011603465820"
+     }
+    },
+    "13": {
+     "region": 0,
+     "cuenta": "0815631424",
+     "cuenta_norm": "815631424",
+     "titular": "MAQUINARIA EQUIPOS Y CONSTRUCCIONES EMMG SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "0815631424",
+      "titular": "MAQUINARIA EQUIPOS Y CONSTRUCCIONES EMMG SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744008156314240"
+     }
+    },
+    "14": {
+     "region": 0,
+     "cuenta": "'0276960202",
+     "cuenta_norm": "276960202",
+     "titular": "MULTISERVICIOS AUTOMOTRICES ARZA SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0276960202",
+      "titular": "MULTISERVICIOS AUTOMOTRICES ARZA SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744002769602028"
+     }
+    },
+    "15": {
+     "region": 0,
+     "cuenta": "'1284217944",
+     "cuenta_norm": "1284217944",
+     "titular": "OPERADORA TURISTICA OBSERVATORIO 1873 SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'1284217944",
+      "titular": "OPERADORA TURISTICA OBSERVATORIO 1873 SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744012842179442"
+     }
+    },
+    "16": {
+     "region": 0,
+     "cuenta": "'1327147340",
+     "cuenta_norm": "1327147340",
+     "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'1327147340",
+      "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744013271473404"
+     }
+    },
+    "17": {
+     "region": 0,
+     "cuenta": "'1234072250",
+     "cuenta_norm": "1234072250",
+     "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'1234072250",
+      "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744002642113304"
+     }
+    },
+    "18": {
+     "region": 0,
+     "cuenta": "'0264211330",
+     "cuenta_norm": "264211330",
+     "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0264211330",
+      "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744012340722508"
+     }
+    },
+    "19": {
+     "region": 0,
+     "cuenta": "1267334291",
+     "cuenta_norm": "1267334291",
+     "titular": "PETROPLAZAS AEROPUERTO SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "1267334291",
+      "titular": "PETROPLAZAS AEROPUERTO SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744012673342914"
+     }
+    },
+    "20": {
+     "region": 0,
+     "cuenta": "'1083457840",
+     "cuenta_norm": "1083457840",
+     "titular": "PETROPLAZAS ESTACIONES SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'1083457840",
+      "titular": "PETROPLAZAS ESTACIONES SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744010834578406"
+     }
+    },
+    "21": {
+     "region": 0,
+     "cuenta": "'0564632194",
+     "cuenta_norm": "564632194",
+     "titular": "PETROPLAZAS SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0564632194",
+      "titular": "PETROPLAZAS SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744005646321940"
+     }
+    },
+    "22": {
+     "region": 0,
+     "cuenta": "'0273886459",
+     "cuenta_norm": "273886459",
+     "titular": "PETROPLAZAS SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0273886459",
+      "titular": "PETROPLAZAS SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744002738864596"
+     }
+    },
+    "23": {
+     "region": 0,
+     "cuenta": "'0563824460",
+     "cuenta_norm": "563824460",
+     "titular": "PETROPLAZAS SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0563824460",
+      "titular": "PETROPLAZAS SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744005638244608"
+     }
+    },
+    "24": {
+     "region": 0,
+     "cuenta": "'0811256744",
+     "cuenta_norm": "811256744",
+     "titular": "TRANSPORTES Y EQUIPOS ASAMAZ SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'0811256744",
+      "titular": "TRANSPORTES Y EQUIPOS ASAMAZ SA DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744008112567442"
+     }
+    },
+    "25": {
+     "region": 0,
+     "cuenta": "'1283611901",
+     "cuenta_norm": "1283611901",
+     "titular": "TURISMO Y DESARROLLO SHEKINAH SAPI DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "'1283611901",
+      "titular": "TURISMO Y DESARROLLO SHEKINAH SAPI DE CV",
+      "moneda": "MXP",
+      "clabe": "'072744012836119010"
+     }
+    }
+   }
+  },
+  "BANCOMER": {
+   "regiones": [
+    {
+     "fila_ini": 2,
+     "fila_fin": 21,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "moneda": "C",
+      "saldo_actual": "E",
+      "saldo": "F"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    },
+    {
+     "fila_ini": 28,
+     "fila_fin": 45,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "moneda": "C",
+      "saldo_actual": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    },
+    {
+     "fila_ini": 53,
+     "fila_fin": 70,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "moneda": "C",
+      "saldo_actual": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    },
+    {
+     "fila_ini": 74,
+     "fila_fin": 91,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "moneda": "C",
+      "saldo_actual": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    },
+    {
+     "fila_ini": 94,
+     "fila_fin": 103,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "moneda": "C",
+      "saldo_actual": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    }
+   ],
+   "filas": {
+    "2": {
+     "region": 0,
+     "cuenta": "149206027",
+     "cuenta_norm": "149206027",
+     "titular": "ATUNES MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 149206027,
+      "titular": "ATUNES MN",
+      "moneda": "MXP"
+     }
+    },
+    "3": {
+     "region": 0,
+     "cuenta": "101150014",
+     "cuenta_norm": "101150014",
+     "titular": "OPERADORA REC H TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 101150014,
+      "titular": "OPERADORA REC H TDE",
+      "moneda": "MXP"
+     }
+    },
+    "4": {
+     "region": 0,
+     "cuenta": "104723422",
+     "cuenta_norm": "104723422",
+     "titular": "PETROIL MARINE MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 104723422,
+      "titular": "PETROIL MARINE MN",
+      "moneda": "MXP"
+     }
+    },
+    "5": {
+     "region": 0,
+     "cuenta": "104728025",
+     "cuenta_norm": "104728025",
+     "titular": "ACP COMBUSTIBLES MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 104728025,
+      "titular": "ACP COMBUSTIBLES MN",
+      "moneda": "MXP"
+     }
+    },
+    "6": {
+     "region": 0,
+     "cuenta": "104728815",
+     "cuenta_norm": "104728815",
+     "titular": "ATUNES Y SARDINAS MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 104728815,
+      "titular": "ATUNES Y SARDINAS MN",
+      "moneda": "MXP"
+     }
+    },
+    "7": {
+     "region": 0,
+     "cuenta": "109343830",
+     "cuenta_norm": "109343830",
+     "titular": "ARZA MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 109343830,
+      "titular": "ARZA MN",
+      "moneda": "MXP"
+     }
+    },
+    "8": {
+     "region": 0,
+     "cuenta": "193196704",
+     "cuenta_norm": "193196704",
+     "titular": "ABASTECEDORA TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 193196704,
+      "titular": "ABASTECEDORA TDE",
+      "moneda": "MXP"
+     }
+    },
+    "9": {
+     "region": 0,
+     "cuenta": "194247507",
+     "cuenta_norm": "194247507",
+     "titular": "ATUNES TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 194247507,
+      "titular": "ATUNES TDE",
+      "moneda": "MXP"
+     }
+    },
+    "10": {
+     "region": 0,
+     "cuenta": "195282675",
+     "cuenta_norm": "195282675",
+     "titular": "PETROPLAZAS ESTACIONES",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 195282675,
+      "titular": "PETROPLAZAS ESTACIONES",
+      "moneda": "MXP"
+     }
+    },
+    "11": {
+     "region": 0,
+     "cuenta": "199875972",
+     "cuenta_norm": "199875972",
+     "titular": "ASAMAZ MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 199875972,
+      "titular": "ASAMAZ MN",
+      "moneda": "MXP"
+     }
+    },
+    "12": {
+     "region": 0,
+     "cuenta": "199876693",
+     "cuenta_norm": "199876693",
+     "titular": "PETRO SMART MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 199876693,
+      "titular": "PETRO SMART MN",
+      "moneda": "MXP"
+     }
+    },
+    "13": {
+     "region": 0,
+     "cuenta": "100647012",
+     "cuenta_norm": "100647012",
+     "titular": "ABASTECEDORA MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 100647012,
+      "titular": "ABASTECEDORA MN",
+      "moneda": "MXP"
+     }
+    },
+    "14": {
+     "region": 0,
+     "cuenta": "174673069",
+     "cuenta_norm": "174673069",
+     "titular": "PETROPLAZAS MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": 174673069,
+      "titular": "PETROPLAZAS MN",
+      "moneda": "MXP"
+     }
+    },
+    "15": {
+     "region": 0,
+     "cuenta": "104724453",
+     "cuenta_norm": "104724453",
+     "titular": "PETROIL MARINE DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": 104724453,
+      "titular": "PETROIL MARINE DLLS",
+      "moneda": "USD"
+     }
+    },
+    "16": {
+     "region": 0,
+     "cuenta": "104728416",
+     "cuenta_norm": "104728416",
+     "titular": "ACP COMBUSTIBLES DLL",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": 104728416,
+      "titular": "ACP COMBUSTIBLES DLL",
+      "moneda": "USD"
+     }
+    },
+    "17": {
+     "region": 0,
+     "cuenta": "104728939",
+     "cuenta_norm": "104728939",
+     "titular": "ATUNES Y SARDINAS DL",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": 104728939,
+      "titular": "ATUNES Y SARDINAS DL",
+      "moneda": "USD"
+     }
+    },
+    "18": {
+     "region": 0,
+     "cuenta": "104729250",
+     "cuenta_norm": "104729250",
+     "titular": "ABASTECEDORA DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": 104729250,
+      "titular": "ABASTECEDORA DLLS",
+      "moneda": "USD"
+     }
+    },
+    "19": {
+     "region": 0,
+     "cuenta": "104729501",
+     "cuenta_norm": "104729501",
+     "titular": "ATUNES DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": 104729501,
+      "titular": "ATUNES DLLS",
+      "moneda": "USD"
+     }
+    },
+    "20": {
+     "region": 0,
+     "cuenta": "104729552",
+     "cuenta_norm": "104729552",
+     "titular": "PETRO SMART DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": 104729552,
+      "titular": "PETRO SMART DLLS",
+      "moneda": "USD"
+     }
+    },
+    "21": {
+     "region": 0,
+     "cuenta": "104729609",
+     "cuenta_norm": "104729609",
+     "titular": "ASAMAZ DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": 104729609,
+      "titular": "ASAMAZ DLLS",
+      "moneda": "USD"
+     }
+    },
+    "28": {
+     "region": 1,
+     "cuenta": "000000000110311944",
+     "cuenta_norm": "110311944",
+     "titular": "ASKE MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000110311944",
+      "titular": "ASKE MN",
+      "moneda": "MXP"
+     }
+    },
+    "29": {
+     "region": 1,
+     "cuenta": "000000000110876852",
+     "cuenta_norm": "110876852",
+     "titular": "CARROZAS DE EPOCA",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000110876852",
+      "titular": "CARROZAS DE EPOCA",
+      "moneda": "MXP"
+     }
+    },
+    "30": {
+     "region": 1,
+     "cuenta": "000000000111772090",
+     "cuenta_norm": "111772090",
+     "titular": "SHEKINAH",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000111772090",
+      "titular": "SHEKINAH",
+      "moneda": "MXP"
+     }
+    },
+    "31": {
+     "region": 1,
+     "cuenta": "000000000112108984",
+     "cuenta_norm": "112108984",
+     "titular": "GAS NATURAL PETROIL",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000112108984",
+      "titular": "GAS NATURAL PETROIL",
+      "moneda": "MXP"
+     }
+    },
+    "32": {
+     "region": 1,
+     "cuenta": "000000000112238543",
+     "cuenta_norm": "112238543",
+     "titular": "PETROSMART DEL PCO",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000112238543",
+      "titular": "PETROSMART DEL PCO",
+      "moneda": "MXP"
+     }
+    },
+    "33": {
+     "region": 1,
+     "cuenta": "000000000112251124",
+     "cuenta_norm": "112251124",
+     "titular": "OPERADORA TURISTICA",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000112251124",
+      "titular": "OPERADORA TURISTICA",
+      "moneda": "MXP"
+     }
+    },
+    "34": {
+     "region": 1,
+     "cuenta": "000000000112299879",
+     "cuenta_norm": "112299879",
+     "titular": "AENE PRODUCE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000112299879",
+      "titular": "AENE PRODUCE",
+      "moneda": "MXP"
+     }
+    },
+    "35": {
+     "region": 1,
+     "cuenta": "000000000112829088",
+     "cuenta_norm": "112829088",
+     "titular": "PETRO AEROPUERTO",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000112829088",
+      "titular": "PETRO AEROPUERTO",
+      "moneda": "MXP"
+     }
+    },
+    "36": {
+     "region": 1,
+     "cuenta": "000000000115155673",
+     "cuenta_norm": "115155673",
+     "titular": "AEROSERVICIOS AG MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000115155673",
+      "titular": "AEROSERVICIOS AG MN",
+      "moneda": "MXP"
+     }
+    },
+    "37": {
+     "region": 1,
+     "cuenta": "000000000117421184",
+     "cuenta_norm": "117421184",
+     "titular": "GC MOTORS CLN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000117421184",
+      "titular": "GC MOTORS CLN",
+      "moneda": "MXP"
+     }
+    },
+    "38": {
+     "region": 1,
+     "cuenta": "000000000117883889",
+     "cuenta_norm": "117883889",
+     "titular": "DURAMAS RENUEVALLANT",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000117883889",
+      "titular": "DURAMAS RENUEVALLANT",
+      "moneda": "MXP"
+     }
+    },
+    "39": {
+     "region": 1,
+     "cuenta": "000000000118399271",
+     "cuenta_norm": "118399271",
+     "titular": "PROG DE DES BIENESTA",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000118399271",
+      "titular": "PROG DE DES BIENESTA",
+      "moneda": "MXP"
+     }
+    },
+    "40": {
+     "region": 1,
+     "cuenta": "000000000199876642",
+     "cuenta_norm": "199876642",
+     "titular": "ASAMAZ TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000199876642",
+      "titular": "ASAMAZ TDE",
+      "moneda": "MXP"
+     }
+    },
+    "41": {
+     "region": 1,
+     "cuenta": "000000000199878130",
+     "cuenta_norm": "199878130",
+     "titular": "PETRO SMART TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000199878130",
+      "titular": "PETRO SMART TDE",
+      "moneda": "MXP"
+     }
+    },
+    "42": {
+     "region": 1,
+     "cuenta": "000000000112240475",
+     "cuenta_norm": "112240475",
+     "titular": "PETROSMART PCO DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000112240475",
+      "titular": "PETROSMART PCO DLLS",
+      "moneda": "USD"
+     }
+    },
+    "43": {
+     "region": 1,
+     "cuenta": "000000000115155932",
+     "cuenta_norm": "115155932",
+     "titular": "AEROSERVICIOS AG USD",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000115155932",
+      "titular": "AEROSERVICIOS AG USD",
+      "moneda": "USD"
+     }
+    },
+    "44": {
+     "region": 1,
+     "cuenta": "000000000115230594",
+     "cuenta_norm": "115230594",
+     "titular": "AENE PRODUCE DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000115230594",
+      "titular": "AENE PRODUCE DLLS",
+      "moneda": "USD"
+     }
+    },
+    "45": {
+     "region": 1,
+     "cuenta": "000000000115691826",
+     "cuenta_norm": "115691826",
+     "titular": "PETROPLAZAS DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000115691826",
+      "titular": "PETROPLAZAS DLLS",
+      "moneda": "USD"
+     }
+    },
+    "53": {
+     "region": 2,
+     "cuenta": "000000000112034468",
+     "cuenta_norm": "112034468",
+     "titular": "ELYON LOGISTICS SAPI",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000112034468",
+      "titular": "ELYON LOGISTICS SAPI",
+      "moneda": "MXP"
+     }
+    },
+    "54": {
+     "region": 2,
+     "cuenta": "000000000118230188",
+     "cuenta_norm": "118230188",
+     "titular": "DURAMAS RENUEVA TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000118230188",
+      "titular": "DURAMAS RENUEVA TDE",
+      "moneda": "MXP"
+     }
+    },
+    "55": {
+     "region": 2,
+     "cuenta": "000000000118400296",
+     "cuenta_norm": "118400296",
+     "titular": "SERVICIO PUERTO MZT",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000118400296",
+      "titular": "SERVICIO PUERTO MZT",
+      "moneda": "MXP"
+     }
+    },
+    "56": {
+     "region": 2,
+     "cuenta": "000000000118483329",
+     "cuenta_norm": "118483329",
+     "titular": "PROGR DES BIEN TD",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000118483329",
+      "titular": "PROGR DES BIEN TD",
+      "moneda": "MXP"
+     }
+    },
+    "57": {
+     "region": 2,
+     "cuenta": "000000000118650136",
+     "cuenta_norm": "118650136",
+     "titular": "GC MOTORS TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000118650136",
+      "titular": "GC MOTORS TDE",
+      "moneda": "MXP"
+     }
+    },
+    "58": {
+     "region": 2,
+     "cuenta": "000000000118887632",
+     "cuenta_norm": "118887632",
+     "titular": "CENTRO DE ESTUDIOS F",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000118887632",
+      "titular": "CENTRO DE ESTUDIOS F",
+      "moneda": "MXP"
+     }
+    },
+    "59": {
+     "region": 2,
+     "cuenta": "000000000118952973",
+     "cuenta_norm": "118952973",
+     "titular": "GC MOTORS MZT",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000118952973",
+      "titular": "GC MOTORS MZT",
+      "moneda": "MXP"
+     }
+    },
+    "60": {
+     "region": 2,
+     "cuenta": "000000000118994552",
+     "cuenta_norm": "118994552",
+     "titular": "AENEKA MN",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000118994552",
+      "titular": "AENEKA MN",
+      "moneda": "MXP"
+     }
+    },
+    "61": {
+     "region": 2,
+     "cuenta": "000000000119141979",
+     "cuenta_norm": "119141979",
+     "titular": "AMBIENTAL TEK",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000119141979",
+      "titular": "AMBIENTAL TEK",
+      "moneda": "MXP"
+     }
+    },
+    "62": {
+     "region": 2,
+     "cuenta": "000000000119397876",
+     "cuenta_norm": "119397876",
+     "titular": "CENTRO DE EST TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000119397876",
+      "titular": "CENTRO DE EST TDE",
+      "moneda": "MXP"
+     }
+    },
+    "63": {
+     "region": 2,
+     "cuenta": "000000000119841199",
+     "cuenta_norm": "119841199",
+     "titular": "AENEKA TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000119841199",
+      "titular": "AENEKA TDE",
+      "moneda": "MXP"
+     }
+    },
+    "64": {
+     "region": 2,
+     "cuenta": "000000000120113689",
+     "cuenta_norm": "120113689",
+     "titular": "GAS NATURAL TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000120113689",
+      "titular": "GAS NATURAL TDE",
+      "moneda": "MXP"
+     }
+    },
+    "65": {
+     "region": 2,
+     "cuenta": "000000000120684910",
+     "cuenta_norm": "120684910",
+     "titular": "SERV EDUC IMAA",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000120684910",
+      "titular": "SERV EDUC IMAA",
+      "moneda": "MXP"
+     }
+    },
+    "66": {
+     "region": 2,
+     "cuenta": "000000000120695912",
+     "cuenta_norm": "120695912",
+     "titular": "SERV COMP EDUC",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000120695912",
+      "titular": "SERV COMP EDUC",
+      "moneda": "MXP"
+     }
+    },
+    "67": {
+     "region": 2,
+     "cuenta": "000000000120775762",
+     "cuenta_norm": "120775762",
+     "titular": "TRASLADOS ROEH",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000120775762",
+      "titular": "TRASLADOS ROEH",
+      "moneda": "MXP"
+     }
+    },
+    "68": {
+     "region": 2,
+     "cuenta": "000000000118401012",
+     "cuenta_norm": "118401012",
+     "titular": "SERVICIO PUERTO DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000118401012",
+      "titular": "SERVICIO PUERTO DLLS",
+      "moneda": "USD"
+     }
+    },
+    "69": {
+     "region": 2,
+     "cuenta": "000000000118994595",
+     "cuenta_norm": "118994595",
+     "titular": "AENEKA DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000118994595",
+      "titular": "AENEKA DLLS",
+      "moneda": "USD"
+     }
+    },
+    "70": {
+     "region": 2,
+     "cuenta": "000000000119141855",
+     "cuenta_norm": "119141855",
+     "titular": "AMBIENTAL TEK DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000119141855",
+      "titular": "AMBIENTAL TEK DLLS",
+      "moneda": "USD"
+     }
+    },
+    "74": {
+     "region": 3,
+     "cuenta": "000000000120901962",
+     "cuenta_norm": "120901962",
+     "titular": "ELYON TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000120901962",
+      "titular": "ELYON TDE",
+      "moneda": "MXP"
+     }
+    },
+    "75": {
+     "region": 3,
+     "cuenta": "000000000120982679",
+     "cuenta_norm": "120982679",
+     "titular": "TAO MOTORS",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000120982679",
+      "titular": "TAO MOTORS",
+      "moneda": "MXP"
+     }
+    },
+    "76": {
+     "region": 3,
+     "cuenta": "000000000120989436",
+     "cuenta_norm": "120989436",
+     "titular": "QUETZALTIC",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000120989436",
+      "titular": "QUETZALTIC",
+      "moneda": "MXP"
+     }
+    },
+    "77": {
+     "region": 3,
+     "cuenta": "000000000122389789",
+     "cuenta_norm": "122389789",
+     "titular": "MAZPARK LOGISTICO SA",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000122389789",
+      "titular": "MAZPARK LOGISTICO SA",
+      "moneda": "MXP"
+     }
+    },
+    "78": {
+     "region": 3,
+     "cuenta": "000000000122442841",
+     "cuenta_norm": "122442841",
+     "titular": "ADM DE PREST SOCIAL",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000122442841",
+      "titular": "ADM DE PREST SOCIAL",
+      "moneda": "MXP"
+     }
+    },
+    "79": {
+     "region": 3,
+     "cuenta": "000000000122747251",
+     "cuenta_norm": "122747251",
+     "titular": "DYNAMOTORS SA DE CV",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000122747251",
+      "titular": "DYNAMOTORS SA DE CV",
+      "moneda": "MXP"
+     }
+    },
+    "80": {
+     "region": 3,
+     "cuenta": "000000000122794543",
+     "cuenta_norm": "122794543",
+     "titular": "ELEKTRON",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000122794543",
+      "titular": "ELEKTRON",
+      "moneda": "MXP"
+     }
+    },
+    "81": {
+     "region": 3,
+     "cuenta": "000000000122812517",
+     "cuenta_norm": "122812517",
+     "titular": "TAO MOTORS TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000122812517",
+      "titular": "TAO MOTORS TDE",
+      "moneda": "MXP"
+     }
+    },
+    "82": {
+     "region": 3,
+     "cuenta": "000000000123011704",
+     "cuenta_norm": "123011704",
+     "titular": "PETRO SMART HMO",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000123011704",
+      "titular": "PETRO SMART HMO",
+      "moneda": "MXP"
+     }
+    },
+    "83": {
+     "region": 3,
+     "cuenta": "000000000123048187",
+     "cuenta_norm": "123048187",
+     "titular": "ELEKTRON TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000123048187",
+      "titular": "ELEKTRON TDE",
+      "moneda": "MXP"
+     }
+    },
+    "84": {
+     "region": 3,
+     "cuenta": "000000000123107507",
+     "cuenta_norm": "123107507",
+     "titular": "MUSEO DE CETACEOS",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000123107507",
+      "titular": "MUSEO DE CETACEOS",
+      "moneda": "MXP"
+     }
+    },
+    "85": {
+     "region": 3,
+     "cuenta": "000000000123436985",
+     "cuenta_norm": "123436985",
+     "titular": "OBSERVATORIO MUNBA",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000123436985",
+      "titular": "OBSERVATORIO MUNBA",
+      "moneda": "MXP"
+     }
+    },
+    "86": {
+     "region": 3,
+     "cuenta": "000000000123493229",
+     "cuenta_norm": "123493229",
+     "titular": "MAZAPORT",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000123493229",
+      "titular": "MAZAPORT",
+      "moneda": "MXP"
+     }
+    },
+    "87": {
+     "region": 3,
+     "cuenta": "000000000123558258",
+     "cuenta_norm": "123558258",
+     "titular": "OPERACIONES TEMATICA",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000123558258",
+      "titular": "OPERACIONES TEMATICA",
+      "moneda": "MXP"
+     }
+    },
+    "88": {
+     "region": 3,
+     "cuenta": "000000000123642666",
+     "cuenta_norm": "123642666",
+     "titular": "LUXDEI ENERGY",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000123642666",
+      "titular": "LUXDEI ENERGY",
+      "moneda": "MXP"
+     }
+    },
+    "89": {
+     "region": 3,
+     "cuenta": "000000000123284417",
+     "cuenta_norm": "123284417",
+     "titular": "ELEKTRON USD",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000123284417",
+      "titular": "ELEKTRON USD",
+      "moneda": "USD"
+     }
+    },
+    "90": {
+     "region": 3,
+     "cuenta": "000000000123372677",
+     "cuenta_norm": "123372677",
+     "titular": "MAZPARK USD",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000123372677",
+      "titular": "MAZPARK USD",
+      "moneda": "USD"
+     }
+    },
+    "91": {
+     "region": 3,
+     "cuenta": "000000000123493237",
+     "cuenta_norm": "123493237",
+     "titular": "MAZAPORT DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000123493237",
+      "titular": "MAZAPORT DLLS",
+      "moneda": "USD"
+     }
+    },
+    "94": {
+     "region": 4,
+     "cuenta": "000000000121510312",
+     "cuenta_norm": "121510312",
+     "titular": "SERV COMP EDUC TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000121510312",
+      "titular": "SERV COMP EDUC TDE",
+      "moneda": "MXP"
+     }
+    },
+    "95": {
+     "region": 4,
+     "cuenta": "000000000122121123",
+     "cuenta_norm": "122121123",
+     "titular": "TRASLADOS ROEH TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000122121123",
+      "titular": "TRASLADOS ROEH TDE",
+      "moneda": "MXP"
+     }
+    },
+    "96": {
+     "region": 4,
+     "cuenta": "000000000122301911",
+     "cuenta_norm": "122301911",
+     "titular": "SHEKINA TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000122301911",
+      "titular": "SHEKINA TDE",
+      "moneda": "MXP"
+     }
+    },
+    "97": {
+     "region": 4,
+     "cuenta": "000000000122348187",
+     "cuenta_norm": "122348187",
+     "titular": "SERV EDU IMAA TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000122348187",
+      "titular": "SERV EDU IMAA TDE",
+      "moneda": "MXP"
+     }
+    },
+    "98": {
+     "region": 4,
+     "cuenta": "000000000125345049",
+     "cuenta_norm": "125345049",
+     "titular": "ADMIN PS GP TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000125345049",
+      "titular": "ADMIN PS GP TDE",
+      "moneda": "MXP"
+     }
+    },
+    "99": {
+     "region": 4,
+     "cuenta": "000000000125502438",
+     "cuenta_norm": "125502438",
+     "titular": "OP TEMATICAS TDE",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000125502438",
+      "titular": "OP TEMATICAS TDE",
+      "moneda": "MXP"
+     }
+    },
+    "100": {
+     "region": 4,
+     "cuenta": "000000000125607310",
+     "cuenta_norm": "125607310",
+     "titular": "FUNDACION SEREN AC",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000125607310",
+      "titular": "FUNDACION SEREN AC",
+      "moneda": "MXP"
+     }
+    },
+    "101": {
+     "region": 4,
+     "cuenta": "000000000127840330",
+     "cuenta_norm": "127840330",
+     "titular": "MEXICANA DE CAMIONES",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000127840330",
+      "titular": "MEXICANA DE CAMIONES",
+      "moneda": "MXP"
+     }
+    },
+    "102": {
+     "region": 4,
+     "cuenta": "000000000468129096",
+     "cuenta_norm": "468129096",
+     "titular": "AMADO SABAS GUZMAN R",
+     "moneda": "MXP",
+     "estaticos": {
+      "cuenta": "000000000468129096",
+      "titular": "AMADO SABAS GUZMAN R",
+      "moneda": "MXP"
+     }
+    },
+    "103": {
+     "region": 4,
+     "cuenta": "000000000127867212",
+     "cuenta_norm": "127867212",
+     "titular": "MEXICANA DLLS",
+     "moneda": "USD",
+     "estaticos": {
+      "cuenta": "000000000127867212",
+      "titular": "MEXICANA DLLS",
+      "moneda": "USD"
+     }
+    }
+   }
+  },
+  "HSBC": {
+   "regiones": [
+    {
+     "fila_ini": 2,
+     "fila_fin": 21,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "saldo": "C",
+      "saldo_contable": "F"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    },
+    {
+     "fila_ini": 23,
+     "fila_fin": 24,
+     "paso": 1,
+     "cols": {
+      "titular": "B",
+      "saldo": "C"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": "capturadas a mano, sin número de cuenta"
+    }
+   ],
+   "filas": {
+    "2": {
+     "region": 0,
+     "cuenta": "4029940657",
+     "cuenta_norm": "4029940657",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PA",
+     "estaticos": {
+      "cuenta": "4029940657",
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PA"
+     }
+    },
+    "3": {
+     "region": 0,
+     "cuenta": "4056510936",
+     "cuenta_norm": "4056510936",
+     "titular": "PETROPLAZAS, S.A. DE C.V.",
+     "estaticos": {
+      "cuenta": "4056510936",
+      "titular": "PETROPLAZAS, S.A. DE C.V."
+     }
+    },
+    "4": {
+     "region": 0,
+     "cuenta": "4057004228",
+     "cuenta_norm": "4057004228",
+     "titular": "PETROPLAZAS ESTACIONES, S.A. DE C.V",
+     "estaticos": {
+      "cuenta": "4057004228",
+      "titular": "PETROPLAZAS ESTACIONES, S.A. DE C.V"
+     }
+    },
+    "5": {
+     "region": 0,
+     "cuenta": "4057717878",
+     "cuenta_norm": "4057717878",
+     "titular": "ATUNES, S.A DE C.V.",
+     "estaticos": {
+      "cuenta": "4057717878",
+      "titular": "ATUNES, S.A DE C.V."
+     }
+    },
+    "6": {
+     "region": 0,
+     "cuenta": "4057717886",
+     "cuenta_norm": "4057717886",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PA",
+     "estaticos": {
+      "cuenta": "4057717886",
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PA"
+     }
+    },
+    "7": {
+     "region": 0,
+     "cuenta": "4057718348",
+     "cuenta_norm": "4057718348",
+     "titular": "ATUNES Y SARDINAS DE MEXICO SA DE C",
+     "estaticos": {
+      "cuenta": "4057718348",
+      "titular": "ATUNES Y SARDINAS DE MEXICO SA DE C"
+     }
+    },
+    "8": {
+     "region": 0,
+     "cuenta": "4057718405",
+     "cuenta_norm": "4057718405",
+     "titular": "PETROPLAZAS SA DE CV",
+     "estaticos": {
+      "cuenta": "4057718405",
+      "titular": "PETROPLAZAS SA DE CV"
+     }
+    },
+    "9": {
+     "region": 0,
+     "cuenta": "4058525684",
+     "cuenta_norm": "4058525684",
+     "titular": "PETROIL MARINE SA DE CV",
+     "estaticos": {
+      "cuenta": "4058525684",
+      "titular": "PETROIL MARINE SA DE CV"
+     }
+    },
+    "10": {
+     "region": 0,
+     "cuenta": "4058525734",
+     "cuenta_norm": "4058525734",
+     "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+     "estaticos": {
+      "cuenta": "4058525734",
+      "titular": "PETRO SMART COMBUSTIBLES SA DE CV"
+     }
+    },
+    "11": {
+     "region": 0,
+     "cuenta": "4060135274",
+     "cuenta_norm": "4060135274",
+     "titular": "ACP COMBUSTIBLES, S.A. DE C.V.",
+     "estaticos": {
+      "cuenta": "4060135274",
+      "titular": "ACP COMBUSTIBLES, S.A. DE C.V."
+     }
+    },
+    "12": {
+     "region": 0,
+     "cuenta": "4060135464",
+     "cuenta_norm": "4060135464",
+     "titular": "TRANSPORTES Y EQUIPOS ASAMAZ SA DE",
+     "estaticos": {
+      "cuenta": "4060135464",
+      "titular": "TRANSPORTES Y EQUIPOS ASAMAZ SA DE"
+     }
+    },
+    "13": {
+     "region": 0,
+     "cuenta": "4068670355",
+     "cuenta_norm": "4068670355",
+     "titular": "PETRO SMART COMBUSTIBLES, S.A. DE C",
+     "estaticos": {
+      "cuenta": "4068670355",
+      "titular": "PETRO SMART COMBUSTIBLES, S.A. DE C"
+     }
+    },
+    "14": {
+     "region": 0,
+     "cuenta": "4068678002",
+     "cuenta_norm": "4068678002",
+     "titular": "TRANSPORTES Y EQUIPOS ASAMAZ, S.A.",
+     "estaticos": {
+      "cuenta": "4068678002",
+      "titular": "TRANSPORTES Y EQUIPOS ASAMAZ, S.A."
+     }
+    },
+    "15": {
+     "region": 0,
+     "cuenta": "7003670494",
+     "cuenta_norm": "7003670494",
+     "titular": "ATUNES, S.A. DE C.V.",
+     "estaticos": {
+      "cuenta": "7003670494",
+      "titular": "ATUNES, S.A. DE C.V."
+     }
+    },
+    "16": {
+     "region": 0,
+     "cuenta": "7003670528",
+     "cuenta_norm": "7003670528",
+     "titular": "ATUNES Y SARDINAS DE MEXICO SA DE C",
+     "estaticos": {
+      "cuenta": "7003670528",
+      "titular": "ATUNES Y SARDINAS DE MEXICO SA DE C"
+     }
+    },
+    "17": {
+     "region": 0,
+     "cuenta": "7003670544",
+     "cuenta_norm": "7003670544",
+     "titular": "PETROPLAZAS,S.A.DE C.V",
+     "estaticos": {
+      "cuenta": "7003670544",
+      "titular": "PETROPLAZAS,S.A.DE C.V"
+     }
+    },
+    "18": {
+     "region": 0,
+     "cuenta": "7003712197",
+     "cuenta_norm": "7003712197",
+     "titular": "ACP COMBUSTIBLES, S.A. DE C.V.",
+     "estaticos": {
+      "cuenta": "7003712197",
+      "titular": "ACP COMBUSTIBLES, S.A. DE C.V."
+     }
+    },
+    "19": {
+     "region": 0,
+     "cuenta": "7003732302",
+     "cuenta_norm": "7003732302",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PA",
+     "estaticos": {
+      "cuenta": "7003732302",
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PA"
+     }
+    },
+    "20": {
+     "region": 0,
+     "cuenta": "7003732310",
+     "cuenta_norm": "7003732310",
+     "titular": "PETROIL MARINE SA DE CV",
+     "estaticos": {
+      "cuenta": "7003732310",
+      "titular": "PETROIL MARINE SA DE CV"
+     }
+    },
+    "21": {
+     "region": 0,
+     "cuenta": "7003732328",
+     "cuenta_norm": "7003732328",
+     "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+     "estaticos": {
+      "cuenta": "7003732328",
+      "titular": "PETRO SMART COMBUSTIBLES SA DE CV"
+     }
+    },
+    "23": {
+     "region": 1,
+     "cuenta": "4056511132",
+     "cuenta_norm": "4056511132",
+     "titular": "OPERADORA",
+     "por_puente": true,
+     "estaticos": {
+      "titular": "OPERADORA"
+     }
+    },
+    "24": {
+     "region": 1,
+     "cuenta": "4060386885",
+     "cuenta_norm": "4060386885",
+     "titular": "ASKE",
+     "por_puente": true,
+     "estaticos": {
+      "titular": "ASKE"
+     }
+    }
+   }
+  },
+  "INBURSA": {
+   "regiones": [
+    {
+     "fila_ini": 5,
+     "fila_fin": 6,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "saldo_inicial": "C",
+      "retenido": "D",
+      "buen_cobro": "E",
+      "saldo": "F"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    }
+   ],
+   "filas": {
+    "5": {
+     "region": 0,
+     "cuenta": "57002520011",
+     "cuenta_norm": "57002520011",
+     "titular": "PETROPLAZAS S.A. DE C.V.",
+     "estaticos": {
+      "cuenta": "57002520011",
+      "titular": "PETROPLAZAS S.A. DE C.V."
+     }
+    },
+    "6": {
+     "region": 0,
+     "cuenta": "57002550018",
+     "cuenta_norm": "57002550018",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO, S.A. DE C.V.",
+     "estaticos": {
+      "cuenta": "57002550018",
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO, S.A. DE C.V."
+     }
+    }
+   }
+  },
+  "INTERCAM": {
+   "regiones": [
+    {
+     "fila_ini": 2,
+     "fila_fin": 2,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "moneda": "B",
+      "titular": "C",
+      "saldo": "D",
+      "sobregiro": "E"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": "el portal enmascara la cuenta: '***-***94-001-1'"
+    }
+   ],
+   "filas": {
+    "2": {
+     "region": 0,
+     "cuenta": "***-***94-001-1",
+     "cuenta_norm": "940011",
+     "titular": "INTERCUENTA ENLACE INTERCAM",
+     "moneda": "PESOS",
+     "estaticos": {
+      "cuenta": "***-***94-001-1",
+      "moneda": "PESOS",
+      "titular": "INTERCUENTA ENLACE INTERCAM"
+     }
+    }
+   }
+  },
+  "MONEX": {
+   "regiones": [
+    {
+     "fila_ini": 3,
+     "fila_fin": 8,
+     "paso": 1,
+     "cols": {
+      "alias": "A",
+      "efectivo": "B",
+      "otras_divisas": "C",
+      "derivados": "D",
+      "inversion": "E",
+      "saldo": "F"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    }
+   ],
+   "filas": {
+    "3": {
+     "region": 0,
+     "cuenta": "2750875",
+     "cuenta_norm": "2750875",
+     "alias": "ABACOM  0875",
+     "por_puente": true,
+     "estaticos": {
+      "alias": "ABACOM  0875"
+     }
+    },
+    "4": {
+     "region": 0,
+     "cuenta": "2793487",
+     "cuenta_norm": "2793487",
+     "alias": "ABACOM  3487",
+     "por_puente": true,
+     "estaticos": {
+      "alias": "ABACOM  3487"
+     }
+    },
+    "5": {
+     "region": 0,
+     "cuenta": "2848000",
+     "cuenta_norm": "2848000",
+     "alias": "ACP 8000 MN",
+     "por_puente": true,
+     "estaticos": {
+      "alias": "ACP 8000 MN"
+     }
+    },
+    "6": {
+     "region": 0,
+     "alias": "ACP 8000 DLLS",
+     "estaticos": {
+      "alias": "ACP 8000 DLLS"
+     }
+    },
+    "7": {
+     "region": 0,
+     "alias": "ABACOM FORDWARDS 3487 USD",
+     "estaticos": {
+      "alias": "ABACOM FORDWARDS 3487 USD"
+     }
+    },
+    "8": {
+     "region": 0,
+     "cuenta": "2930014",
+     "cuenta_norm": "2930014",
+     "alias": "PSC 0014",
+     "por_puente": true,
+     "estaticos": {
+      "alias": "PSC 0014"
+     }
+    }
+   }
+  },
+  "MULTIVA": {
+   "regiones": [
+    {
+     "fila_ini": 2,
+     "fila_fin": 2,
+     "paso": 1,
+     "cols": {
+      "titular": "A",
+      "cuenta": "B",
+      "alias": "C",
+      "moneda": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    }
+   ],
+   "filas": {
+    "2": {
+     "region": 0,
+     "cuenta": "9685634",
+     "cuenta_norm": "9685634",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO",
+      "cuenta": 9685634,
+      "moneda": "MXN"
+     }
+    }
+   }
+  },
+  "SABADELL": {
+   "regiones": [
+    {
+     "fila_ini": 9,
+     "fila_fin": 9,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "estado": "C",
+      "moneda": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    },
+    {
+     "fila_ini": 11,
+     "fila_fin": 11,
+     "paso": 1,
+     "cols": {
+      "cuenta": "A",
+      "titular": "B",
+      "estado": "C",
+      "moneda": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": ""
+    }
+   ],
+   "filas": {
+    "9": {
+     "region": 0,
+     "cuenta": "330501",
+     "cuenta_norm": "330501",
+     "titular": "ABASTECEDORA",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 330501,
+      "titular": "ABASTECEDORA",
+      "estado": "Activa",
+      "moneda": "MXN"
+     }
+    },
+    "11": {
+     "region": 1,
+     "cuenta": "329801",
+     "cuenta_norm": "329801",
+     "titular": "PETROSMART",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 329801,
+      "titular": "PETROSMART",
+      "estado": "Activa",
+      "moneda": "MXN"
+     }
+    }
+   }
+  },
+  "SANTANDER": {
+   "regiones": [
+    {
+     "fila_ini": 2,
+     "fila_fin": 15,
+     "paso": 1,
+     "cols": {
+      "cuenta": "B",
+      "titular": "C",
+      "hora": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": "MXN",
+     "cuenta_abajo": false,
+     "nota": ""
+    }
+   ],
+   "filas": {
+    "2": {
+     "region": 0,
+     "cuenta": "50000150249",
+     "cuenta_norm": "50000150249",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 50000150249,
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC",
+      "hora": 0.3506944444444444,
+      "moneda": "MXN"
+     }
+    },
+    "3": {
+     "region": 0,
+     "cuenta": "65501847917",
+     "cuenta_norm": "65501847917",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC MZT",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 65501847917,
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC MZT",
+      "hora": 0.3506944444444444,
+      "moneda": "MXN"
+     }
+    },
+    "4": {
+     "region": 0,
+     "cuenta": "65502640042",
+     "cuenta_norm": "65502640042",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC CLN",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 65502640042,
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC CLN",
+      "hora": 0.3506944444444444,
+      "moneda": "MXN"
+     }
+    },
+    "5": {
+     "region": 0,
+     "cuenta": "65502869481",
+     "cuenta_norm": "65502869481",
+     "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC LM",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 65502869481,
+      "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC LM",
+      "hora": 0.3506944444444444,
+      "moneda": "MXN"
+     }
+    },
+    "6": {
+     "region": 0,
+     "cuenta": "50000321327",
+     "cuenta_norm": "50000321327",
+     "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 50000321327,
+      "titular": "PETRO SMART COMBUSTIBLES SA DE CV       ",
+      "hora": 0.41458333333333336,
+      "moneda": "MXN"
+     }
+    },
+    "7": {
+     "region": 0,
+     "cuenta": "60519471902",
+     "cuenta_norm": "60519471902",
+     "titular": "AMADO SABAS GUZMAN REYNAUD",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 60519471902,
+      "titular": "AMADO SABAS GUZMAN REYNAUD              ",
+      "hora": 0.3506944444444444,
+      "moneda": "MXN"
+     }
+    },
+    "8": {
+     "region": 0,
+     "cuenta": "65501868824",
+     "cuenta_norm": "65501868824",
+     "titular": "ATUNES SA DE CV",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 65501868824,
+      "titular": "ATUNES SA DE CV                         ",
+      "hora": 0.3506944444444444,
+      "moneda": "MXN"
+     }
+    },
+    "9": {
+     "region": 0,
+     "cuenta": "65502552011",
+     "cuenta_norm": "65502552011",
+     "titular": "PETROPLAZAS SA DE CV",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 65502552011,
+      "titular": "PETROPLAZAS SA DE CV                    ",
+      "hora": 0.3506944444444444,
+      "moneda": "MXN"
+     }
+    },
+    "10": {
+     "region": 0,
+     "cuenta": "65502869478",
+     "cuenta_norm": "65502869478",
+     "titular": "OPERADORA DE RECURSOS HUMANOS DE MAZATLA",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 65502869478,
+      "titular": "OPERADORA DE RECURSOS HUMANOS DE MAZATLA",
+      "hora": 0.3506944444444444,
+      "moneda": "MXN"
+     }
+    },
+    "11": {
+     "region": 0,
+     "cuenta": "65504900213",
+     "cuenta_norm": "65504900213",
+     "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 65504900213,
+      "titular": "PETRO SMART COMBUSTIBLES SA DE CV       ",
+      "hora": 0.3506944444444444,
+      "moneda": "MXN"
+     }
+    },
+    "12": {
+     "region": 0,
+     "cuenta": "65510417502",
+     "cuenta_norm": "65510417502",
+     "titular": "PETROPLAZAS AEROPUERTO SA DE CV",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 65510417502,
+      "titular": "PETROPLAZAS AEROPUERTO SA DE CV         ",
+      "moneda": "MXN"
+     }
+    },
+    "13": {
+     "region": 0,
+     "cuenta": "65510420102",
+     "cuenta_norm": "65510420102",
+     "titular": "PETROPLAZAS AEROPUERTO SA DE CV",
+     "moneda": "MXN",
+     "estaticos": {
+      "cuenta": 65510420102,
+      "titular": "PETROPLAZAS AEROPUERTO SA DE CV         ",
+      "moneda": "MXN"
+     }
+    },
+    "14": {
+     "region": 0,
+     "titular": "PETROPLAZAS ESTACIONES",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "PETROPLAZAS ESTACIONES",
+      "moneda": "MXN"
+     }
+    },
+    "15": {
+     "region": 0,
+     "titular": "ASKE",
+     "moneda": "MXN",
+     "estaticos": {
+      "titular": "ASKE",
+      "moneda": "MXN"
+     }
+    }
+   }
+  },
+  "BX+ SCO": {
+   "regiones": [
+    {
+     "fila_ini": 3,
+     "fila_fin": 5,
+     "paso": 1,
+     "cols": {
+      "producto": "A",
+      "pais": "B",
+      "plaza": "C",
+      "cuenta": "D",
+      "titular": "E",
+      "moneda": "F",
+      "saldo": "G"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": "Scotiabank"
+    },
+    {
+     "fila_ini": 8,
+     "fila_fin": 9,
+     "paso": 1,
+     "cols": {
+      "producto": "B",
+      "titular": "C",
+      "moneda": "D",
+      "saldo": "E"
+     },
+     "moneda_fija": null,
+     "cuenta_abajo": false,
+     "nota": "Ve por Mas (BX+)"
+    }
+   ],
+   "filas": {
+    "3": {
+     "region": 0,
+     "cuenta": "11700512613",
+     "cuenta_norm": "11700512613",
+     "titular": "ABASTECEDORA",
+     "moneda": "MXN",
+     "por_puente": true,
+     "estaticos": {
+      "producto": "CHQ",
+      "pais": "MEXICO",
+      "plaza": "MAZATLAN,",
+      "cuenta": 1700512613,
+      "titular": "ABASTECEDORA",
+      "moneda": "MXN"
+     }
+    },
+    "4": {
+     "region": 0,
+     "titular": "ELYON",
+     "estaticos": {
+      "titular": "ELYON"
+     }
+    },
+    "5": {
+     "region": 0,
+     "cuenta": "25605315790",
+     "cuenta_norm": "25605315790",
+     "titular": "GC MOTORS",
+     "por_puente": true,
+     "estaticos": {
+      "titular": "GC MOTORS"
+     }
+    },
+    "8": {
+     "region": 1,
+     "titular": "ABASTECEDORA",
+     "moneda": "MXN",
+     "estaticos": {
+      "producto": "VISTA (00000029180)",
+      "titular": "ABASTECEDORA",
+      "moneda": "MXN"
+     }
+    },
+    "9": {
+     "region": 1,
+     "titular": "PETROSMART",
+     "moneda": "MXN",
+     "estaticos": {
+      "producto": 652436,
+      "titular": "PETROSMART",
+      "moneda": "MXN"
+     }
+    }
+   }
+  }
+ },
+ "totales_cabecera": {
+  "Q3": [
+   "I10",
+   "I11",
+   "I12",
+   "I13",
+   "I14",
+   "I15",
+   "I16",
+   "I17",
+   "I18",
+   "I19",
+   "I20",
+   "I21",
+   "I22",
+   "I23",
+   "I24",
+   "I25",
+   "I26",
+   "I27",
+   "I28",
+   "I29",
+   "I38",
+   "I39",
+   "I40",
+   "I41",
+   "I42",
+   "I43",
+   "I44",
+   "I45",
+   "I46",
+   "I47",
+   "I55",
+   "I56",
+   "I57",
+   "I58",
+   "I59",
+   "I60",
+   "I61",
+   "I62",
+   "I63",
+   "I64",
+   "I65",
+   "I66",
+   "I74",
+   "I75",
+   "I76",
+   "I80",
+   "I119",
+   "I120",
+   "I121",
+   "I122",
+   "I123",
+   "I98",
+   "I99",
+   "I100",
+   "I107",
+   "I108",
+   "I109",
+   "I110",
+   "I111",
+   "I112",
+   "I113",
+   "I83",
+   "I84",
+   "I85",
+   "I86",
+   "I87",
+   "I88",
+   "I89",
+   "I137",
+   "I138",
+   "I139",
+   "O86",
+   "O89",
+   "O90",
+   "O91",
+   "O92",
+   "O96",
+   "O97",
+   "O103",
+   "O104",
+   "O111",
+   "O114",
+   "O115",
+   "O116",
+   "O117",
+   "O118",
+   "O119",
+   "O127",
+   "O128",
+   "O129",
+   "O130",
+   "O138",
+   "O139",
+   "O140",
+   "O144",
+   "O145",
+   "O149",
+   "O150",
+   "O151",
+   "O168",
+   "U10",
+   "I127",
+   "I131",
+   "I132",
+   "U14",
+   "U15",
+   "U19",
+   "U20",
+   "U21",
+   "U25",
+   "U28",
+   "U29",
+   "U30",
+   "U33",
+   "U34",
+   "U35",
+   "U36",
+   "U40",
+   "U41",
+   "U42",
+   "U43",
+   "U47",
+   "U48",
+   "U49",
+   "U57",
+   "U58",
+   "U59",
+   "U60",
+   "U64",
+   "U65",
+   "U66",
+   "U67",
+   "U68",
+   "U72",
+   "U73",
+   "U74",
+   "U75",
+   "U79",
+   "U80",
+   "U84",
+   "U85",
+   "U86",
+   "U90",
+   "U91",
+   "U92",
+   "U96",
+   "U97",
+   "U98",
+   "U102",
+   "U103",
+   "U104",
+   "U108",
+   "U109",
+   "U110",
+   "U114",
+   "U115",
+   "U116",
+   "U117",
+   "U118",
+   "U119",
+   "U120",
+   "U121",
+   "U127",
+   "U128",
+   "U129",
+   "U130",
+   "U131",
+   "U132",
+   "U133",
+   "U134",
+   "O157",
+   "O158",
+   "O159",
+   "O160",
+   "O161",
+   "O162",
+   "O163",
+   "O164",
+   "U143"
+  ],
+  "S3": [
+   "I10",
+   "I11",
+   "I12",
+   "I13",
+   "I14",
+   "I15",
+   "I16",
+   "I17",
+   "I18",
+   "I19",
+   "I20",
+   "I21",
+   "I22",
+   "I23",
+   "I24",
+   "I25",
+   "I26",
+   "I27",
+   "I28",
+   "I29",
+   "I38",
+   "I39",
+   "I40",
+   "I41",
+   "I42",
+   "I43",
+   "I44",
+   "I45",
+   "I46",
+   "I47",
+   "I55",
+   "I56",
+   "I57",
+   "I58",
+   "I59",
+   "I60",
+   "I61",
+   "I62",
+   "I63",
+   "I64",
+   "I65",
+   "I66",
+   "I119",
+   "I120",
+   "I121",
+   "I122",
+   "I123",
+   "I98",
+   "I99",
+   "I100",
+   "I107",
+   "I108",
+   "I109",
+   "I110",
+   "I111",
+   "I112",
+   "I113",
+   "I83",
+   "I84",
+   "I85",
+   "I86",
+   "I87",
+   "I88",
+   "I89"
+  ],
+  "U3": [
+   "I74",
+   "I75",
+   "I76",
+   "I80",
+   "I137",
+   "I138",
+   "I139",
+   "O86",
+   "O89",
+   "O90",
+   "O91",
+   "O92",
+   "O96",
+   "O97",
+   "O103",
+   "O104",
+   "O111",
+   "O114",
+   "O115",
+   "O116",
+   "O117",
+   "O118",
+   "O119",
+   "O127",
+   "O128",
+   "O129",
+   "O130",
+   "O138",
+   "O139",
+   "O140",
+   "O144",
+   "O145",
+   "O149",
+   "O150",
+   "O151",
+   "O157",
+   "O158",
+   "O159",
+   "O160",
+   "O161",
+   "O162",
+   "O163",
+   "O164",
+   "O168",
+   "U10",
+   "I127",
+   "I131",
+   "I132",
+   "U14",
+   "U15",
+   "U19",
+   "U20",
+   "U21",
+   "U25",
+   "U29",
+   "U33",
+   "U34",
+   "U35",
+   "U36",
+   "U40",
+   "U41",
+   "U42",
+   "U43",
+   "U47",
+   "U48",
+   "U49",
+   "U57",
+   "U58",
+   "U59",
+   "U60",
+   "U64",
+   "U65",
+   "U66",
+   "U67",
+   "U68",
+   "U72",
+   "U73",
+   "U74",
+   "U75",
+   "U79",
+   "U80",
+   "U84",
+   "U85",
+   "U86",
+   "U90",
+   "U91",
+   "U92",
+   "U96",
+   "U97",
+   "U98",
+   "U102",
+   "U103",
+   "U104",
+   "U108",
+   "U109",
+   "U110",
+   "U114",
+   "U115",
+   "U116",
+   "U117",
+   "U118",
+   "U119",
+   "U120",
+   "U121",
+   "U127",
+   "U128",
+   "U129",
+   "U130",
+   "U131",
+   "U132",
+   "U133",
+   "U134"
+  ],
+  "Q4": [
+   "I32",
+   "I33",
+   "I34",
+   "I69",
+   "I70",
+   "I103",
+   "I116",
+   "I92",
+   "I93",
+   "I94",
+   "O100",
+   "O107",
+   "O122",
+   "O123",
+   "O133",
+   "O134",
+   "O154",
+   "U124",
+   "U137",
+   "U138",
+   "U139",
+   "I135",
+   "I128",
+   "U52",
+   "U53",
+   "I50",
+   "I51"
+  ],
+  "R4": [
+   "I32",
+   "I33",
+   "I34",
+   "I50",
+   "I51",
+   "I69",
+   "I70",
+   "I103",
+   "I116",
+   "I92",
+   "I93",
+   "I94"
+  ],
+  "U4": [
+   "O100",
+   "O107",
+   "O122",
+   "O123",
+   "O133",
+   "O134",
+   "O154",
+   "U124",
+   "U137",
+   "U138",
+   "U139",
+   "I135",
+   "I128",
+   "U52",
+   "U53"
+  ]
+ },
+ "espejo_totales": {
+  "Q3": "Q5",
+  "S3": "S5",
+  "U3": "U5",
+  "Q4": "Q6",
+  "R4": "R6",
+  "U4": "U6"
+ },
+ "celda_fecha_anterior": "L5",
+ "celda_hora_anterior": "L6",
+ "renglones": [
+  {
+   "banda": "A-I",
+   "fila": 10,
+   "bloque": "ABASTECEDORA",
+   "banco": "Banamex",
+   "cta4": "0454",
+   "marca": "",
+   "hoja": "BANAMEX",
+   "hoja_fila": 4,
+   "hoja_col": "E",
+   "cuenta": "7680454",
+   "titular": "ABASTECEDORA DE COMBUSTIBL",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 11,
+   "bloque": "ABASTECEDORA",
+   "banco": "Banbajio",
+   "cta4": "8447",
+   "marca": "",
+   "hoja": "BAJIO",
+   "hoja_fila": 2,
+   "hoja_col": "C",
+   "cuenta": "16084470201",
+   "titular": "ABASTECEDORA",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 12,
+   "bloque": "ABASTECEDORA",
+   "banco": "Bancoppel",
+   "cta4": "4794",
+   "marca": "",
+   "hoja": "BANCOPPEL",
+   "hoja_fila": 1,
+   "hoja_col": "I",
+   "cuenta": "22000004794",
+   "titular": null,
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 13,
+   "bloque": "ABASTECEDORA",
+   "banco": "Banorte",
+   "cta4": "9411",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 2,
+   "hoja_col": "F",
+   "cuenta": "0502939411",
+   "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 14,
+   "bloque": "ABASTECEDORA",
+   "banco": "Banregio",
+   "cta4": "0012",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 2,
+   "hoja_col": "C",
+   "cuenta": "114999250012",
+   "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 15,
+   "bloque": "ABASTECEDORA",
+   "banco": "BBVA",
+   "cta4": "7012",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 13,
+   "hoja_col": "F",
+   "cuenta": "100647012",
+   "titular": "ABASTECEDORA MN",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 16,
+   "bloque": "ABASTECEDORA",
+   "banco": "BBVA TDE",
+   "cta4": "6704",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 8,
+   "hoja_col": "F",
+   "cuenta": "193196704",
+   "titular": "ABASTECEDORA TDE",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 17,
+   "bloque": "ABASTECEDORA",
+   "banco": "Bx+",
+   "cta4": "9180",
+   "marca": "",
+   "hoja": "BX+ SCO",
+   "hoja_fila": 8,
+   "hoja_col": "E",
+   "cuenta": null,
+   "titular": "ABASTECEDORA",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 18,
+   "bloque": "ABASTECEDORA",
+   "banco": "HSBC",
+   "cta4": "0657",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 2,
+   "hoja_col": "C",
+   "cuenta": "4029940657",
+   "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PA",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 19,
+   "bloque": "ABASTECEDORA",
+   "banco": "HSBC REF",
+   "cta4": "7886",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 6,
+   "hoja_col": "C",
+   "cuenta": "4057717886",
+   "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PA",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 20,
+   "bloque": "ABASTECEDORA",
+   "banco": "Inbursa",
+   "cta4": "0018",
+   "marca": "",
+   "hoja": "INBURSA",
+   "hoja_fila": 6,
+   "hoja_col": "F",
+   "cuenta": "57002550018",
+   "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO, S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 21,
+   "bloque": "ABASTECEDORA",
+   "banco": "Intercam",
+   "cta4": "0011",
+   "marca": "",
+   "hoja": "INTERCAM",
+   "hoja_fila": 2,
+   "hoja_col": "D",
+   "cuenta": "***-***94-001-1",
+   "titular": "INTERCUENTA ENLACE INTERCAM",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 22,
+   "bloque": "ABASTECEDORA",
+   "banco": "Monex (Cred)",
+   "cta4": "0875",
+   "marca": "",
+   "hoja": "MONEX",
+   "hoja_fila": 3,
+   "hoja_col": "F",
+   "cuenta": "2750875",
+   "titular": "ABACOM  0875",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 23,
+   "bloque": "ABASTECEDORA",
+   "banco": "Monex (Forw)",
+   "cta4": "3487",
+   "marca": "",
+   "hoja": "MONEX",
+   "hoja_fila": 4,
+   "hoja_col": "F",
+   "cuenta": "2793487",
+   "titular": "ABACOM  3487",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 24,
+   "bloque": "ABASTECEDORA",
+   "banco": "Multiva",
+   "cta4": "5634",
+   "marca": "",
+   "hoja": "MULTIVA",
+   "hoja_fila": 2,
+   "hoja_col": "E",
+   "cuenta": "9685634",
+   "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFICO",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 25,
+   "bloque": "ABASTECEDORA",
+   "banco": "Sabadell",
+   "cta4": "0501",
+   "marca": "",
+   "hoja": "SABADELL",
+   "hoja_fila": 9,
+   "hoja_col": "E",
+   "cuenta": "330501",
+   "titular": "ABASTECEDORA",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 26,
+   "bloque": "ABASTECEDORA",
+   "banco": "Santander",
+   "cta4": "7917",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 3,
+   "hoja_col": "E",
+   "cuenta": "65501847917",
+   "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC MZT",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 27,
+   "bloque": "ABASTECEDORA",
+   "banco": "Santander",
+   "cta4": "0042",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 4,
+   "hoja_col": "E",
+   "cuenta": "65502640042",
+   "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC CLN",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 28,
+   "bloque": "ABASTECEDORA",
+   "banco": "Santander",
+   "cta4": "9481",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 5,
+   "hoja_col": "E",
+   "cuenta": "65502869481",
+   "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PACIFIC LM",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 29,
+   "bloque": "ABASTECEDORA",
+   "banco": "Scotianbank",
+   "cta4": "2613",
+   "marca": "",
+   "hoja": "BX+ SCO",
+   "hoja_fila": 3,
+   "hoja_col": "G",
+   "cuenta": "11700512613",
+   "titular": "ABASTECEDORA",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 32,
+   "bloque": "ABASTECEDORA",
+   "banco": "BBVA",
+   "cta4": "9250",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 18,
+   "hoja_col": "F",
+   "cuenta": "104729250",
+   "titular": "ABASTECEDORA DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 33,
+   "bloque": "ABASTECEDORA",
+   "banco": "HSBC",
+   "cta4": "2302",
+   "marca": "DLS",
+   "hoja": "HSBC",
+   "hoja_fila": 19,
+   "hoja_col": "C",
+   "cuenta": "7003732302",
+   "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PA",
+   "reparado": true
+  },
+  {
+   "banda": "A-I",
+   "fila": 34,
+   "bloque": "ABASTECEDORA",
+   "banco": "Monex",
+   "cta4": "FORWARDS",
+   "marca": "DLS",
+   "hoja": "MONEX",
+   "hoja_fila": 7,
+   "hoja_col": "F",
+   "cuenta": null,
+   "titular": "ABACOM FORDWARDS 3487 USD",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 38,
+   "bloque": "PETROPLAZAS",
+   "banco": "Bajio",
+   "cta4": "5460",
+   "marca": "",
+   "hoja": "BAJIO",
+   "hoja_fila": 20,
+   "hoja_col": "C",
+   "cuenta": "91154600201",
+   "titular": "PETROPLAZAS",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 39,
+   "bloque": "PETROPLAZAS",
+   "banco": "Banamex",
+   "cta4": "3101",
+   "marca": "",
+   "hoja": "BANAMEX",
+   "hoja_fila": 3,
+   "hoja_col": "E",
+   "cuenta": "7713101",
+   "titular": "PETROPLAZAS SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 40,
+   "bloque": "PETROPLAZAS",
+   "banco": "Banorte",
+   "cta4": "2194",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 21,
+   "hoja_col": "F",
+   "cuenta": "'0564632194",
+   "titular": "PETROPLAZAS SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 41,
+   "bloque": "PETROPLAZAS",
+   "banco": "Banorte",
+   "cta4": "4460",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 23,
+   "hoja_col": "F",
+   "cuenta": "'0563824460",
+   "titular": "PETROPLAZAS SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 42,
+   "bloque": "PETROPLAZAS",
+   "banco": "Banregio",
+   "cta4": "0019",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 3,
+   "hoja_col": "C",
+   "cuenta": "114999170019",
+   "titular": "PETROPLAZAS S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 43,
+   "bloque": "PETROPLAZAS",
+   "banco": "BBVA",
+   "cta4": "3069",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 14,
+   "hoja_col": "F",
+   "cuenta": "174673069",
+   "titular": "PETROPLAZAS MN",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 44,
+   "bloque": "PETROPLAZAS",
+   "banco": "HSBC",
+   "cta4": "0936",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 3,
+   "hoja_col": "C",
+   "cuenta": "4056510936",
+   "titular": "PETROPLAZAS, S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 45,
+   "bloque": "PETROPLAZAS",
+   "banco": "HSBC REF",
+   "cta4": "8405",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 8,
+   "hoja_col": "C",
+   "cuenta": "4057718405",
+   "titular": "PETROPLAZAS SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 46,
+   "bloque": "PETROPLAZAS",
+   "banco": "Inbursa",
+   "cta4": "0011",
+   "marca": "",
+   "hoja": "INBURSA",
+   "hoja_fila": 5,
+   "hoja_col": "F",
+   "cuenta": "57002520011",
+   "titular": "PETROPLAZAS S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 47,
+   "bloque": "PETROPLAZAS",
+   "banco": "Santander",
+   "cta4": "2011",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 9,
+   "hoja_col": "E",
+   "cuenta": "65502552011",
+   "titular": "PETROPLAZAS SA DE CV                    ",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 50,
+   "bloque": "PETROPLAZAS",
+   "banco": "BBVA",
+   "cta4": "",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 45,
+   "hoja_col": "E",
+   "cuenta": "000000000115691826",
+   "titular": "PETROPLAZAS DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 51,
+   "bloque": "PETROPLAZAS",
+   "banco": "HSBC",
+   "cta4": "0544",
+   "marca": "DLS",
+   "hoja": "HSBC",
+   "hoja_fila": 17,
+   "hoja_col": "C",
+   "cuenta": "7003670544",
+   "titular": "PETROPLAZAS,S.A.DE C.V",
+   "reparado": true
+  },
+  {
+   "banda": "A-I",
+   "fila": 55,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "Banbajio",
+   "cta4": "9652",
+   "marca": "",
+   "hoja": "BAJIO",
+   "hoja_fila": 14,
+   "hoja_col": "C",
+   "cuenta": "137296520201",
+   "titular": "PETRO SMART",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 56,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "Banamex",
+   "cta4": "0297",
+   "marca": "",
+   "hoja": "BANAMEX",
+   "hoja_fila": 16,
+   "hoja_col": "E",
+   "cuenta": null,
+   "titular": "PETRO SMART",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 57,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "Banorte",
+   "cta4": "1330",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 18,
+   "hoja_col": "F",
+   "cuenta": "'0264211330",
+   "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 58,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "Banregio",
+   "cta4": "0013",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 6,
+   "hoja_col": "C",
+   "cuenta": "114989340013",
+   "titular": "PETRO SMART COMBUSTIBLES S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 59,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "BBVA",
+   "cta4": "6693",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 12,
+   "hoja_col": "F",
+   "cuenta": "199876693",
+   "titular": "PETRO SMART MN",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 60,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "BBVA TDE",
+   "cta4": "8130",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 41,
+   "hoja_col": "E",
+   "cuenta": "000000000199878130",
+   "titular": "PETRO SMART TDE",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 61,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "Bx+",
+   "cta4": "2436",
+   "marca": "",
+   "hoja": "BX+ SCO",
+   "hoja_fila": 9,
+   "hoja_col": "E",
+   "cuenta": null,
+   "titular": "PETROSMART",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 62,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "HSBC",
+   "cta4": "5734",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 10,
+   "hoja_col": "C",
+   "cuenta": "4058525734",
+   "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 63,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "Monex",
+   "cta4": "",
+   "marca": "",
+   "hoja": "MONEX",
+   "hoja_fila": 8,
+   "hoja_col": "F",
+   "cuenta": "2930014",
+   "titular": "PSC 0014",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 64,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "Sabadell",
+   "cta4": "9801",
+   "marca": "",
+   "hoja": "SABADELL",
+   "hoja_fila": 11,
+   "hoja_col": "E",
+   "cuenta": "329801",
+   "titular": "PETROSMART",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 65,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "Santander",
+   "cta4": "0213",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 11,
+   "hoja_col": "E",
+   "cuenta": "65504900213",
+   "titular": "PETRO SMART COMBUSTIBLES SA DE CV       ",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 66,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "Banorte",
+   "cta4": "7340",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 16,
+   "hoja_col": "E",
+   "cuenta": "'1327147340",
+   "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 69,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "BBVA",
+   "cta4": "9552",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 20,
+   "hoja_col": "F",
+   "cuenta": "104729552",
+   "titular": "PETRO SMART DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 70,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "HSBC",
+   "cta4": "2328",
+   "marca": "DLS",
+   "hoja": "HSBC",
+   "hoja_fila": 21,
+   "hoja_col": "C",
+   "cuenta": "7003732328",
+   "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+   "reparado": true
+  },
+  {
+   "banda": "A-I",
+   "fila": 74,
+   "bloque": "PETRO SMART NAVOJOA",
+   "banco": "Banorte",
+   "cta4": "2250",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 17,
+   "hoja_col": "F",
+   "cuenta": "'1234072250",
+   "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 75,
+   "bloque": "PETRO SMART NAVOJOA",
+   "banco": "Banregio",
+   "cta4": "0188",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 7,
+   "hoja_col": "C",
+   "cuenta": "114989340188",
+   "titular": "PETRO SMART COMBUSTIBLES S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 76,
+   "bloque": "PETRO SMART NAVOJOA",
+   "banco": "HSBC",
+   "cta4": "0355",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 13,
+   "hoja_col": "C",
+   "cuenta": "4068670355",
+   "titular": "PETRO SMART COMBUSTIBLES, S.A. DE C",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 80,
+   "bloque": "PETRO SMART HMO",
+   "banco": "BBVA",
+   "cta4": "1704",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 82,
+   "hoja_col": "E",
+   "cuenta": "000000000123011704",
+   "titular": "PETRO SMART HMO",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 83,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "Bajio",
+   "cta4": "1570",
+   "marca": "",
+   "hoja": "BAJIO",
+   "hoja_fila": 8,
+   "hoja_col": "C",
+   "cuenta": "242615700201",
+   "titular": "ACP COMBUSTIBLES",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 84,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "Banorte",
+   "cta4": "5139",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 4,
+   "hoja_col": "F",
+   "cuenta": "'0837975139",
+   "titular": "ACP COMBUSTIBLES SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 85,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "Banorte",
+   "cta4": "3522",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 5,
+   "hoja_col": "F",
+   "cuenta": "'0844623522",
+   "titular": "ACP COMBUSTIBLES SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 86,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "Banregio",
+   "cta4": "0017",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 11,
+   "hoja_col": "C",
+   "cuenta": "114981070017",
+   "titular": "ACP COMBUSTIBLES S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 87,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "BBVA",
+   "cta4": "8025",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 5,
+   "hoja_col": "F",
+   "cuenta": "104728025",
+   "titular": "ACP COMBUSTIBLES MN",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 88,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "HSBC",
+   "cta4": "5274",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 11,
+   "hoja_col": "C",
+   "cuenta": "4060135274",
+   "titular": "ACP COMBUSTIBLES, S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 89,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "Monex",
+   "cta4": "2848",
+   "marca": "",
+   "hoja": "MONEX",
+   "hoja_fila": 5,
+   "hoja_col": "F",
+   "cuenta": "2848000",
+   "titular": "ACP 8000 MN",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 92,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "BBVA",
+   "cta4": "8416",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 16,
+   "hoja_col": "F",
+   "cuenta": "104728416",
+   "titular": "ACP COMBUSTIBLES DLL",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 93,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "HSBC",
+   "cta4": "2197",
+   "marca": "DLS",
+   "hoja": "HSBC",
+   "hoja_fila": 18,
+   "hoja_col": "C",
+   "cuenta": "7003712197",
+   "titular": "ACP COMBUSTIBLES, S.A. DE C.V.",
+   "reparado": true
+  },
+  {
+   "banda": "A-I",
+   "fila": 94,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "Monex",
+   "cta4": "2848",
+   "marca": "DLS",
+   "hoja": "MONEX",
+   "hoja_fila": 6,
+   "hoja_col": "F",
+   "cuenta": null,
+   "titular": "ACP 8000 DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 98,
+   "bloque": "INMOBILIARIA AENEKA",
+   "banco": "Banregio                 (100)",
+   "cta4": "0012",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 21,
+   "hoja_col": "C",
+   "cuenta": "114955850021",
+   "titular": "INMOBILIARIA AENEKA S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 99,
+   "bloque": "INMOBILIARIA AENEKA",
+   "banco": "BBVA                       (100)",
+   "cta4": "4552",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 60,
+   "hoja_col": "E",
+   "cuenta": "000000000118994552",
+   "titular": "AENEKA MN",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 100,
+   "bloque": "INMOBILIARIA AENEKA",
+   "banco": "BBVA (TDE)",
+   "cta4": "1199",
+   "marca": "TDE",
+   "hoja": "BANCOMER",
+   "hoja_fila": 63,
+   "hoja_col": "E",
+   "cuenta": "000000000119841199",
+   "titular": "AENEKA TDE",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 103,
+   "bloque": "INMOBILIARIA AENEKA",
+   "banco": "BBVA",
+   "cta4": "4595",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 69,
+   "hoja_col": "E",
+   "cuenta": "000000000118994595",
+   "titular": "AENEKA DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 107,
+   "bloque": "TRANSPORTES y EQUIPOS  ASAMAZ",
+   "banco": "Banbajio",
+   "cta4": "6468",
+   "marca": "",
+   "hoja": "BAJIO",
+   "hoja_fila": 10,
+   "hoja_col": "C",
+   "cuenta": "169564680201",
+   "titular": "ASAMAZ",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 108,
+   "bloque": "TRANSPORTES y EQUIPOS  ASAMAZ",
+   "banco": "Banorte",
+   "cta4": "6744",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 24,
+   "hoja_col": "F",
+   "cuenta": "'0811256744",
+   "titular": "TRANSPORTES Y EQUIPOS ASAMAZ SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 109,
+   "bloque": "TRANSPORTES y EQUIPOS  ASAMAZ",
+   "banco": "Banregio",
+   "cta4": "0018",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 4,
+   "hoja_col": "C",
+   "cuenta": "114998890018",
+   "titular": "TRANSPORTES Y EQUIPOS ASAMAZ S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 110,
+   "bloque": "TRANSPORTES y EQUIPOS  ASAMAZ",
+   "banco": "BBVA",
+   "cta4": "5972",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 11,
+   "hoja_col": "F",
+   "cuenta": "199875972",
+   "titular": "ASAMAZ MN",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 111,
+   "bloque": "TRANSPORTES y EQUIPOS  ASAMAZ",
+   "banco": "BBVA TDE",
+   "cta4": "6642",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 40,
+   "hoja_col": "E",
+   "cuenta": "000000000199876642",
+   "titular": "ASAMAZ TDE",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 112,
+   "bloque": "TRANSPORTES y EQUIPOS  ASAMAZ",
+   "banco": "HSBC",
+   "cta4": "5464",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 12,
+   "hoja_col": "C",
+   "cuenta": "4060135464",
+   "titular": "TRANSPORTES Y EQUIPOS ASAMAZ SA DE",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 113,
+   "bloque": "TRANSPORTES y EQUIPOS  ASAMAZ",
+   "banco": "HSBC (TDE)",
+   "cta4": "8002",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 14,
+   "hoja_col": "C",
+   "cuenta": "4068678002",
+   "titular": "TRANSPORTES Y EQUIPOS ASAMAZ, S.A.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 116,
+   "bloque": "TRANSPORTES y EQUIPOS  ASAMAZ",
+   "banco": "BBVA",
+   "cta4": "9609",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 21,
+   "hoja_col": "F",
+   "cuenta": "104729609",
+   "titular": "ASAMAZ DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 119,
+   "bloque": "ELYON  LOGISTICS",
+   "banco": "Banorte",
+   "cta4": "2966",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 11,
+   "hoja_col": "F",
+   "cuenta": "'1320522966",
+   "titular": "ELYON LOGISTICS SAPI DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 120,
+   "bloque": "ELYON  LOGISTICS",
+   "banco": "Banbajio",
+   "cta4": "670",
+   "marca": "",
+   "hoja": "BAJIO",
+   "hoja_fila": 12,
+   "hoja_col": "C",
+   "cuenta": "438877020201",
+   "titular": "ELYON LOGISTICS",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 121,
+   "bloque": "ELYON  LOGISTICS",
+   "banco": "Banregio                 (500)",
+   "cta4": "0010",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 37,
+   "hoja_col": "C",
+   "cuenta": "114928650010",
+   "titular": "ELYON LOGISTICS S.A.P.I. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 122,
+   "bloque": "ELYON  LOGISTICS",
+   "banco": "BBVA",
+   "cta4": "4468",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 53,
+   "hoja_col": "E",
+   "cuenta": "000000000112034468",
+   "titular": "ELYON LOGISTICS SAPI",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 123,
+   "bloque": "ELYON  LOGISTICS",
+   "banco": "BBVA (TDE)",
+   "cta4": "1962",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 74,
+   "hoja_col": "E",
+   "cuenta": "000000000120901962",
+   "titular": "ELYON TDE",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 127,
+   "bloque": "MAZAPORT",
+   "banco": "BBVA",
+   "cta4": "3229",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 86,
+   "hoja_col": "E",
+   "cuenta": "000000000123493229",
+   "titular": "MAZAPORT",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 128,
+   "bloque": "MAZAPORT",
+   "banco": "BBVA",
+   "cta4": "3237",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 91,
+   "hoja_col": "E",
+   "cuenta": "000000000123493237",
+   "titular": "MAZAPORT DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 131,
+   "bloque": "MAZPARK LOGISTICO SA DE CV",
+   "banco": "Banregio",
+   "cta4": "0017",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 38,
+   "hoja_col": "C",
+   "cuenta": "114927340017",
+   "titular": "MAZPARK LOGISTICO S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 132,
+   "bloque": "MAZPARK LOGISTICO SA DE CV",
+   "banco": "BBVA",
+   "cta4": "9789",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 77,
+   "hoja_col": "E",
+   "cuenta": "000000000122389789",
+   "titular": "MAZPARK LOGISTICO SA",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 135,
+   "bloque": "MAZPARK LOGISTICO SA DE CV",
+   "banco": "BBVA",
+   "cta4": "2677",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 90,
+   "hoja_col": "E",
+   "cuenta": "000000000123372677",
+   "titular": "MAZPARK USD",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 137,
+   "bloque": "AGR",
+   "banco": "BBVA",
+   "cta4": "9096",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 102,
+   "hoja_col": "E",
+   "cuenta": "000000000468129096",
+   "titular": "AMADO SABAS GUZMAN R",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 138,
+   "bloque": "AGR",
+   "banco": "Banorte",
+   "cta4": "7328",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 7,
+   "hoja_col": "F",
+   "cuenta": "'0309887328",
+   "titular": "AMADO SABAS GUZMAN REYNAUD",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 139,
+   "bloque": "AGR",
+   "banco": "Santandeer",
+   "cta4": "7190",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 7,
+   "hoja_col": "E",
+   "cuenta": "60519471902",
+   "titular": "AMADO SABAS GUZMAN REYNAUD              ",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 86,
+   "bloque": "ADM DE PREST SOCIAL",
+   "banco": "BBVA",
+   "cta4": "2841",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 78,
+   "hoja_col": "E",
+   "cuenta": "000000000122442841",
+   "titular": "ADM DE PREST SOCIAL",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 87,
+   "bloque": "ADM DE PREST SOCIAL",
+   "banco": "BBVA",
+   "cta4": "5049",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 98,
+   "hoja_col": "E",
+   "cuenta": "000000000125345049",
+   "titular": "ADMIN PS GP TDE",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 89,
+   "bloque": "ADMINISTRACION ASKE",
+   "banco": "Banregio",
+   "cta4": "0013",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 17,
+   "hoja_col": "C",
+   "cuenta": "114976650013",
+   "titular": "ADMINISTRACION DE SERVICIOS ASKE S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 90,
+   "bloque": "ADMINISTRACION ASKE",
+   "banco": "BBVA",
+   "cta4": "1944",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 28,
+   "hoja_col": "E",
+   "cuenta": "000000000110311944",
+   "titular": "ASKE MN",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 91,
+   "bloque": "ADMINISTRACION ASKE",
+   "banco": "HSBC",
+   "cta4": "6885",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 24,
+   "hoja_col": "C",
+   "cuenta": "4060386885",
+   "titular": "ASKE",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 92,
+   "bloque": "ADMINISTRACION ASKE",
+   "banco": "Santander",
+   "cta4": "2009",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 15,
+   "hoja_col": "E",
+   "cuenta": null,
+   "titular": "ASKE",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 96,
+   "bloque": "AENE PRODUCE",
+   "banco": "BBVA",
+   "cta4": "9879",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 34,
+   "hoja_col": "E",
+   "cuenta": "000000000112299879",
+   "titular": "AENE PRODUCE",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 97,
+   "bloque": "AENE PRODUCE",
+   "banco": "Banregio",
+   "cta4": "0014",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 23,
+   "hoja_col": "C",
+   "cuenta": "114955010014",
+   "titular": "AENE PRODUCE S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 100,
+   "bloque": "AENE PRODUCE",
+   "banco": "BBVA",
+   "cta4": "0594",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 44,
+   "hoja_col": "E",
+   "cuenta": "000000000115230594",
+   "titular": "AENE PRODUCE DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 103,
+   "bloque": "AEROSERVICIOS",
+   "banco": "Banregio",
+   "cta4": "0012",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 18,
+   "hoja_col": "C",
+   "cuenta": "114964090012",
+   "titular": "AEROSERVICIOS AG S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 104,
+   "bloque": "AEROSERVICIOS",
+   "banco": "BBVA",
+   "cta4": "5673",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 36,
+   "hoja_col": "E",
+   "cuenta": "000000000115155673",
+   "titular": "AEROSERVICIOS AG MN",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 107,
+   "bloque": "AEROSERVICIOS",
+   "banco": "BBVA",
+   "cta4": "5932",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 43,
+   "hoja_col": "E",
+   "cuenta": "000000000115155932",
+   "titular": "AEROSERVICIOS AG USD",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 111,
+   "bloque": "ASFALTOS, AGREGADOS Y EMU DE SIN",
+   "banco": "Banorte",
+   "cta4": "",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 8,
+   "hoja_col": "F",
+   "cuenta": "'0817376514",
+   "titular": "ASFALTOS AGREGADOS Y EMULSIONES DE SINALOA SA DE C",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 114,
+   "bloque": "ATUNES",
+   "banco": "Banorte",
+   "cta4": "9249",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 9,
+   "hoja_col": "F",
+   "cuenta": "'0518689249",
+   "titular": "ATUNES SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 115,
+   "bloque": "ATUNES",
+   "banco": "Banregio",
+   "cta4": "0011",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 31,
+   "hoja_col": "C",
+   "cuenta": "114931520011",
+   "titular": "ATUNES S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 116,
+   "bloque": "ATUNES",
+   "banco": "BBVA",
+   "cta4": "6027",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 2,
+   "hoja_col": "F",
+   "cuenta": "149206027",
+   "titular": "ATUNES MN",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 117,
+   "bloque": "ATUNES",
+   "banco": "BBVA TDE",
+   "cta4": "7507",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 9,
+   "hoja_col": "F",
+   "cuenta": "194247507",
+   "titular": "ATUNES TDE",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 118,
+   "bloque": "ATUNES",
+   "banco": "HSBC",
+   "cta4": "7878",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 5,
+   "hoja_col": "C",
+   "cuenta": "4057717878",
+   "titular": "ATUNES, S.A DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 119,
+   "bloque": "ATUNES",
+   "banco": "Santander",
+   "cta4": "8824",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 8,
+   "hoja_col": "E",
+   "cuenta": "65501868824",
+   "titular": "ATUNES SA DE CV                         ",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 122,
+   "bloque": "ATUNES",
+   "banco": "BBVA",
+   "cta4": "9501",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 19,
+   "hoja_col": "F",
+   "cuenta": "104729501",
+   "titular": "ATUNES DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 123,
+   "bloque": "ATUNES",
+   "banco": "HSBC",
+   "cta4": "0494",
+   "marca": "DLS",
+   "hoja": "HSBC",
+   "hoja_fila": 15,
+   "hoja_col": "C",
+   "cuenta": "7003670494",
+   "titular": "ATUNES, S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 127,
+   "bloque": "ATUNES Y SARDINAS DE MEXICO",
+   "banco": "Banorte",
+   "cta4": "7412",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 10,
+   "hoja_col": "F",
+   "cuenta": "'0891917412",
+   "titular": "ATUNES Y SARDINAS DE MEXICO SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 128,
+   "bloque": "ATUNES Y SARDINAS DE MEXICO",
+   "banco": "Banregio",
+   "cta4": "0011",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 5,
+   "hoja_col": "C",
+   "cuenta": "114995110011",
+   "titular": "ATUNES Y SARDINAS DE MEXICO S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 129,
+   "bloque": "ATUNES Y SARDINAS DE MEXICO",
+   "banco": "BBVA",
+   "cta4": "8815",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 6,
+   "hoja_col": "F",
+   "cuenta": "104728815",
+   "titular": "ATUNES Y SARDINAS MN",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 130,
+   "bloque": "ATUNES Y SARDINAS DE MEXICO",
+   "banco": "HSBC",
+   "cta4": "8348",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 7,
+   "hoja_col": "C",
+   "cuenta": "4057718348",
+   "titular": "ATUNES Y SARDINAS DE MEXICO SA DE C",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 133,
+   "bloque": "ATUNES Y SARDINAS DE MEXICO",
+   "banco": "BBVA",
+   "cta4": "8939",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 17,
+   "hoja_col": "F",
+   "cuenta": "104728939",
+   "titular": "ATUNES Y SARDINAS DL",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 134,
+   "bloque": "ATUNES Y SARDINAS DE MEXICO",
+   "banco": "HSBC",
+   "cta4": "0528",
+   "marca": "DLS",
+   "hoja": "HSBC",
+   "hoja_fila": 16,
+   "hoja_col": "C",
+   "cuenta": "7003670528",
+   "titular": "ATUNES Y SARDINAS DE MEXICO SA DE C",
+   "reparado": true
+  },
+  {
+   "banda": "K-O",
+   "fila": 138,
+   "bloque": "CENTRO DE ESTUDIOS FORMATIVOS SUPERIORES AC",
+   "banco": "Banregio",
+   "cta4": "0011",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 30,
+   "hoja_col": "C",
+   "cuenta": "114941210011",
+   "titular": "CENTRO DE ESTUDIOS FORMATIVOS SUPERIORES A.C.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 139,
+   "bloque": "CENTRO DE ESTUDIOS FORMATIVOS SUPERIORES AC",
+   "banco": "BBVA",
+   "cta4": "7632",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 58,
+   "hoja_col": "E",
+   "cuenta": "000000000118887632",
+   "titular": "CENTRO DE ESTUDIOS F",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 140,
+   "bloque": "CENTRO DE ESTUDIOS FORMATIVOS SUPERIORES AC",
+   "banco": "BBVA  TDE",
+   "cta4": "7876",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 62,
+   "hoja_col": "E",
+   "cuenta": "000000000119397876",
+   "titular": "CENTRO DE EST TDE",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 144,
+   "bloque": "DYNAMOTORS SA DE CV",
+   "banco": "Banregio",
+   "cta4": "0012",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 40,
+   "hoja_col": "C",
+   "cuenta": "114926430012",
+   "titular": "DYNAMOTORS S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 145,
+   "bloque": "DYNAMOTORS SA DE CV",
+   "banco": "BBVA",
+   "cta4": "7251",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 79,
+   "hoja_col": "E",
+   "cuenta": "000000000122747251",
+   "titular": "DYNAMOTORS SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 149,
+   "bloque": "ELEKTRON MOTORS AMERICA SA. DE CV",
+   "banco": "Banregio",
+   "cta4": "0017",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 41,
+   "hoja_col": "C",
+   "cuenta": "114926420017",
+   "titular": "ELEKTRON MOTORS AMERICA S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 150,
+   "bloque": "ELEKTRON MOTORS AMERICA SA. DE CV",
+   "banco": "BBVA",
+   "cta4": "4543",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 80,
+   "hoja_col": "E",
+   "cuenta": "000000000122794543",
+   "titular": "ELEKTRON",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 151,
+   "bloque": "ELEKTRON MOTORS AMERICA SA. DE CV",
+   "banco": "BBVA TDE",
+   "cta4": "8187",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 83,
+   "hoja_col": "E",
+   "cuenta": "000000000123048187",
+   "titular": "ELEKTRON TDE",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 154,
+   "bloque": "ELEKTRON MOTORS AMERICA SA. DE CV",
+   "banco": "BBVA",
+   "cta4": "4417",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 89,
+   "hoja_col": "E",
+   "cuenta": "000000000123284417",
+   "titular": "ELEKTRON USD",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 157,
+   "bloque": "GC MOTORS",
+   "banco": "Banorte",
+   "cta4": "6582",
+   "marca": "CLN",
+   "hoja": "BANORTE",
+   "hoja_fila": 12,
+   "hoja_col": "F",
+   "cuenta": "'1160346582",
+   "titular": "GC MOTORS DE OCCIDENTE SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 158,
+   "bloque": "GC MOTORS",
+   "banco": "Banregio",
+   "cta4": "0020",
+   "marca": "MZT",
+   "hoja": "BANREGIO",
+   "hoja_fila": 24,
+   "hoja_col": "C",
+   "cuenta": "114951050020",
+   "titular": "GC MOTORS DE OCCIDENTE S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 159,
+   "bloque": "GC MOTORS",
+   "banco": "Banregio",
+   "cta4": "0046",
+   "marca": "LM",
+   "hoja": "BANREGIO",
+   "hoja_fila": 25,
+   "hoja_col": "C",
+   "cuenta": "114951050046",
+   "titular": "GC MOTORS DE OCCIDENTE S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 160,
+   "bloque": "GC MOTORS",
+   "banco": "Banregio",
+   "cta4": "0011",
+   "marca": "CLN",
+   "hoja": "BANREGIO",
+   "hoja_fila": 26,
+   "hoja_col": "C",
+   "cuenta": "114951050011",
+   "titular": "GC MOTORS DE OCCIDENTE S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 161,
+   "bloque": "GC MOTORS",
+   "banco": "BBVA",
+   "cta4": "2973",
+   "marca": "MZT",
+   "hoja": "BANCOMER",
+   "hoja_fila": 59,
+   "hoja_col": "E",
+   "cuenta": "000000000118952973",
+   "titular": "GC MOTORS MZT",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 162,
+   "bloque": "GC MOTORS",
+   "banco": "BBVA",
+   "cta4": "1184",
+   "marca": "CLN",
+   "hoja": "BANCOMER",
+   "hoja_fila": 37,
+   "hoja_col": "E",
+   "cuenta": "000000000117421184",
+   "titular": "GC MOTORS CLN",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 163,
+   "bloque": "GC MOTORS",
+   "banco": "BBVA",
+   "cta4": "0136",
+   "marca": "TDE",
+   "hoja": "BANCOMER",
+   "hoja_fila": 57,
+   "hoja_col": "E",
+   "cuenta": "000000000118650136",
+   "titular": "GC MOTORS TDE",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 164,
+   "bloque": "GC MOTORS",
+   "banco": "Scotiabank",
+   "cta4": "5790",
+   "marca": "",
+   "hoja": "BX+ SCO",
+   "hoja_fila": 5,
+   "hoja_col": "G",
+   "cuenta": "25605315790",
+   "titular": "GC MOTORS",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 168,
+   "bloque": "LUXDEI ENERGY",
+   "banco": "BBVA",
+   "cta4": "2666",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 88,
+   "hoja_col": "E",
+   "cuenta": "000000000123642666",
+   "titular": "LUXDEI ENERGY",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 10,
+   "bloque": "MAQUINARIA, EQUIPOS Y CONS EMMG",
+   "banco": "Banorte",
+   "cta4": "1424",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 13,
+   "hoja_col": "F",
+   "cuenta": "0815631424",
+   "titular": "MAQUINARIA EQUIPOS Y CONSTRUCCIONES EMMG SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 14,
+   "bloque": "MEX CAPITAL",
+   "banco": "Banregio",
+   "cta4": "0011",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 45,
+   "hoja_col": "C",
+   "cuenta": "114974310011",
+   "titular": "MEX CAPITAL NUEVA",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 15,
+   "bloque": "MEX CAPITAL",
+   "banco": "Banregio Operación",
+   "cta4": "0026",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 46,
+   "hoja_col": "C",
+   "cuenta": "114983150026",
+   "titular": "MEX CAPITAL TRADICIONAL",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 19,
+   "bloque": "MULTISERVICIOS A ARZA",
+   "banco": "Banamex",
+   "cta4": "8363",
+   "marca": "",
+   "hoja": "BANAMEX",
+   "hoja_fila": 13,
+   "hoja_col": "E",
+   "cuenta": "7538363",
+   "titular": "MULTISERVICIOS AUTOMOTRICE",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 20,
+   "bloque": "MULTISERVICIOS A ARZA",
+   "banco": "Banorte",
+   "cta4": "0202",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 14,
+   "hoja_col": "F",
+   "cuenta": "'0276960202",
+   "titular": "MULTISERVICIOS AUTOMOTRICES ARZA SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 21,
+   "bloque": "MULTISERVICIOS A ARZA",
+   "banco": "BBVA",
+   "cta4": "3830",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 7,
+   "hoja_col": "F",
+   "cuenta": "109343830",
+   "titular": "ARZA MN",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 25,
+   "bloque": "MUSEO DE CETACEOS",
+   "banco": "BBVA",
+   "cta4": "7507",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 84,
+   "hoja_col": "E",
+   "cuenta": "000000000123107507",
+   "titular": "MUSEO DE CETACEOS",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 28,
+   "bloque": "OPERACIONES TEMATICAS",
+   "banco": "BBVA",
+   "cta4": "8258",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 87,
+   "hoja_col": "E",
+   "cuenta": "000000000123558258",
+   "titular": "OPERACIONES TEMATICA",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 29,
+   "bloque": "OPERACIONES TEMATICAS",
+   "banco": "Banregio",
+   "cta4": "0012",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 48,
+   "hoja_col": "C",
+   "cuenta": "114912820012",
+   "titular": "OPERACIONES TEMATICAS",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 30,
+   "bloque": "OPERACIONES TEMATICAS",
+   "banco": "BBVA TDE",
+   "cta4": "2438",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 99,
+   "hoja_col": "E",
+   "cuenta": "000000000125502438",
+   "titular": "OP TEMATICAS TDE",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 33,
+   "bloque": "OPERADORA DE RECURSOS",
+   "banco": "Banregio",
+   "cta4": "0011",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 9,
+   "hoja_col": "C",
+   "cuenta": "114983870011",
+   "titular": "OPERADORA DE RECURSOS HUMANOS DE MAZATLAN S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 34,
+   "bloque": "OPERADORA DE RECURSOS",
+   "banco": "BBVA TDE",
+   "cta4": "0014",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 3,
+   "hoja_col": "F",
+   "cuenta": "101150014",
+   "titular": "OPERADORA REC H TDE",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 35,
+   "bloque": "OPERADORA DE RECURSOS",
+   "banco": "HSBC",
+   "cta4": "1132",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 23,
+   "hoja_col": "C",
+   "cuenta": "4056511132",
+   "titular": "OPERADORA",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 36,
+   "bloque": "OPERADORA DE RECURSOS",
+   "banco": "Santander",
+   "cta4": "9478",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 10,
+   "hoja_col": "E",
+   "cuenta": "65502869478",
+   "titular": "OPERADORA DE RECURSOS HUMANOS DE MAZATLA",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 40,
+   "bloque": "OPERADORA TURISTICA OBSERVATORIO",
+   "banco": "Banorte",
+   "cta4": "7944",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 15,
+   "hoja_col": "F",
+   "cuenta": "'1284217944",
+   "titular": "OPERADORA TURISTICA OBSERVATORIO 1873 SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 41,
+   "bloque": "OPERADORA TURISTICA OBSERVATORIO",
+   "banco": "Banregio",
+   "cta4": "6582",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 16,
+   "hoja_col": "C",
+   "cuenta": "114977800019",
+   "titular": "OPERADORA TURISTICA OBSERVATORIO 1873 S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 42,
+   "bloque": "OPERADORA TURISTICA OBSERVATORIO",
+   "banco": "BBVA",
+   "cta4": "1124",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 33,
+   "hoja_col": "E",
+   "cuenta": "000000000112251124",
+   "titular": "OPERADORA TURISTICA",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 43,
+   "bloque": "OPERADORA TURISTICA OBSERVATORIO",
+   "banco": "BBVA MUNBA",
+   "cta4": "6985",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 85,
+   "hoja_col": "E",
+   "cuenta": "000000000123436985",
+   "titular": "OBSERVATORIO MUNBA",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 47,
+   "bloque": "PETROIL MARINE",
+   "banco": "Banregio",
+   "cta4": "0011",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 10,
+   "hoja_col": "C",
+   "cuenta": "114981150011",
+   "titular": "PETROIL MARINE S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 48,
+   "bloque": "PETROIL MARINE",
+   "banco": "BBVA",
+   "cta4": "3422",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 4,
+   "hoja_col": "F",
+   "cuenta": "104723422",
+   "titular": "PETROIL MARINE MN",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 49,
+   "bloque": "PETROIL MARINE",
+   "banco": "HSBC",
+   "cta4": "5684",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 9,
+   "hoja_col": "C",
+   "cuenta": "4058525684",
+   "titular": "PETROIL MARINE SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 52,
+   "bloque": "PETROIL MARINE",
+   "banco": "BBVA",
+   "cta4": "4453",
+   "marca": "DLS",
+   "hoja": "BANCOMER",
+   "hoja_fila": 15,
+   "hoja_col": "F",
+   "cuenta": "104724453",
+   "titular": "PETROIL MARINE DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 53,
+   "bloque": "PETROIL MARINE",
+   "banco": "HSBC",
+   "cta4": "2310",
+   "marca": "DLS",
+   "hoja": "HSBC",
+   "hoja_fila": 20,
+   "hoja_col": "C",
+   "cuenta": "7003732310",
+   "titular": "PETROIL MARINE SA DE CV",
+   "reparado": true
+  },
+  {
+   "banda": "Q-U",
+   "fila": 57,
+   "bloque": "PETROPLAZAS AEROPUERTO SA DE CV",
+   "banco": "Banorte",
+   "cta4": "4291",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 19,
+   "hoja_col": "F",
+   "cuenta": "1267334291",
+   "titular": "PETROPLAZAS AEROPUERTO SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 58,
+   "bloque": "PETROPLAZAS AEROPUERTO SA DE CV",
+   "banco": "Banregio",
+   "cta4": "0013",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 39,
+   "hoja_col": "C",
+   "cuenta": "114926450013",
+   "titular": "PETROPLAZAS AEROPUERTO S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 59,
+   "bloque": "PETROPLAZAS AEROPUERTO SA DE CV",
+   "banco": "BBVA",
+   "cta4": "9088",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 35,
+   "hoja_col": "E",
+   "cuenta": "000000000112829088",
+   "titular": "PETRO AEROPUERTO",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 60,
+   "bloque": "PETROPLAZAS AEROPUERTO SA DE CV",
+   "banco": "Santander",
+   "cta4": "7502",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 12,
+   "hoja_col": "E",
+   "cuenta": "65510417502",
+   "titular": "PETROPLAZAS AEROPUERTO SA DE CV         ",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 64,
+   "bloque": "PETROPLAZAS ESTACIONES",
+   "banco": "Banamex",
+   "cta4": "5237",
+   "marca": "",
+   "hoja": "BANAMEX",
+   "hoja_fila": 10,
+   "hoja_col": "E",
+   "cuenta": "2935237",
+   "titular": "PETROPLAZAS ESTACIONES SA",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 65,
+   "bloque": "PETROPLAZAS ESTACIONES",
+   "banco": "Banorte",
+   "cta4": "7840",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 20,
+   "hoja_col": "F",
+   "cuenta": "'1083457840",
+   "titular": "PETROPLAZAS ESTACIONES SA DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 66,
+   "bloque": "PETROPLAZAS ESTACIONES",
+   "banco": "BBVA",
+   "cta4": "2675",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 10,
+   "hoja_col": "F",
+   "cuenta": "195282675",
+   "titular": "PETROPLAZAS ESTACIONES",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 67,
+   "bloque": "PETROPLAZAS ESTACIONES",
+   "banco": "HSBC",
+   "cta4": "4228",
+   "marca": "",
+   "hoja": "HSBC",
+   "hoja_fila": 4,
+   "hoja_col": "C",
+   "cuenta": "4057004228",
+   "titular": "PETROPLAZAS ESTACIONES, S.A. DE C.V",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 68,
+   "bloque": "PETROPLAZAS ESTACIONES",
+   "banco": "Santander",
+   "cta4": "4396",
+   "marca": "",
+   "hoja": "SANTANDER",
+   "hoja_fila": 14,
+   "hoja_col": "E",
+   "cuenta": null,
+   "titular": "PETROPLAZAS ESTACIONES",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 72,
+   "bloque": "PROGRAMA DEL BIENESTAR",
+   "banco": "Banregio",
+   "cta4": "0013",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 27,
+   "hoja_col": "C",
+   "cuenta": "114001010013",
+   "titular": "PROGRAMA DE DESARROLLO PARA EL BIENESTAR EMOCIONAL S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 73,
+   "bloque": "PROGRAMA DEL BIENESTAR",
+   "banco": "Banregio",
+   "cta4": "0021",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 28,
+   "hoja_col": "C",
+   "cuenta": "114001010021",
+   "titular": "PROGRAMA DE DESARROLLO PARA EL BIENESTAR EMOCIONAL S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 74,
+   "bloque": "PROGRAMA DEL BIENESTAR",
+   "banco": "BBVA",
+   "cta4": "9271",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 39,
+   "hoja_col": "E",
+   "cuenta": "000000000118399271",
+   "titular": "PROG DE DES BIENESTA",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 75,
+   "bloque": "PROGRAMA DEL BIENESTAR",
+   "banco": "BBVA TDE",
+   "cta4": "3329",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 56,
+   "hoja_col": "E",
+   "cuenta": "000000000118483329",
+   "titular": "PROGR DES BIEN TD",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 79,
+   "bloque": "QUETZALTIC SOLUTIONS SA DE CV",
+   "banco": "Banregio",
+   "cta4": "0012",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 36,
+   "hoja_col": "C",
+   "cuenta": "114929960012",
+   "titular": "QUETZALTIC SOLUTIONS S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 80,
+   "bloque": "QUETZALTIC SOLUTIONS SA DE CV",
+   "banco": "BBVA",
+   "cta4": "9436",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 76,
+   "hoja_col": "E",
+   "cuenta": "000000000120989436",
+   "titular": "QUETZALTIC",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 84,
+   "bloque": "SERVICIOS COMPLEMENTARIOS EN EDUCACION",
+   "banco": "Banregio",
+   "cta4": "0016",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 32,
+   "hoja_col": "C",
+   "cuenta": "114931180016",
+   "titular": "SERVICIOS COMPLEMENTARIOS EN EDUCACION S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 85,
+   "bloque": "SERVICIOS COMPLEMENTARIOS EN EDUCACION",
+   "banco": "BBVA",
+   "cta4": "5912",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 66,
+   "hoja_col": "E",
+   "cuenta": "000000000120695912",
+   "titular": "SERV COMP EDUC",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 86,
+   "bloque": "SERVICIOS COMPLEMENTARIOS EN EDUCACION",
+   "banco": "BBVA TDE",
+   "cta4": "0312",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 94,
+   "hoja_col": "E",
+   "cuenta": "000000000121510312",
+   "titular": "SERV COMP EDUC TDE",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 90,
+   "bloque": "SERVICIOS EDUCATIVOS IMMA",
+   "banco": "Banregio",
+   "cta4": "0011",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 33,
+   "hoja_col": "C",
+   "cuenta": "114931170011",
+   "titular": "SERVICIOS EDUCATIVOS IMAA S.C.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 91,
+   "bloque": "SERVICIOS EDUCATIVOS IMMA",
+   "banco": "BBVA",
+   "cta4": "4910",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 65,
+   "hoja_col": "E",
+   "cuenta": "000000000120684910",
+   "titular": "SERV EDUC IMAA",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 92,
+   "bloque": "SERVICIOS EDUCATIVOS IMMA",
+   "banco": "BBVA TDE",
+   "cta4": "8187",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 97,
+   "hoja_col": "E",
+   "cuenta": "000000000122348187",
+   "titular": "SERV EDU IMAA TDE",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 96,
+   "bloque": "SHEKINAH",
+   "banco": "Banorte",
+   "cta4": "1901",
+   "marca": "",
+   "hoja": "BANORTE",
+   "hoja_fila": 25,
+   "hoja_col": "F",
+   "cuenta": "'1283611901",
+   "titular": "TURISMO Y DESARROLLO SHEKINAH SAPI DE CV",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 97,
+   "bloque": "SHEKINAH",
+   "banco": "BBVA",
+   "cta4": "2090",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 30,
+   "hoja_col": "E",
+   "cuenta": "000000000111772090",
+   "titular": "SHEKINAH",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 98,
+   "bloque": "SHEKINAH",
+   "banco": "BBVA TDE",
+   "cta4": "1911",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 96,
+   "hoja_col": "E",
+   "cuenta": "000000000122301911",
+   "titular": "SHEKINA TDE",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 102,
+   "bloque": "TAO MOTORS SA DE CV",
+   "banco": "Banregio",
+   "cta4": "0013",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 35,
+   "hoja_col": "C",
+   "cuenta": "114929980013",
+   "titular": "TAO MOTORS S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 103,
+   "bloque": "TAO MOTORS SA DE CV",
+   "banco": "BBVA",
+   "cta4": "2679",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 75,
+   "hoja_col": "E",
+   "cuenta": "000000000120982679",
+   "titular": "TAO MOTORS",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 104,
+   "bloque": "TAO MOTORS SA DE CV",
+   "banco": "BBVA TDE",
+   "cta4": "2517",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 81,
+   "hoja_col": "E",
+   "cuenta": "000000000122812517",
+   "titular": "TAO MOTORS TDE",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 108,
+   "bloque": "TRASLADOS ROEH",
+   "banco": "Banregio",
+   "cta4": "0010",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 34,
+   "hoja_col": "C",
+   "cuenta": "114931150010",
+   "titular": "TRASLADOS ROEH S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 109,
+   "bloque": "TRASLADOS ROEH",
+   "banco": "BBVA",
+   "cta4": "5762",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 67,
+   "hoja_col": "E",
+   "cuenta": "000000000120775762",
+   "titular": "TRASLADOS ROEH",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 110,
+   "bloque": "TRASLADOS ROEH",
+   "banco": "BBVA TDE",
+   "cta4": "1123",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 95,
+   "hoja_col": "E",
+   "cuenta": "000000000122121123",
+   "titular": "TRASLADOS ROEH TDE",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 114,
+   "bloque": "BANREGIO CTA NUEVAS",
+   "banco": "Ambiental Tek Resourses",
+   "cta4": "0011",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 12,
+   "hoja_col": "C",
+   "cuenta": "114978100011",
+   "titular": "AMBIENTAL TEK RESOURCES S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 115,
+   "bloque": "BANREGIO CTA NUEVAS",
+   "banco": "Formación y Des de la Niñez",
+   "cta4": "0012",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 8,
+   "hoja_col": "C",
+   "cuenta": "114987480012",
+   "titular": "FORMACION Y DESARROLLO DE LA NIÑEZ A.C.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 116,
+   "bloque": "BANREGIO CTA NUEVAS",
+   "banco": "Observatorio Express",
+   "cta4": "0019",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 29,
+   "hoja_col": "C",
+   "cuenta": "114001020019",
+   "titular": "OBSERVATORIO EXPRESS S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 117,
+   "bloque": "BANREGIO CTA NUEVAS",
+   "banco": "Oceanik Conservación",
+   "cta4": "0010",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 22,
+   "hoja_col": "C",
+   "cuenta": "114955570010",
+   "titular": "OCEANIK CONSERVACION S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 118,
+   "bloque": "BANREGIO CTA NUEVAS",
+   "banco": "Peroil Brand",
+   "cta4": "0014",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 14,
+   "hoja_col": "C",
+   "cuenta": "114978070014",
+   "titular": "PETROIL BRAND S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 119,
+   "bloque": "BANREGIO CTA NUEVAS",
+   "banco": "Petroil Energy Holding",
+   "cta4": "0019",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 15,
+   "hoja_col": "C",
+   "cuenta": "114978060019",
+   "titular": "PETROIL ENERGY HOLDING S.A.P.I. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 120,
+   "bloque": "BANREGIO CTA NUEVAS",
+   "banco": "Petroil Holding",
+   "cta4": "0015",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 13,
+   "hoja_col": "C",
+   "cuenta": "114978090015",
+   "titular": "PETROIL HOLDING S.A.P.I. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 121,
+   "bloque": "BANREGIO CTA NUEVAS",
+   "banco": "Servicio Puerto de Mazatlán",
+   "cta4": "0013",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 20,
+   "hoja_col": "C",
+   "cuenta": "114961240013",
+   "titular": "SERVICIO PUERTO DE MAZATLAN S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 124,
+   "bloque": "BANREGIO CTA NUEVAS",
+   "banco": "Servicio Puerto de Mazatlán",
+   "cta4": "0021",
+   "marca": "",
+   "hoja": "BANREGIO",
+   "hoja_fila": 19,
+   "hoja_col": "C",
+   "cuenta": "114961240021",
+   "titular": "SERVICIO PUERTO DE MAZATLAN S.A. DE C.V.",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 127,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Ambiental Tek Resourses",
+   "cta4": "1979",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 61,
+   "hoja_col": "E",
+   "cuenta": "000000000119141979",
+   "titular": "AMBIENTAL TEK",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 128,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Carrozas de Época",
+   "cta4": "6852",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 29,
+   "hoja_col": "E",
+   "cuenta": "000000000110876852",
+   "titular": "CARROZAS DE EPOCA",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 129,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Duramas Renuevallanta",
+   "cta4": "3889",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 38,
+   "hoja_col": "E",
+   "cuenta": "000000000117883889",
+   "titular": "DURAMAS RENUEVALLANT",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 130,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Duramas Renuevallanta",
+   "cta4": "0188",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 54,
+   "hoja_col": "E",
+   "cuenta": "000000000118230188",
+   "titular": "DURAMAS RENUEVA TDE",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 131,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Gas Natural Petroil",
+   "cta4": "8984",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 31,
+   "hoja_col": "E",
+   "cuenta": "000000000112108984",
+   "titular": "GAS NATURAL PETROIL",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 132,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Gas Natural TDE",
+   "cta4": "3689",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 64,
+   "hoja_col": "E",
+   "cuenta": "000000000120113689",
+   "titular": "GAS NATURAL TDE",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 133,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Petro Smart Combustibles",
+   "cta4": "8543",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 32,
+   "hoja_col": "E",
+   "cuenta": "000000000112238543",
+   "titular": "PETROSMART DEL PCO",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 134,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Servicio Puerto de Mazatlán",
+   "cta4": "0296",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 55,
+   "hoja_col": "E",
+   "cuenta": "000000000118400296",
+   "titular": "SERVICIO PUERTO MZT",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 137,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Ambiental Tek Resourses",
+   "cta4": "1855",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 70,
+   "hoja_col": "E",
+   "cuenta": "000000000119141855",
+   "titular": "AMBIENTAL TEK DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 138,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Petro Smart Combustibles",
+   "cta4": "0475",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 42,
+   "hoja_col": "E",
+   "cuenta": "000000000112240475",
+   "titular": "PETROSMART PCO DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 139,
+   "bloque": "BBVA CUENTAS NUEVAS",
+   "banco": "Servicio Puerto de Mazatlán",
+   "cta4": "1012",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 68,
+   "hoja_col": "E",
+   "cuenta": "000000000118401012",
+   "titular": "SERVICIO PUERTO DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 143,
+   "bloque": "FUNDACION SEREN AC",
+   "banco": "BBVA",
+   "cta4": "7310",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 100,
+   "hoja_col": "E",
+   "cuenta": "000000000125607310",
+   "titular": "FUNDACION SEREN AC",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 147,
+   "bloque": "MEXICANA DE CAMIONES",
+   "banco": "BBVA",
+   "cta4": "0330",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 101,
+   "hoja_col": "E",
+   "cuenta": "000000000127840330",
+   "titular": "MEXICANA DE CAMIONES",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 148,
+   "bloque": "MEXICANA DE CAMIONES",
+   "banco": "BBVA",
+   "cta4": "7212",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 103,
+   "hoja_col": "E",
+   "cuenta": "000000000127867212",
+   "titular": "MEXICANA DLLS",
+   "reparado": false
+  }
+ ],
+ "desfases_corregidos": [
+  {
+   "banda": "A-I",
+   "fila": 33,
+   "bloque": "ABASTECEDORA",
+   "banco": "HSBC",
+   "cta4": "2302",
+   "ref_mala": "HSBC!C18",
+   "ref_buena": "HSBC!C19",
+   "cuenta_que_leia": "7003712197",
+   "cuenta_correcta": "7003732302",
+   "ref_fila_buena": 19
+  },
+  {
+   "banda": "A-I",
+   "fila": 51,
+   "bloque": "PETROPLAZAS",
+   "banco": "HSBC",
+   "cta4": "0544",
+   "ref_mala": "HSBC!C16",
+   "ref_buena": "HSBC!C17",
+   "cuenta_que_leia": "7003670528",
+   "cuenta_correcta": "7003670544",
+   "ref_fila_buena": 17
+  },
+  {
+   "banda": "A-I",
+   "fila": 70,
+   "bloque": "PETRO SMART COMBUSTIBLES",
+   "banco": "HSBC",
+   "cta4": "2328",
+   "ref_mala": "HSBC!C20",
+   "ref_buena": "HSBC!C21",
+   "cuenta_que_leia": "7003732310",
+   "cuenta_correcta": "7003732328",
+   "ref_fila_buena": 21
+  },
+  {
+   "banda": "A-I",
+   "fila": 93,
+   "bloque": "ACP COMBUSTIBLES",
+   "banco": "HSBC",
+   "cta4": "2197",
+   "ref_mala": "HSBC!C17",
+   "ref_buena": "HSBC!C18",
+   "cuenta_que_leia": "7003670544",
+   "cuenta_correcta": "7003712197",
+   "ref_fila_buena": 18
+  },
+  {
+   "banda": "K-O",
+   "fila": 134,
+   "bloque": "ATUNES Y SARDINAS DE MEXICO",
+   "banco": "HSBC",
+   "cta4": "0528",
+   "ref_mala": "HSBC!C15",
+   "ref_buena": "HSBC!C16",
+   "cuenta_que_leia": "7003670494",
+   "cuenta_correcta": "7003670528",
+   "ref_fila_buena": 16
+  },
+  {
+   "banda": "Q-U",
+   "fila": 53,
+   "bloque": "PETROIL MARINE",
+   "banco": "HSBC",
+   "cta4": "2310",
+   "ref_mala": "HSBC!C19",
+   "ref_buena": "HSBC!C20",
+   "cuenta_que_leia": "7003732302",
+   "cuenta_correcta": "7003732310",
+   "ref_fila_buena": 20
+  }
+ ]
+}
