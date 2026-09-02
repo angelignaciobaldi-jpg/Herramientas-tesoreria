@@ -70,6 +70,9 @@ class AppTesoreria:
         # Listeners de redimensionado (page.on_resize es un slot único): se despachan
         # a todos desde _despachar_resize. Las pantallas se registran con registrar_on_resize.
         self._on_resize_cbs: list = []
+        # Lo mismo para el teclado: `page.on_keyboard_event` también es un slot
+        # único, así que se despacha a una lista (registrar_on_teclado).
+        self._on_teclado_cbs: list = []
         # Cuántos diálogos NATIVOS de archivo hay abiertos, y un aviso para quien
         # necesite esperar a que no haya ninguno. Mientras uno está abierto, la
         # ventana la gobierna Windows: tocarle el árbol de controles a Flet en ese
@@ -94,6 +97,18 @@ class AppTesoreria:
     def registrar_on_resize(self, callback) -> None:
         """Registra un listener para el evento de redimensionado de la ventana."""
         self._on_resize_cbs.append(callback)
+
+    def registrar_on_teclado(self, callback) -> None:
+        """Registra un listener de teclado. Cada pantalla decide si el atajo es
+        suyo mirando si está visible: el evento llega a todas."""
+        self._on_teclado_cbs.append(callback)
+
+    def _despachar_teclado(self, e) -> None:
+        for cb in self._on_teclado_cbs:
+            try:
+                cb(e)
+            except Exception:  # noqa: BLE001 — un atajo no debe tumbar la app
+                pass
 
     def _despachar_resize(self, e) -> None:
         """Llama a todos los listeners registrados (best-effort: uno que falle no
@@ -316,6 +331,8 @@ class AppTesoreria:
         self.registrar_on_resize(self.alta._on_resize)     # tabla de 'Alta'
         self.registrar_on_resize(self.config._on_resize)   # modal de Configuración
         self.page.on_resize = self._despachar_resize
+        self.page.on_keyboard_event = self._despachar_teclado
+        self.registrar_on_teclado(self.saldos._on_teclado)
         # Barra de título nativa con el color del tema actual (sondea el HWND en un
         # hilo, pues la ventana la crea flet.exe de forma asíncrona).
         self._pintar_barra_titulo(oscuro)

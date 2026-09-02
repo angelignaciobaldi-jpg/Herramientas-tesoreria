@@ -66,7 +66,7 @@ import flet as ft
 
 from core import rutas
 from core import saldos as motor
-from core import diagnostico
+from core import diagnostico, portapapeles
 from core import (saldos_estado, saldos_export, saldos_insumos,
                   saldos_lectores, saldos_plantilla)
 from ui.comun import CENTRO, GRIS, NARANJA, ROJO, ROJO_BOTON, VERDE, tarjeta
@@ -250,6 +250,15 @@ class SeccionSaldos:
         self.btn_cargar = ft.FilledTonalButton(
             content="Cargar archivos", icon=ft.Icons.UPLOAD_FILE,
             on_click=self._cargar)
+        # Tres formas de traer lo mismo, porque el diálogo de multiselección es
+        # justo el que da problemas con muchos archivos de nombre largo —y los
+        # reportes de los portales son eso—. Con la carpeta se evita elegirlos
+        # uno por uno; con Ctrl+V, el diálogo entero.
+        self.btn_carpeta = ft.TextButton(
+            content="Cargar carpeta", icon=ft.Icons.FOLDER_OPEN_OUTLINED,
+            tooltip="Toma de una carpeta todo lo que la herramienta reconozca, "
+                    "sin abrir el selector de archivos",
+            on_click=self._cargar_carpeta)
         self.btn_limpiar = ft.TextButton(
             content="Quitar todo", icon=ft.Icons.DELETE_SWEEP_OUTLINED,
             visible=False, on_click=self._limpiar,
@@ -273,8 +282,8 @@ class SeccionSaldos:
         # izquierda se expande y empuja el botón verde al borde derecho.
         acciones = ft.Row(
             [
-                ft.Row([self.btn_cargar, self.btn_formato, self.btn_limpiar,
-                        self.anillo, self.txt_estado],
+                ft.Row([self.btn_cargar, self.btn_carpeta, self.btn_formato,
+                        self.btn_limpiar, self.anillo, self.txt_estado],
                        spacing=8, expand=True, wrap=True,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 self.btn_generar,
@@ -344,6 +353,10 @@ class SeccionSaldos:
         punteado con una nube prometería algo que no funciona: el usuario
         arrastraría, no pasaría nada, y pensaría que la app está rota.
 
+        Lo que sí se puede es PEGAR, y eso se dice aquí porque no hay forma de
+        adivinarlo: copiar los archivos en el Explorador y soltarlos con Ctrl+V
+        se acerca bastante a arrastrarlos, y de paso se salta el diálogo.
+
         Tampoco lleva botón propio: «Cargar archivos» está a unos pixeles, justo
         arriba, y repetir la misma acción a dos centímetros solo obliga a decidir
         cuál de los dos usar. Este bloque únicamente informa que todavía no hay
@@ -356,7 +369,10 @@ class SeccionSaldos:
             content=ft.Column(
                 [ft.Icon(ft.Icons.FOLDER_OPEN_OUTLINED, size=32, color=GRIS),
                  ft.Text("Todavía no has cargado ningún archivo",
-                         size=13, color=GRIS)],
+                         size=13, color=GRIS),
+                 ft.Text("Cópialos en el Explorador y pégalos aquí con Ctrl+V, "
+                         "o usa «Cargar carpeta»",
+                         size=11, color=GRIS, italic=True)],
                 spacing=8, tight=True,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             alignment=CENTRO, padding=ft.Padding.symmetric(vertical=24),
@@ -389,10 +405,75 @@ class SeccionSaldos:
                               "{}".format(len(archivos or [])))
         if not archivos:
             return
-        rutas = [a.path for a in archivos]
-        diagnostico.registrar("saldos._cargar: rutas", " | ".join(rutas)[:400])
+        await self._ingerir([a.path for a in archivos])
+
+    async def _cargar_carpeta(self, _e=None) -> None:
+        """Toma de una carpeta todo lo que reconozca, sin elegir uno por uno.
+
+        Es la vía cómoda para la carpeta de descargas del navegador, donde caen
+        los reportes tal cual los deja cada portal. Y evita el diálogo de
+        MULTISELECCIÓN, que en esta app ya dio problemas con muchos archivos de
+        nombre largo (misma nota en ui/alta_beneficiarios) — y los reportes de
+        saldos son justo eso.
+
+        Solo el primer nivel: las subcarpetas suelen ser de otros días."""
+        diagnostico.registrar("saldos._cargar_carpeta: pidiendo carpeta")
+        carpeta = await self.app.picker.get_directory_path(
+            dialog_title="Elige la carpeta con los reportes de saldos")
+        diagnostico.registrar("saldos._cargar_carpeta: carpeta",
+                              str(carpeta or "")[:300])
+        if not carpeta:
+            return
+        exts = tuple("." + e.lower() for e in _EXTENSIONES)
+        try:
+            rutas = [os.path.join(carpeta, n) for n in sorted(os.listdir(carpeta))
+                     if n.lower().endswith(exts)
+                     and os.path.isfile(os.path.join(carpeta, n))]
+        except OSError as exc:
+            self.app.avisar(f"No se pudo leer la carpeta: {exc}", ROJO)
+            return
+        if not rutas:
+            self.app.avisar(
+                "Esa carpeta no tiene archivos que la herramienta pueda leer "
+                "({}).".format(", ".join(_EXTENSIONES)), NARANJA)
+            return
+        await self._ingerir(rutas)
+
+    def _on_teclado(self, e) -> None:
+        """Ctrl+V pega los archivos que se hayan copiado en el Explorador.
+
+        El evento llega a TODAS las pantallas —el slot de teclado es único y el
+        shell lo reparte—, así que lo primero es comprobar que la nuestra sea la
+        que está al frente."""
+        if not getattr(self.contenido, "visible", False):
+            return
+        if not (e.ctrl and str(e.key).lower() in ("v", "insert")):
+            return
+        if self._leyendo:
+            return   # ya hay una lectura en curso
+        self.page.run_task(self._pegar)
+
+    async def _pegar(self, _e=None) -> None:
+        """Carga lo que haya en el portapapeles copiado desde el Explorador."""
+        diagnostico.registrar("saldos._pegar: leyendo portapapeles")
+        rutas = await asyncio.to_thread(portapapeles.archivos)
+        diagnostico.registrar("saldos._pegar: rutas", "{}".format(len(rutas)))
+        if not rutas:
+            self.app.avisar(
+                "No hay archivos copiados. Selecciónalos en el Explorador, "
+                "cópialos con Ctrl+C y vuelve a pegar aquí.", NARANJA)
+            return
+        await self._ingerir(rutas)
+
+    async def _ingerir(self, rutas: list) -> None:
+        """Lee y suma los archivos, vengan de donde vengan.
+
+        Los tres caminos —elegirlos, tomar una carpeta o pegarlos— terminan aquí:
+        así el descarte de repetidos, la lectura y el aviso final son idénticos y
+        no hay tres versiones que mantener."""
+        diagnostico.registrar("saldos._ingerir: rutas", " | ".join(rutas)[:400])
         # Un archivo que ya está cargado no se vuelve a leer: repetirlo solo
-        # produciría cuentas duplicadas que después hay que descartar.
+        # produciría cuentas duplicadas que después hay que descartar.  # noqa
         ya = {a["ruta"] for a in self.archivos} | {x["ruta"] for x in self.insumos}
         nuevas = [r for r in rutas if r not in ya]
         repetidos = len(rutas) - len(nuevas)
@@ -1131,10 +1212,14 @@ class SeccionSaldos:
         self.anillo.visible = activo
         self.barra.visible = activo
         self.barra.value = 0 if activo else None
+        # Se bloquean las TRES entradas, no solo el botón: si no, pegar con
+        # Ctrl+V a media lectura arrancaría otra en paralelo sobre los mismos
+        # archivos. `_leyendo` es lo que consulta el atajo de teclado.
         self.btn_cargar.disabled = activo
+        self.btn_carpeta.disabled = activo
         self.txt_estado.value = mensaje
         self._refrescar(self.anillo, self.barra, self.btn_cargar,
-                        self.txt_estado)
+                        self.btn_carpeta, self.txt_estado)
 
     @staticmethod
     def _refrescar(*controles) -> None:
