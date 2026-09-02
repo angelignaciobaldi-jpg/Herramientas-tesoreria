@@ -464,6 +464,15 @@ class SeccionDevoluciones:
     """Consulta de solicitudes (SIPP) + captura manual, asignación de cuenta
     origen de pago y generación de un TXT por empresa origen."""
 
+    # Empresa y sucursal con que se INICIA LA SESIÓN del SIPP. Es solo la puerta
+    # de entrada al portal, no un filtro: el listado de solicitudes autorizadas
+    # muestra las de todas las empresas, así que no hace falta —ni conviene—
+    # deducirla de cada solicitud. Deducirla fallaba: la sucursal no viene en la
+    # API y el nombre que se armaba ("<Empresa> Corporativo") no existe para
+    # todas. Mismo criterio que la pantalla de Dispersión (No Pemex).
+    EMPRESA_SESION = "Aske"
+    SUCURSAL_SESION = "Corporativo"
+
     def __init__(self, app):
         # --- RPA de subida de comprobantes al SIPP ---
         # Hilo con su propio loop (el RPA es asincrono y Flet no es
@@ -1511,47 +1520,41 @@ class SeccionDevoluciones:
                     await asegurar_navegador()
                 await sesion.iniciar()
                 await sesion.login(usuario, contrasena)
-                # La empresa/sucursal de la sesión debe ser la de la solicitud, o
-                # el SIPP no la lista entre las autorizadas. Se agrupa por empresa
-                # para no reconfigurar la sesión en cada fila.
-                for empresa in sorted({(f.valores()[4] or "") for f in filas}):
-                    del_empresa = [f for f in filas
-                                   if (f.valores()[4] or "") == empresa]
-                    if empresa:
-                        await sesion.seleccionar_empresa_sucursal(
-                            empresa, self._sucursal_de(empresa))
-                    await sesion.ir_a_devoluciones()
-                    for i, fila in enumerate(del_empresa, start=1):
-                        await ctrl.punto_control()
-                        folio = fila.folio_valor
-                        lectura = fila.lectura_comprobante or {}
-                        ref = lector_comprobantes.referencia_aaaammdd(lectura)
-                        fecha = lector_comprobantes.fecha_aplicacion_ddmmaaaa(lectura)
-                        if not ref:
-                            errores.append(
-                                f"Solicitud {folio}: el comprobante no trae fecha de "
-                                "aplicación, así que no hay referencia que escribir.")
-                            resultados["error"] += 1
-                            continue
-                        self._sub_avisar(
-                            f"Subiendo {i}/{len(del_empresa)} de {empresa or '—'}: "
-                            f"solicitud {folio}…")
-                        try:
-                            estado = await sesion.registrar_devolucion(
-                                folio, fila.comprobante, ref, fecha)
-                        except RpaDetenido:
-                            raise
-                        except Exception as exc:  # noqa: BLE001 — no aborta el resto
-                            errores.append(f"Solicitud {folio}: {exc}")
-                            resultados["error"] += 1
-                            continue
-                        resultados[estado] = resultados.get(estado, 0) + 1
-                        if estado in ("guardada", "ya_estaba"):
-                            self._sub_registradas.add(id(fila))
-                        if estado == "error":
-                            errores.append(
-                                f"Solicitud {folio}: se abrió pero no se pudo "
-                                "guardar (hay diagnóstico en _diagnostico_rpa).")
+                # Sesión FIJA: el listado de autorizadas no depende de la empresa
+                # con la que se entró (ver EMPRESA_SESION).
+                await sesion.seleccionar_empresa_sucursal(
+                    self.EMPRESA_SESION, self.SUCURSAL_SESION)
+                await sesion.ir_a_devoluciones()
+                for i, fila in enumerate(filas, start=1):
+                    await ctrl.punto_control()
+                    folio = fila.folio_valor
+                    lectura = fila.lectura_comprobante or {}
+                    ref = lector_comprobantes.referencia_aaaammdd(lectura)
+                    fecha = lector_comprobantes.fecha_aplicacion_ddmmaaaa(lectura)
+                    if not ref:
+                        errores.append(
+                            f"Solicitud {folio}: el comprobante no trae fecha de "
+                            "aplicación, así que no hay referencia que escribir.")
+                        resultados["error"] += 1
+                        continue
+                    self._sub_avisar(
+                        f"Subiendo {i}/{len(filas)}: solicitud {folio}…")
+                    try:
+                        estado = await sesion.registrar_devolucion(
+                            folio, fila.comprobante, ref, fecha)
+                    except RpaDetenido:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 — no aborta el resto
+                        errores.append(f"Solicitud {folio}: {exc}")
+                        resultados["error"] += 1
+                        continue
+                    resultados[estado] = resultados.get(estado, 0) + 1
+                    if estado in ("guardada", "ya_estaba"):
+                        self._sub_registradas.add(id(fila))
+                    if estado == "error":
+                        errores.append(
+                            f"Solicitud {folio}: se abrió pero no se pudo "
+                            "guardar (hay diagnóstico en _diagnostico_rpa).")
 
             await asyncio.wrap_future(self.bucle_rpa.enviar(flujo()))
         except RpaDetenido:
@@ -1564,13 +1567,6 @@ class SeccionDevoluciones:
             self._sub_corriendo = False
             await self._cerrar_sesion_rpa()
             self._resumen_subida(resultados, errores)
-
-    def _sucursal_de(self, empresa: str) -> str:
-        """Sucursal con la que se abre la sesión del SIPP para `empresa`.
-
-        Las solicitudes de devolución se capturan en la sucursal corporativa, que
-        el portal nombra "<Empresa> Corporativo"."""
-        return f"{empresa} Corporativo"
 
     def _sub_avisar(self, texto: str) -> None:
         """Estatus desde el hilo del RPA (Flet no es thread-safe)."""
