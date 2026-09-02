@@ -86,3 +86,8 @@ token_extractor_api.json
 .claude/
 # Layouts del banco descargados como referencia (no son parte del proyecto)
 bncLay*.pdf
+
+# Registro de fallos al generar el reporte de saldos (ver ui/saldos.py).
+saldos_errores.log
+saldos_insumos.xlsx
+saldos_totales.json

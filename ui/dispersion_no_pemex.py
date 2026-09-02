@@ -42,7 +42,8 @@ from core.rpa_sipp import (
     SesionSipp,
 )
 from ui.comun import (CENTRO, EMPRESAS, GRIS, ID_POR_EMPRESA, NARANJA,
-                      NOMBRES_EMPRESAS, ROJO, ROJO_BOTON, VERDE)
+                      NOMBRES_EMPRESAS, ROJO, ROJO_BOTON, VERDE,
+                      selector_buscable)
 from ui.tabla_responsiva import (Cabecera, ColumnaTabla, FilaDatos,
                                  SegmentoCabecera, TablaResponsiva)
 from ui.tabla_responsiva import DER as _TDER
@@ -142,6 +143,12 @@ def _fecha_tc_texto() -> str:
 def _ultimos_digitos(texto, n: int = 4) -> str:
     """Últimos `n` dígitos, ignorando no-dígitos. Ver core.comprobantes."""
     return _comprobantes.ultimos_digitos(texto, n)
+
+
+def _claves_cuenta(texto, n: int = 4) -> set[str]:
+    """Colas de `n` dígitos con las que una cuenta puede aparecer en un
+    comprobante. Ver core.comprobantes.claves_cuenta."""
+    return _comprobantes.claves_cuenta(texto, n)
 
 
 def _norm_nombre_doc(nombre: str) -> str:
@@ -389,8 +396,8 @@ class _Multiseleccion:
 
         # Combo: solo muestra las opciones aún no elegidas; al elegir, se agrega.
         # Sin ancho fijo: llena la columna donde se coloque (ResponsiveRow).
-        self.dd = ft.Dropdown(
-            label=etiqueta, enable_filter=True, editable=True,
+        self.dd = selector_buscable(
+            label=etiqueta,
             options=[ft.dropdown.Option(key=o, text=o) for o in self._opciones],
             on_select=self._agregar,
         )
@@ -600,12 +607,13 @@ class _TablaSolicitudes:
         # más Concepto y Referencia de pago (opcionales). Van en la misma línea
         # que el filtro de vencimiento. Cada 'cuenta' es el valor 'Cuenta' del
         # catálogo de dispersión: es lo que se muestra y por lo que busca el RPA.
-        self.dd_cuenta = ft.Dropdown(
+        self.dd_cuenta = selector_buscable(
             label=_label_requerido("Cuenta Bancaria Origen"),
-            width=340, enable_filter=True, editable=True,
+            width=340,
             tooltip="Cuenta con la que se pagan los proveedores que no tengan una "
                     "propia (ver 'Cuenta origen por proveedor'). Solo puede quedar "
                     "vacía si TODOS los proveedores seleccionados tienen la suya.",
+            helper_text=self._aviso_sin_cuentas(),
             options=[ft.dropdown.Option(key=c, text=c) for c in self._cuentas],
             on_select=self._elegir_cuenta,
         )
@@ -650,6 +658,17 @@ class _TablaSolicitudes:
             spacing=8, horizontal_alignment=ft.CrossAxisAlignment.STRETCH)
 
     # ------------------------------------------- cuenta / concepto / referencia
+    def _aviso_sin_cuentas(self) -> str | None:
+        """Texto bajo el selector cuando la empresa no tiene NINGUNA cuenta de esta
+        moneda en el catálogo. Sin él, el usuario ve una lista vacía y no sabe si
+        falta el Excel o si es el filtro por moneda quien la dejó así."""
+        if self._cuentas:
+            return None
+        if self.moneda:
+            return (f"El catálogo no tiene cuentas en {self.moneda} para "
+                    f"{self.empresa}. Revísalo en Configuración.")
+        return f"El catálogo no tiene cuentas para {self.empresa}."
+
     def _elegir_cuenta(self, _e=None) -> None:
         self.cuenta_elegida = self.dd_cuenta.value or None
 
@@ -664,6 +683,7 @@ class _TablaSolicitudes:
         if self.dd_cuenta.value not in self._cuentas:
             self.dd_cuenta.value = None
             self.cuenta_elegida = None
+        self.dd_cuenta.helper_text = self._aviso_sin_cuentas()
         vigentes = set(self._cuentas)
         self._cuenta_prov = {
             par: c for par, c in self._cuenta_prov.items() if c in vigentes}
@@ -861,10 +881,9 @@ class _TablaSolicitudes:
             prov, cuenta = par
             etiqueta = f"{prov} · {cuenta}" if cuenta else str(prov)
             propia = self._cuenta_prov.get(par, "")
-            dd = ft.Dropdown(
+            dd = selector_buscable(
                 label="Cuenta Bancaria Origen", width=340,
                 tooltip=f"Cuenta con la que se pagará a {etiqueta}",
-                enable_filter=True, editable=True,
                 value=propia or _OPCION_CUENTA_GENERAL,
                 options=([ft.dropdown.Option(
                     key=_OPCION_CUENTA_GENERAL, text=_OPCION_CUENTA_GENERAL)]
@@ -963,9 +982,9 @@ class _TablaSolicitudes:
                 on_change=lambda e, p=par: _toggle(e, p))
             # Cuenta Origen / Concepto / Referencia SIEMPRE se muestran; habilitados
             # solo si el par está marcado. Sin 'dense' (altura estándar de Material).
-            dd_origen = ft.Dropdown(
+            dd_origen = selector_buscable(
                 label="Cuenta Origen (pago en pesos)", width=340,
-                enable_filter=True, editable=True, disabled=not marcado,
+                disabled=not marcado,
                 value=self._clabe_prov.get(par),
                 options=[ft.dropdown.Option(key=cl, text=cta)
                          for cta, cl in self._clabes],
@@ -4182,6 +4201,10 @@ class SeccionDispersionNoPemex:
             self.page.pop_dialog()
             self.page.run_task(self._procesar_comprobante, fila, None)
 
+        def porque(_e=None) -> None:
+            if estado["sel"]:
+                self._dialogo_diagnostico_pagina(estado["sel"])
+
         cuerpo = ft.Row(
             [ft.Column([ft.Column(tiles, spacing=0, tight=True,
                                   scroll=ft.ScrollMode.AUTO, expand=True)],
@@ -4204,6 +4227,8 @@ class SeccionDispersionNoPemex:
                 width=self._PREV_DIALOGO, height=self._PREV_ALTO + 60),
             actions=[
                 ft.TextButton("Cancelar", on_click=lambda _e: self.page.pop_dialog()),
+                ft.TextButton("¿Por qué no coincidió?", icon=ft.Icons.HELP_OUTLINE,
+                              on_click=porque),
                 ft.TextButton("Elegir otro archivo…", icon=ft.Icons.FOLDER_OPEN,
                               on_click=otro),
                 ft.FilledButton("Usar esta página", icon=ft.Icons.CHECK,
@@ -4215,6 +4240,95 @@ class SeccionDispersionNoPemex:
         # La primera vista previa se pinta tras montar el diálogo (antes, el update
         # de los controles todavía no tiene página a la que dibujar).
         mostrar(estado["sel"])
+
+    def _dialogo_diagnostico_pagina(self, ruta: str) -> None:
+        """Explica POR QUÉ una página no se pudo asignar a ningún movimiento.
+
+        Sin esto, un comprobante que no casa es una caja negra: no se sabe si el
+        extractor leyó mal, si la cuenta del catálogo no corresponde o si el importe
+        difiere. Muestra lo que se leyó y, movimiento por movimiento, cuál de las
+        tres reglas falló y contra qué valores se comparó."""
+        lecturas = self._lectura_por_archivo.get(ruta) or []
+        filas = self._folios_dispersados or []
+        cuerpo: list[ft.Control] = []
+
+        def linea(etq: str, val: str, color=None) -> ft.Control:
+            return ft.Row(
+                [ft.Text(f"{etq}:", size=13, color=GRIS, width=185,
+                         weight=ft.FontWeight.BOLD),
+                 ft.Text(val, size=13, color=color, expand=True,
+                         selectable=True)],
+                spacing=8, vertical_alignment=ft.CrossAxisAlignment.START)
+
+        if not lecturas:
+            cuerpo.append(ft.Text(
+                "El extractor no devolvió datos de esta página: no se puede casar "
+                "con ningún movimiento. Revisa que el PDF sea legible.",
+                size=13, color=NARANJA))
+        for c in lecturas:
+            cuerpo += [
+                ft.Text("Lo que leyó el extractor", size=15,
+                        weight=ft.FontWeight.BOLD),
+                linea("Cuenta origen", str(c.get("cuenta_origen") or "—")),
+                linea("Cuenta destino", str(c.get("cuenta_destino") or "—")),
+                linea("Importe", _fmt_moneda(c.get("importe"))
+                      if c.get("importe") is not None else "—"),
+                linea("Colas comparadas",
+                      f"origen {sorted(_claves_cuenta(c.get('cuenta_origen'))) or '—'}"
+                      f"   destino "
+                      f"{sorted(_claves_cuenta(c.get('cuenta_destino'))) or '—'}"),
+                ft.Divider(height=12),
+                ft.Text("Contra cada movimiento del resumen", size=15,
+                        weight=ft.FontWeight.BOLD),
+            ]
+            evaluadas = []
+            for f in filas:
+                r = self._comprobante_coincide(c, f)
+                obj = self._objetivo_vinculacion(f)
+                evaluadas.append((sum(
+                    (r["origen"], r["beneficiario"], r["total"])), r, obj, f))
+            evaluadas.sort(key=lambda x: -x[0])
+            if evaluadas and evaluadas[0][0] == 0:
+                cuerpo.append(ft.Text(
+                    "Ningún movimiento coincide en NINGUNA de las tres reglas. "
+                    "Se listan los primeros para poder comparar a mano:",
+                    size=13, color=NARANJA))
+            # Se listan SIEMPRE, aunque no acierten ninguna regla: decir solo 'no
+            # coincide' deja al usuario sin nada que contrastar, que es justo lo que
+            # se necesita ver cuando el extractor leyó algo raro.
+            for _aciertos, r, obj, f in evaluadas[:6]:
+                marca = lambda ok: "✓" if ok else "✗"   # noqa: E731
+                color = VERDE if r["coincide"] else NARANJA
+                cuerpo += [
+                    ft.Text(f"{marca(r['coincide'])} folio {f.get('folio')} · "
+                            f"{f.get('proveedor') or '—'}",
+                            size=14, weight=ft.FontWeight.BOLD, color=color),
+                    linea(f"  {marca(r['origen'])} origen",
+                          " | ".join(
+                              f"{o} {sorted(_claves_cuenta(o))}"
+                              for o in sorted(obj["origenes"])) or "—",
+                          None if r["origen"] else NARANJA),
+                    linea(f"  {marca(r['beneficiario'])} beneficiario",
+                          " | ".join(
+                              f"{b} {sorted(_claves_cuenta(b))}"
+                              for b in sorted(obj["beneficiarios"])) or "—",
+                          None if r["beneficiario"] else NARANJA),
+                    linea(f"  {marca(r['total'])} total",
+                          f"esperado {_fmt_moneda(obj['total'])}",
+                          None if r["total"] else NARANJA),
+                ]
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Por qué no coincidió — {os.path.basename(ruta)}",
+                          weight=ft.FontWeight.BOLD),
+            content=ft.Container(
+                content=ft.Column(cuerpo, spacing=6, tight=True,
+                                  scroll=ft.ScrollMode.AUTO),
+                width=860, height=560),
+            actions=[ft.FilledButton(
+                "Cerrar", on_click=lambda _e: self.page.pop_dialog())],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
 
     def _registrar_sueltas(self, agregar: list[str], quitar: list[str] = ()) -> None:
         """Actualiza la lista de páginas sin asignar. Nunca deja en ella un archivo que
@@ -4325,38 +4439,41 @@ class SeccionDispersionNoPemex:
             self._refrescar_resumen_dispersion()
 
         # 7) Resumen del resultado (separación + lectura + vinculación).
-        sep_txt = self._texto_separacion(info)
-        detalle = []
-        if n_vinc:
-            detalle.append(f"{n_vinc} vinculado(s)")
-        if n_sin_disp:
-            detalle.append(f"{n_sin_disp} sin dispersión que coincida")
-        if n_sin_arch:
-            detalle.append(f"{n_sin_arch} sin archivo identificable")
-        vinc_txt = ("Vinculación: " + "; ".join(detalle) + "."
-                    if detalle else "Ningún comprobante coincidió con una dispersión.")
-        if self._paginas_sin_asignar:
-            vinc_txt += (f" Quedan {len(self._paginas_sin_asignar)} página(s) sin "
-                         "asignar: se ofrecen al agregar el comprobante de un "
-                         "movimiento.")
+        # Formato pedido: cuántos PDF se leyeron, cuántos comprobantes salieron de
+        # ellos, cuántos se vincularon y cuántos quedan. Los números NO son
+        # intercambiables: 'PDFs leídos' son los archivos que se mandaron al
+        # extractor —ya separados por página, por eso pueden ser más que los que
+        # eligió el usuario— y 'comprobantes identificados' son los que el extractor
+        # pudo leer de ellos.
+        n_pdfs = len(rutas_pdf)
+        n_pendientes = len(self._paginas_sin_asignar)
+        partes = [
+            f"{n_pdfs} PDFs leídos y {n_ok} comprobantes identificados.",
+            f"{n_vinc} vinculados y {n_pendientes} sin vincular.",
+        ]
+        if n_pendientes:
+            partes.append(
+                "Para vincular los comprobantes pendientes haz clic en agregar "
+                "comprobante individual en cada dispersión.")
+        # Avisos que no caben en el formato pero que el usuario necesita saber: los
+        # PDF que no se pudieron separar, los ilegibles y los lotes que fallaron.
         errores_sep = info.get("errores") or []
         if errores_sep:
-            sep_txt += (f"{len(errores_sep)} archivo(s) no se pudieron separar y se "
-                        f"enviaron completos: {errores_sep[0]} ")
+            partes.append(
+                f"{len(errores_sep)} archivo(s) no se pudieron separar y se enviaron "
+                f"completos: {errores_sep[0]}")
+        if n_fallidos:
+            partes.append(f"{n_fallidos} comprobante(s) resultaron ilegibles.")
         if errores:
-            self._avisar(
-                f"{sep_txt}Se leyeron {n_ok} comprobante(s); {len(errores)} lote(s) "
-                f"fallaron: {errores[0]}. {vinc_txt}", ROJO)
-        elif n_fallidos:
-            self._avisar(
-                f"{sep_txt}Se leyeron {n_ok} comprobante(s); {n_fallidos} "
-                f"ilegible(s). {vinc_txt}", NARANJA)
-        elif n_ok:
-            color = VERDE if n_vinc and not n_sin_disp else NARANJA
-            self._avisar(
-                f"{sep_txt}Se leyeron {n_ok} comprobante(s). {vinc_txt}", color)
+            partes.append(f"{len(errores)} lote(s) fallaron: {errores[0]}")
+
+        if errores:
+            color = ROJO
+        elif n_pendientes or n_fallidos or errores_sep or not n_ok:
+            color = NARANJA
         else:
-            self._avisar(sep_txt + "No se leyó ningún comprobante.", NARANJA)
+            color = VERDE
+        self._avisar(" ".join(partes), color)
 
     @staticmethod
     def _indices_por_nombre(rutas_pdf: list[str]) -> tuple[dict, dict, dict]:
@@ -4576,22 +4693,23 @@ class SeccionDispersionNoPemex:
 
         Es la cuenta con la que la dispersión quedó registrada en SIPP. Cambiarla aquí
         actualiza el registro de la app; corregirla en SIPP es aparte (ver
-        `_aplicar_cuenta_origen`). Las opciones son TODAS las cuentas de la empresa
-        —`_cuentas_de_empresa`, igual que el selector del encabezado de tabla—, no las
-        de `_clabes_de_empresa`, que están filtradas a las que sirven para el TXT en
-        pesos y son otra cosa."""
+        `_aplicar_cuenta_origen`). Las opciones son las cuentas de la empresa EN LA
+        MONEDA de la dispersión —`_cuentas_de_empresa`, igual que el selector del
+        encabezado de tabla—, no las de `_clabes_de_empresa`, que están filtradas a
+        las que sirven para el TXT en pesos y son otra cosa."""
         folio = folio_dict.get("folio")
         empresa = folio_dict.get("empresa") or ""   # nombre limpio, NUNCA 'clave'
         actual = folio_dict.get("cuenta_origen") or ""
-        opciones = self._cuentas_de_empresa(empresa)
+        moneda = folio_dict.get("moneda") or ""
+        opciones = self._cuentas_de_empresa(empresa, moneda)
         if not opciones:
+            detalle = f" en {moneda}" if moneda else ""
             self._avisar(
-                f"No hay cuentas de dispersión cargadas para «{empresa}». Revisa el "
-                "catálogo de cuentas en Configuración.", NARANJA)
+                f"No hay cuentas de dispersión{detalle} cargadas para «{empresa}». "
+                "Revisa el catálogo de cuentas en Configuración.", NARANJA)
             return
-        dd = ft.Dropdown(
+        dd = selector_buscable(
             label=_label_requerido("Cuenta Bancaria Origen"), width=420,
-            enable_filter=True, editable=True,
             value=actual if actual in opciones else None,
             options=[ft.dropdown.Option(key=c, text=c) for c in opciones])
 
@@ -4665,7 +4783,8 @@ class SeccionDispersionNoPemex:
                 "Esta dispersión no tiene proveedores marcados 'pagar en pesos'.",
                 NARANJA)
             return
-        opciones = self._clabes_de_empresa(empresa)
+        opciones = self._clabes_de_empresa(
+            empresa, cuentas_dispersion.MONEDA_PESOS)
         clabes_prev = self._clabe_pesos_por_grupo.get(clave, {})
         concep_prev = self._concepto_prov_por_grupo.get(clave, {})
         refs_prev = self._ref_prov_por_grupo.get(clave, {})
@@ -4677,9 +4796,8 @@ class SeccionDispersionNoPemex:
         for par in pares:
             prov, cuenta = par
             etiqueta = f"{prov} · {cuenta}" if cuenta else str(prov)
-            dd = ft.Dropdown(
+            dd = selector_buscable(
                 label="Cuenta Origen (pago en pesos)", width=340,
-                enable_filter=True, editable=True,
                 value=clabes_prev.get(par) or None,
                 options=[ft.dropdown.Option(key=cl, text=cta)
                          for cta, cl in opciones])
@@ -4756,7 +4874,9 @@ class SeccionDispersionNoPemex:
             except Exception as exc:  # noqa: BLE001 — se reporta al usuario
                 return False, f"No se pudo obtener el tipo de cambio: {exc}"
         # Texto de cada cuenta origen (define banco/formato del layout).
-        texto_por_clabe = {cl: cta for cta, cl in self._clabes_de_empresa(empresa)}
+        texto_por_clabe = {
+            cl: cta for cta, cl in self._clabes_de_empresa(
+                empresa, cuentas_dispersion.MONEDA_PESOS)}
         # Agrupa los registros por CUENTA ORIGEN (un archivo por origen), con el
         # concepto/referencia de cada par.
         por_origen: dict[str, dict] = {}
@@ -5230,19 +5350,31 @@ class SeccionDispersionNoPemex:
         tabla.set_contenido(filas)
         return tabla.control
 
-    def _cuentas_de_empresa(self, nombre_empresa: str) -> list[str]:
+    def _cuentas_de_empresa(self, nombre_empresa: str, moneda=None) -> list[str]:
         """Cuentas de dispersión de una empresa: se emparejan por el ID de la
         empresa (EMPRESAS/ID_POR_EMPRESA). [] si el nombre no tiene id o no hay
-        cuentas cargadas para ese id."""
-        id_empresa = self.ID_POR_EMPRESA.get(nombre_empresa)
-        return self.catalogo_dispersion.cuentas_por_id_empresa(id_empresa)
+        cuentas cargadas para ese id.
 
-    def _clabes_de_empresa(self, nombre_empresa: str) -> list[tuple[str, str]]:
+        `moneda` (siglas de la solicitud: 'USD', 'MXN'…) acota a las cuentas de esa
+        misma moneda: no se paga una solicitud en dólares desde una cuenta en pesos.
+        Las cuentas sin moneda en el catálogo se siguen ofreciendo (ver
+        `cuentas_dispersion._de_la_moneda`)."""
+        id_empresa = self.ID_POR_EMPRESA.get(nombre_empresa)
+        return self.catalogo_dispersion.cuentas_por_id_empresa(id_empresa, moneda)
+
+    def _clabes_de_empresa(
+        self, nombre_empresa: str, moneda=None,
+    ) -> list[tuple[str, str]]:
         """Pares (cuenta, clabe) de una empresa para el selector de CLABE de origen:
         se MUESTRA la cuenta (banco/empresa) y se OPERA con la CLABE. Solo CLABEs
-        válidas. [] si no hay."""
+        válidas. [] si no hay.
+
+        Se usa para el TXT de PAGO EN PESOS, así que quien llama pasa
+        `MONEDA_PESOS`: ese pago sale de una cuenta en pesos aunque la solicitud
+        esté en dólares."""
         id_empresa = self.ID_POR_EMPRESA.get(nombre_empresa)
-        return self.catalogo_dispersion.cuentas_clabe_por_id_empresa(id_empresa)
+        return self.catalogo_dispersion.cuentas_clabe_por_id_empresa(
+            id_empresa, moneda)
 
     def recargar_catalogo(self) -> None:
         """Refresca el catálogo de cuentas de dispersión en caliente (tras subir un
@@ -5250,8 +5382,11 @@ class SeccionDispersionNoPemex:
         creada (cuenta origen y CLABE de pago en pesos)."""
         self.catalogo_dispersion = cuentas_dispersion.CatalogoCuentasDispersion()
         for tabla in self._tablas_por_empresa.values():
-            tabla.set_cuentas(self._cuentas_de_empresa(tabla.empresa))
-            tabla.set_clabes(self._clabes_de_empresa(tabla.empresa))
+            tabla.set_cuentas(
+                self._cuentas_de_empresa(tabla.empresa, tabla.moneda))
+            # El pago en pesos siempre sale de una cuenta EN PESOS.
+            tabla.set_clabes(self._clabes_de_empresa(
+                tabla.empresa, cuentas_dispersion.MONEDA_PESOS))
 
     def volcar_reportes(
         self, filas: list[FilaSolicitud],
@@ -5285,12 +5420,15 @@ class SeccionDispersionNoPemex:
                 # La empresa (nombre corto) sale de las filas; sus cuentas se
                 # resuelven UNA vez por su ID (no en cada cambio de tab).
                 empresa_corta = fs[0].empresa if fs else ""
+                # Moneda del grupo: acota las cuentas de origen que se ofrecen.
+                moneda_grupo = fs[0].moneda if fs else ""
                 tabla = _TablaSolicitudes(
                     self.page, empresa=empresa_corta,
-                    cuentas=self._cuentas_de_empresa(empresa_corta),
+                    cuentas=self._cuentas_de_empresa(empresa_corta, moneda_grupo),
                     fecha_venc_default=fecha_venc_default,
-                    moneda=fs[0].moneda if fs else "",
-                    clabes=self._clabes_de_empresa(empresa_corta),
+                    moneda=moneda_grupo,
+                    clabes=self._clabes_de_empresa(
+                        empresa_corta, cuentas_dispersion.MONEDA_PESOS),
                     on_fecha_venc=self._replicar_fecha_venc,
                     on_seleccion=self._refrescar_tira_tabs)
                 self._tablas_por_empresa[grupo] = tabla

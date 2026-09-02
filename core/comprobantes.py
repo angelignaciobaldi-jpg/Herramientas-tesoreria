@@ -40,6 +40,31 @@ def ultimos_digitos(texto, n: int = DIGITOS_CUENTA) -> str:
     return d[-n:] if d else ""
 
 
+def claves_cuenta(texto, n: int = DIGITOS_CUENTA) -> set:
+    """Colas de `n` dígitos con las que una MISMA cuenta puede aparecer en un
+    comprobante bancario. Conjunto vacío si el texto no trae dígitos.
+
+    Devuelve VARIAS porque el mismo número se escribe de dos formas y hay que
+    casar cualquiera contra cualquiera: la CLABE completa (18 dígitos) y la
+    cuenta enmascarada por sus últimos dígitos ('****7012'), que es como la
+    imprimen los comprobantes.
+
+    No son intercambiables: la CLABE lleva el DÍGITO VERIFICADOR al final, así
+    que sus últimos 4 están desplazados respecto a los de la cuenta
+    (012320001103245316 -> '5316', pero la cuenta que lleva dentro termina en
+    '4531'). Comparar solo la cola de la CLABE hacía fallar la regla del
+    beneficiario en todos los comprobantes que traen la cuenta enmascarada. De
+    una CLABE se derivan las dos: su propia cola y la de la cuenta embebida
+    (posiciones 7 a 17).
+    """
+    d = re.sub(r"\D", "", str(texto or ""))
+    if not d:
+        return set()
+    claves = {d[-n:]}
+    if len(d) == 18:                 # CLABE: 3 banco + 3 plaza + 11 cuenta + 1 dv
+        claves.add(d[6:17][-n:])
+    return claves
+
 def norm_nombre_doc(nombre: str) -> str:
     """Normaliza un nombre de archivo para comparar el 'documento_lectura' que
     devuelve el extractor contra los PDFs subidos: minúsculas, sin espacios en los
@@ -150,13 +175,17 @@ def evaluar_coincidencia(comprobante: dict, objetivo: Objetivo) -> dict:
     Las cuentas del comprobante vienen enmascaradas (p. ej. '*0012'), así que la
     comparación es por los ÚLTIMOS dígitos: cuenta origen (regla 1) y cuenta
     destino vs beneficiario (regla 2). El total (regla 3) se compara con tolerancia
-    de centavos."""
-    origen_comp = ultimos_digitos(comprobante.get("cuenta_origen"))
+    de centavos.
+
+    Cada lado aporta VARIAS colas posibles (ver `claves_cuenta`) y basta con
+    que se crucen: una CLABE y la cuenta que lleva dentro terminan distinto,
+    y el comprobante puede traer cualquiera de las dos."""
+    origen_comp = claves_cuenta(comprobante.get("cuenta_origen"))
     origen_ok = bool(origen_comp) and any(
-        ultimos_digitos(o) == origen_comp for o in objetivo.origenes)
-    destino_comp = ultimos_digitos(comprobante.get("cuenta_destino"))
+        origen_comp & claves_cuenta(o) for o in objetivo.origenes)
+    destino_comp = claves_cuenta(comprobante.get("cuenta_destino"))
     benef_ok = bool(destino_comp) and any(
-        ultimos_digitos(b) == destino_comp for b in objetivo.beneficiarios)
+        destino_comp & claves_cuenta(b) for b in objetivo.beneficiarios)
     importe = comprobante.get("importe")
     total_ok = importe is not None and abs(
         float(importe) - objetivo.total) < TOLERANCIA_IMPORTE

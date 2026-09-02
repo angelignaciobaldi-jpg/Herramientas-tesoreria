@@ -14,9 +14,15 @@ Lee un Excel SENCILLO para filtrar las cuentas en la pantalla de Dispersión
   - ``CLABE interbancaria`` -> la CLABE de origen que se usa como cuenta origen del
                                TXT en pesos (opcional; se muestra en su propio
                                selector).
+  - ``moneda``              -> id del catálogo MONEDAS (1 = Pesos, 2 = Dólar…).
+                               Acota qué cuentas se ofrecen: las solicitudes ya
+                               vienen separadas por moneda, y no se paga una en
+                               dólares desde una cuenta en pesos. Opcional; una
+                               cuenta sin moneda se sigue ofreciendo para todas
+                               (ver `_de_la_moneda`).
 
 Solo ``id Empresa`` y ``Cuenta`` son obligatorias: los Excel que no traigan las otras
-dos siguen siendo válidos y esas columnas quedan vacías.
+siguen siendo válidos y esas columnas quedan vacías.
 
 Es el complemento por-empresa del catálogo bancario general (`cuentas_bancarias`).
 Se consulta por id de empresa (`cuentas_por_id_empresa`, `clabes_por_id_empresa`).
@@ -36,7 +42,7 @@ try:
 except ImportError:  # openpyxl es opcional; sin él, el catálogo queda vacío.
     openpyxl = None
 
-from . import rutas
+from . import instalador_catalogo, rutas
 from .exportador_devoluciones import banco_formato
 from .extractores import validar_clabe
 
@@ -46,7 +52,7 @@ RUTA_EXCEL = os.path.join(rutas.DATOS, "Cuentas dispersion", "CUENTAS DISPERSION
 # El nombre lleva versión: al cambiar la FORMA del registro (p. ej. al sumar
 # 'numero') un caché viejo devolvería registros incompletos, así que se cambia el
 # archivo y el anterior simplemente se ignora.
-_RUTA_CACHE = os.path.join(rutas.DATOS, "_cuentas_dispersion_cache_v2.json")
+_RUTA_CACHE = os.path.join(rutas.DATOS, "_cuentas_dispersion_cache_v3.json")
 
 # Encabezados aceptados (normalizados) para cada columna.
 _HDR_ID = ("id empresa",)
@@ -57,6 +63,57 @@ _HDR_NUMERO = ("numerocuenta", "numero cuenta", "numero de cuenta",
                "num cuenta", "no cuenta", "no. cuenta")
 # CLABE interbancaria (opcional): cuenta origen del TXT en pesos.
 _HDR_CLABE = ("clabe interbancaria", "clabe")
+# Moneda de la cuenta (opcional): id del catálogo MONEDAS. Filtra qué cuentas se
+# ofrecen para cada solicitud, que ya viene separada por moneda.
+_HDR_MONEDA = ("moneda", "id moneda", "idmoneda", "tipo moneda",
+               "tipo de moneda")
+
+# Catálogo de monedas del SIPP: {id: nombre}.
+MONEDAS = {
+    1: "Pesos",
+    2: "Dólar",
+    3: "Euro",
+    4: "Dólar Canadiense",
+    5: "Libra esterlina",
+    6: "Yen japonés",
+}
+MONEDA_PESOS = 1
+
+# Siglas con que puede llegar la moneda de una solicitud -> id del catálogo. La
+# solicitud trae la moneda ya normalizada (ver reporte_dispersion.normalizar_moneda:
+# mayúsculas, sin puntos, MN->MXN), pero el SIPP no siempre usa el código ISO, así
+# que se aceptan también las formas que se han visto en los reportes.
+_ID_POR_SIGLAS = {
+    "MXN": 1, "MN": 1, "PESOS": 1, "PESO": 1,
+    "USD": 2, "DLLS": 2, "DLL": 2, "DOLAR": 2, "DÓLAR": 2, "DOLARES": 2,
+    "EUR": 3, "EURO": 3, "EUROS": 3,
+    "CAD": 4,
+    "GBP": 5,
+    "JPY": 6,
+}
+
+
+def id_moneda(moneda) -> int | None:
+    """Id del catálogo MONEDAS a partir de un id (int) o de las siglas de la moneda
+    ('USD', 'MXN'…). None si no se reconoce o viene vacío: quien filtra lo toma como
+    'sin filtro' y muestra todas las cuentas, que es lo seguro cuando no se sabe."""
+    if moneda is None or moneda == "":
+        return None
+    if isinstance(moneda, bool):
+        return None
+    if isinstance(moneda, (int, float)):
+        ident = int(moneda)
+        return ident if ident in MONEDAS else None
+    crudo = str(moneda).strip()
+    # El id puede venir como TEXTO ('2'): las columnas del Excel suelen formatearse
+    # como texto para que no se pierdan los ceros a la izquierda de las cuentas, y
+    # entonces el id se guarda igual. Sin esto la fila quedaría 'sin moneda' en
+    # silencio y la cuenta aparecería en todas las pestañas.
+    if crudo.isdigit():
+        ident = int(crudo)
+        return ident if ident in MONEDAS else None
+    siglas = re.sub(r"[.\s]+", "", crudo).upper()
+    return _ID_POR_SIGLAS.get(siglas)
 
 
 class ExcelCuentasDispersionInvalido(ValueError):
@@ -126,8 +183,8 @@ def _leer_excel(ruta: str) -> dict[int, list[dict]]:
     """Lee el Excel. Devuelve {} si no se puede (no existe, bloqueado, formato
     inesperado). Columnas por ENCABEZADO: 'id Empresa' y 'Cuenta' (obligatorias) y,
     opcionales, 'numeroCuenta' y 'CLABE interbancaria'. Cada empresa mapea a una
-    lista de registros {'cuenta': str, 'numero': str, 'clabe': str} (sin duplicados);
-    las columnas opcionales ausentes quedan como ''."""
+    lista de registros {'cuenta': str, 'numero': str, 'clabe': str, 'moneda': int|None}
+    (sin duplicados); las columnas opcionales ausentes quedan como '' / None."""
     catalogo: dict[int, list[dict]] = {}
     if openpyxl is None or not os.path.exists(ruta):
         return catalogo
@@ -151,6 +208,7 @@ def _leer_excel(ruta: str) -> dict[int, list[dict]]:
         i_cta = next((idx[h] for h in _HDR_CUENTA if h in idx), None)
         i_num = next((idx[h] for h in _HDR_NUMERO if h in idx), None)    # opcional
         i_clabe = next((idx[h] for h in _HDR_CLABE if h in idx), None)   # opcional
+        i_mon = next((idx[h] for h in _HDR_MONEDA if h in idx), None)    # opcional
         if i_id is None or i_cta is None:
             return catalogo  # no es el Excel esperado -> {}
 
@@ -164,13 +222,14 @@ def _leer_excel(ruta: str) -> dict[int, list[dict]]:
             cuenta = _texto_cuenta(col(fila, i_cta))
             numero = _texto_cuenta(col(fila, i_num)) if i_num is not None else ""
             clabe = _texto_cuenta(col(fila, i_clabe)) if i_clabe is not None else ""
+            moneda = id_moneda(col(fila, i_mon)) if i_mon is not None else None
             if id_emp is None or not cuenta:
                 continue
             registros = catalogo.setdefault(id_emp, [])
             if not any(r["cuenta"] == cuenta and r["clabe"] == clabe
                        for r in registros):  # sin duplicar por empresa
-                registros.append(
-                    {"cuenta": cuenta, "numero": numero, "clabe": clabe})
+                registros.append({"cuenta": cuenta, "numero": numero,
+                                  "clabe": clabe, "moneda": moneda})
     finally:
         wb.close()
     return catalogo
@@ -202,39 +261,33 @@ def instalar_excel(ruta_origen: str) -> int:
     """Instala el Excel elegido en RUTA_EXCEL de forma TRANSACCIONAL y devuelve
     cuántas empresas quedaron con cuentas.
 
-    Respalda el actual, copia el nuevo y lo LEE para validarlo; si no se reconoce
-    (formato inesperado), hace ROLLBACK y lanza ExcelCuentasDispersionInvalido. Si
-    es válido, invalida el caché."""
-    import shutil
-
-    os.makedirs(os.path.dirname(RUTA_EXCEL), exist_ok=True)
-    respaldo = None
-    if os.path.exists(RUTA_EXCEL):
-        respaldo = RUTA_EXCEL + ".bak"
-        shutil.copyfile(RUTA_EXCEL, respaldo)
-    try:
-        shutil.copyfile(ruta_origen, RUTA_EXCEL)
-        catalogo = _leer_excel(RUTA_EXCEL)
+    Respalda el actual, copia el nuevo y lo LEE para validarlo; si no se reconoce,
+    hace ROLLBACK y lanza ExcelCuentasDispersionInvalido. Si es válido, invalida el
+    caché. La mecánica (incluidos los casos de archivo bloqueado y de elegir el
+    archivo desde su propia ruta) vive en `core.instalador_catalogo`."""
+    def validar(catalogo):
         if not catalogo:
             raise ExcelCuentasDispersionInvalido(
                 "El archivo no tiene el formato esperado (columnas 'id Empresa' y "
                 "'Cuenta')."
             )
-    except Exception:
-        if respaldo is not None:
-            shutil.copyfile(respaldo, RUTA_EXCEL)
-        elif os.path.exists(RUTA_EXCEL):
-            os.remove(RUTA_EXCEL)
-        raise
-    finally:
-        if respaldo is not None and os.path.exists(respaldo):
-            os.remove(respaldo)
-    try:
-        if os.path.exists(_RUTA_CACHE):
-            os.remove(_RUTA_CACHE)
-    except OSError:
-        pass
+
+    catalogo = instalador_catalogo.instalar(
+        ruta_origen, RUTA_EXCEL, _leer_excel, validar, _RUTA_CACHE)
     return len(catalogo)
+
+
+def _de_la_moneda(registro: dict, id_mon: int | None) -> bool:
+    """True si el registro sirve para una solicitud de la moneda `id_mon`.
+
+    Sin filtro (`id_mon` None) pasa todo. Una cuenta SIN moneda en el Excel también
+    pasa siempre: la columna es opcional y retrocompatible, así que un catálogo
+    viejo —o una fila que se quedó sin llenar— no puede dejar una pestaña sin
+    ninguna cuenta que elegir y bloquear la dispersión."""
+    if id_mon is None:
+        return True
+    propia = registro.get("moneda")
+    return propia is None or propia == id_mon
 
 
 class CatalogoCuentasDispersion:
@@ -258,10 +311,16 @@ class CatalogoCuentasDispersion:
             return []
         return self.datos.get(clave, [])
 
-    def cuentas_por_id_empresa(self, id_empresa) -> list[str]:
+    def cuentas_por_id_empresa(self, id_empresa, moneda=None) -> list[str]:
         """Cuentas ('Cuenta') de una empresa por su id. [] si no hay o el id es
-        None. Ordenadas (alfabético) y sin duplicar, para el selector."""
-        cuentas = {r.get("cuenta", "") for r in self._registros(id_empresa)}
+        None. Ordenadas (alfabético) y sin duplicar, para el selector.
+
+        `moneda` (id del catálogo o siglas: 'USD', 'MXN'…) acota a las cuentas de esa
+        moneda: una solicitud en dólares no se paga desde una cuenta en pesos. Ver
+        `_de_la_moneda` para el trato de las cuentas sin moneda."""
+        id_mon = id_moneda(moneda)
+        cuentas = {r.get("cuenta", "") for r in self._registros(id_empresa)
+                   if _de_la_moneda(r, id_mon)}
         return sorted(c for c in cuentas if c)
 
     def identificadores_de_cuenta(self, id_empresa, cuenta: str) -> list[str]:
@@ -283,23 +342,32 @@ class CatalogoCuentasDispersion:
                 return list(dict.fromkeys(v for v in vals if v))
         return [objetivo] if objetivo else []
 
-    def clabes_por_id_empresa(self, id_empresa) -> list[str]:
+    def clabes_por_id_empresa(self, id_empresa, moneda=None) -> list[str]:
         """CLABEs interbancarias VÁLIDAS de una empresa por su id (cuenta origen del
         TXT en pesos). Solo se incluyen las que son una CLABE de 18 dígitos con
         dígito de control correcto. [] si no hay o el id es None. Ordenadas y sin
-        duplicar."""
-        clabes = {r.get("clabe", "") for r in self._registros(id_empresa)}
+        duplicar. `moneda` acota por moneda de la cuenta (ver
+        `cuentas_por_id_empresa`)."""
+        id_mon = id_moneda(moneda)
+        clabes = {r.get("clabe", "") for r in self._registros(id_empresa)
+                  if _de_la_moneda(r, id_mon)}
         return sorted(c for c in clabes if _clabe_valida(c))
 
-    def cuentas_clabe_por_id_empresa(self, id_empresa) -> list[tuple[str, str]]:
+    def cuentas_clabe_por_id_empresa(
+        self, id_empresa, moneda=None,
+    ) -> list[tuple[str, str]]:
         """Pares (cuenta, clabe) de una empresa donde la CLABE es VÁLIDA y el banco
         de la cuenta TIENE formato de generación en la app (BANREGIO / BBVA /
         BANCOMER). La 'cuenta' es el texto a MOSTRAR (trae banco/empresa, evita
         confusiones) y la CLABE es el valor con el que opera el TXT en pesos. Sin
-        duplicar por CLABE y ordenado por el texto de la cuenta."""
+        duplicar por CLABE y ordenado por el texto de la cuenta. `moneda` acota por
+        moneda de la cuenta (ver `cuentas_por_id_empresa`)."""
+        id_mon = id_moneda(moneda)
         vistos: set[str] = set()
         pares: list[tuple[str, str]] = []
         for r in self._registros(id_empresa):
+            if not _de_la_moneda(r, id_mon):
+                continue
             clabe = r.get("clabe", "")
             cuenta = r.get("cuenta", "")
             # Solo bancos con layout soportado (evita cuentas sin formato en la app).

@@ -56,6 +56,27 @@ def prueba_ultimos_digitos() -> None:
     check(c.ultimos_digitos("117421184", 6) == "421184", "n configurable")
 
 
+def prueba_claves_cuenta() -> None:
+    """Una misma cuenta se escribe de dos formas y hay que casar cualquiera
+    contra cualquiera. La CLABE lleva digito verificador al final, asi que su cola
+    NO coincide con la de la cuenta que lleva dentro."""
+    print("\ncolas de una cuenta (claves_cuenta)")
+    check(c.claves_cuenta("012320001103245316") == {"5316", "4531"},
+          "de una CLABE salen su cola y la de la cuenta embebida")
+    check(c.claves_cuenta("****4531") == {"4531"},
+          "de una cuenta enmascarada sale una sola cola")
+    check(bool(c.claves_cuenta("012320001103245316")
+               & c.claves_cuenta("****4531")),
+          "la CLABE y su cuenta enmascarada se cruzan")
+    check(c.claves_cuenta("") == set() and c.claves_cuenta(None) == set(),
+          "sin digitos devuelve conjunto vacio")
+    check(c.claves_cuenta("PETRO SMART BBVA") == set(),
+          "un nombre sin digitos no produce colas")
+    # El caso real de la pantalla: CLABE origen vs cuenta de retiro del comprobante.
+    check(bool(c.claves_cuenta("012744001174211845")
+               & c.claves_cuenta("000000000117421184")),
+          "caso real: CLABE origen cruza con la cuenta de retiro del comprobante")
+
 def prueba_nombres() -> None:
     print("\nnormalización de nombres")
     check(c.norm_nombre_doc("Comprobante.PDF") == "comprobante", "quita caja y .pdf")
@@ -126,12 +147,12 @@ def prueba_coincidencia() -> None:
     check(r2["origen"] and r2["total"] and not r2["beneficiario"],
           "falla solo por beneficiario (mismo importe y misma cuenta origen)")
 
-    # Si la pantalla solo conociera la CLABE, la regla de origen fallaría: es la
-    # razón por la que Objetivo.origenes debe llevar también el número de cuenta.
+    # Con solo la CLABE tambien casa: de ella se deriva la cola de la cuenta que
+    # lleva dentro, que es como el comprobante escribe la cuenta de retiro.
     solo_clabe = c.Objetivo(origenes={"012180001174211843"},
                             beneficiarios={"012730028914386037"}, total=3227.00)
-    check(not c.evaluar_coincidencia(MISMO_BANCO, solo_clabe)["origen"],
-          "con solo la CLABE, la cuenta origen no casa (dígito verificador)")
+    check(c.evaluar_coincidencia(MISMO_BANCO, solo_clabe)["origen"],
+          "con solo la CLABE la cuenta origen SI casa (cuenta embebida)")
 
     print("\n  bordes")
     check(not c.evaluar_coincidencia(
@@ -412,7 +433,7 @@ def prueba_banco_clabe() -> None:
     check(nombre == "" and not corregido, "sin ningun dato devuelve vacio")
 
 def main() -> int:
-    for prueba in (prueba_ultimos_digitos, prueba_nombres, prueba_resolucion_rutas,
+    for prueba in (prueba_ultimos_digitos, prueba_claves_cuenta, prueba_nombres, prueba_resolucion_rutas,
                    prueba_reparto, prueba_coincidencia, prueba_lector,
                    prueba_vinculacion, prueba_banco_clabe):
         prueba()

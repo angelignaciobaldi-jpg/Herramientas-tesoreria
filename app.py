@@ -39,6 +39,29 @@ _BARRA_TEXTO_OSCURO = "#E6E0E9"
 class AppTesoreria:
     """Shell de la aplicación: ventana, encabezado, tema y pestañas."""
 
+    # Módulos de la app: (atributo, etiqueta de la pestaña, icono, visible).
+    #
+    # Es la ÚNICA fuente de verdad: de aquí salen tanto el área de contenido como
+    # la barra de navegación. Antes eran dos listas paralelas que había que
+    # mantener en el mismo orden, y descuadrarlas mostraba una pantalla al pulsar
+    # otra —un fallo silencioso y molesto de encontrar—.
+    #
+    # `visible=False` deja el módulo FUERA de la interfaz sin desmontar nada: la
+    # pantalla se sigue construyendo (otras partes la consultan, p. ej. la recarga
+    # de catálogos desde Configuración), simplemente no se ofrece al usuario.
+    # Para publicarlo, se pone True y ya.
+    MODULOS = (
+        ("alta", "Alta de beneficiarios", "ACCOUNT_BALANCE", True),
+        ("devoluciones", "Generar dispersión devoluciones", "CURRENCY_EXCHANGE", True),
+        ("dispersion_no_pemex", "Dispersión (No Pemex)", "PAYMENTS", True),
+        ("cheques", "Cheques", "REQUEST_QUOTE", False),      # en desarrollo
+        ("saldos", "Saldos", "SAVINGS", True),
+    )
+
+    @classmethod
+    def _modulos_visibles(cls) -> tuple:
+        return tuple(m for m in cls.MODULOS if m[3])
+
     def __init__(self, page: ft.Page):
         self.page = page
         self.picker = ft.FilePicker()
@@ -180,6 +203,7 @@ class AppTesoreria:
         from ui.configuracion import SeccionConfiguracion
         from ui.devoluciones import SeccionDevoluciones
         from ui.dispersion_no_pemex import SeccionDispersionNoPemex
+        from ui.saldos import SeccionSaldos
 
         # Cada pantalla construye su propio contenido.
         self.config = SeccionConfiguracion(self)
@@ -187,15 +211,14 @@ class AppTesoreria:
         self.devoluciones = SeccionDevoluciones(self)
         self.dispersion_no_pemex = SeccionDispersionNoPemex(self)
         self.cheques = SeccionCheques(self)
+        self.saldos = SeccionSaldos(self)
 
-        # Área de contenido: las tres pantallas viven aquí; solo se muestra la
-        # activa (se alterna 'visible'), en vez de un TabBarView de Material.
-        self._secciones = [
-            self.alta.contenido,
-            self.devoluciones.contenido,
-            self.dispersion_no_pemex.contenido,
-            self.cheques.contenido,
-        ]
+        # Área de contenido: las pantallas visibles viven aquí; solo se muestra la
+        # activa (se alterna 'visible'), en vez de un TabBarView de Material. El
+        # orden lo marca MODULOS, el mismo que ordena la barra de navegación.
+        self._pantallas = [getattr(self, attr)
+                           for attr, _etq, _ico, _vis in self._modulos_visibles()]
+        self._secciones = [p.contenido for p in self._pantallas]
         for i, seccion in enumerate(self._secciones):
             seccion.visible = i == 0
         self._area = ft.Column(self._secciones, expand=True)
@@ -263,6 +286,10 @@ class AppTesoreria:
         self._pintar_barra_titulo(oscuro)
         # Ya con la página construida, se cargan los registros guardados.
         self.alta.cargar_desde_db()
+        # La pantalla que arranca al frente también cuenta como «entrada»: si no,
+        # una que difiera su carga a `al_entrar` no la haría nunca mientras nadie
+        # navegue fuera y vuelva.
+        self._avisar_entrada(0)
 
     # ------------------------------------------------------ navegación
     def _construir_nav(self) -> ft.Control:
@@ -271,12 +298,8 @@ class AppTesoreria:
         opciones (la app es solo para PC, pero la ventana puede achicarse)."""
         self._nav_activa = 0
         self._nav_items: list[dict] = []
-        definiciones = [
-            ("Alta de beneficiarios", ft.Icons.ACCOUNT_BALANCE),
-            ("Generar dispersión devoluciones", ft.Icons.CURRENCY_EXCHANGE),
-            ("Dispersión (No Pemex)", ft.Icons.PAYMENTS),
-            ("Cheques", ft.Icons.REQUEST_QUOTE),
-        ]
+        definiciones = [(etq, getattr(ft.Icons, ico))
+                        for _attr, etq, ico, _vis in self._modulos_visibles()]
         controles = []
         for idx, (texto, icono) in enumerate(definiciones):
             ico = ft.Icon(icono, size=18)
@@ -338,6 +361,24 @@ class AppTesoreria:
         self._nav_items[anterior]["container"].update()
         self._nav_items[idx]["container"].update()
         self._area.update()
+        self._avisar_entrada(idx)
+
+    def _avisar_entrada(self, idx: int) -> None:
+        """Le avisa a la pantalla que acaba de quedar al frente, si le interesa.
+
+        Sirve para diferir trabajo caro: una pantalla puede dejar sin cargar lo
+        suyo hasta que alguien la abre, en vez de pagarlo en el arranque y hacer
+        esperar a quien ni siquiera va a entrar. Es opcional —la mayoría no lo
+        implementa— y best-effort: un fallo aquí no debe impedir el cambio de
+        pantalla, que ya ocurrió."""
+        pantalla = self._pantallas[idx]
+        al_entrar = getattr(pantalla, "al_entrar", None)
+        if not callable(al_entrar):
+            return
+        try:
+            al_entrar()
+        except Exception:  # noqa: BLE001 — la navegación no debe romperse
+            pass
 
     @staticmethod
     def _logo_src(oscuro: bool) -> str:
