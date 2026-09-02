@@ -13,7 +13,7 @@ import asyncio
 import flet as ft
 
 from core import ajustes_api, credenciales, cuentas_bancarias, cuentas_dispersion
-from ui.comun import GRIS, ROJO, VERDE, tarjeta
+from ui.comun import GRIS, ROJO, VERDE, cerrar_dialogo, tarjeta
 
 CENTRO = ft.Alignment(0, 0)
 # Margen ("canalón") para que la barra de scroll vertical no tape el contenido
@@ -267,26 +267,11 @@ class SeccionConfiguracion:
         self._recalcular_layout()  # ya con page.width/height reales
         self.page.show_dialog(self.dialogo)
 
-    # Cuántos diálogos se está dispuesto a cerrar buscando el de configuración.
-    # Es un tope de seguridad: normalmente hay 0 o 1 aviso encima.
-    _MAX_POPS_CIERRE = 5
-
     def _cerrar(self, _e=None) -> None:
-        """Cierra el modal de Configuración.
-
-        No basta con un `pop_dialog()`: esa API cierra el ÚLTIMO diálogo abierto,
-        y los avisos (SnackBar de `app.avisar`) también se muestran con
-        `show_dialog`, así que comparten la pila. Si se acaba de mostrar uno —al
-        eliminar un catálogo o quitar un token, por ejemplo— un solo pop cerraba
-        el AVISO y dejaba la configuración abierta, obligando a cerrarla con la X.
-
-        Se cierran los diálogos de encima hasta llegar al propio, usando el valor
-        que devuelve `pop_dialog()` para saber cuál se cerró."""
+        """Cierra el modal de Configuración (ver ui.comun.cerrar_dialogo: los
+        avisos comparten la pila de diálogos y un solo pop cerraba el aviso)."""
         self._abierto = False
-        for _ in range(self._MAX_POPS_CIERRE):
-            cerrado = self.page.pop_dialog()
-            if cerrado is self.dialogo or cerrado is None:
-                break
+        cerrar_dialogo(self.page, self.dialogo)
 
     # ---------------------------------------------- impresión de cheques
     def _imprimir_calibracion(self, _e=None) -> None:

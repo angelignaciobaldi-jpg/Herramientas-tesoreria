@@ -43,7 +43,7 @@ from core.rpa_sipp import (
 )
 from ui.comun import (CENTRO, EMPRESAS, GRIS, ID_POR_EMPRESA, NARANJA,
                       NOMBRES_EMPRESAS, ROJO, ROJO_BOTON, VERDE,
-                      selector_buscable)
+                      cerrar_dialogo, selector_buscable)
 from ui.tabla_responsiva import (Cabecera, ColumnaTabla, FilaDatos,
                                  SegmentoCabecera, TablaResponsiva)
 from ui.tabla_responsiva import DER as _TDER
@@ -2164,11 +2164,8 @@ class SeccionDispersionNoPemex:
         """Cierra la pantalla de carga de la preparación de la dispersión."""
         if self._dlg_cargando_disp is None:
             return
-        self._dlg_cargando_disp = None
-        try:
-            self.page.pop_dialog()
-        except Exception:  # noqa: BLE001 — el cierre no debe propagar
-            pass
+        dlg, self._dlg_cargando_disp = self._dlg_cargando_disp, None
+        cerrar_dialogo(self.page, dlg)
 
     # ---------------------------------------- diálogo "Generar Dispersión"
     def _construir_dialogo_dispersion(self) -> None:
@@ -2361,7 +2358,7 @@ class SeccionDispersionNoPemex:
         además está deshabilitado en ese caso)."""
         if self._disp_estado_op in ("ejecutando", "pausado"):
             return
-        self.page.pop_dialog()
+        cerrar_dialogo(self.page, self._dlg_dispersion)
 
     def _disp_ver_datos(self, _e=None) -> None:
         """Muestra el detalle de lo que tomará el robot (payload conciliado)."""
@@ -2550,7 +2547,7 @@ class SeccionDispersionNoPemex:
         if self._sub_estado_op == "ejecutando":
             return
         try:
-            self.page.pop_dialog()
+            cerrar_dialogo(self.page, self._dlg_subida)
         except Exception:  # noqa: BLE001 — el cierre no debe propagar
             pass
 

@@ -208,3 +208,41 @@ def parse_monto(texto: str | None) -> float | None:
 
 def fmt_monto(monto: float | None) -> str:
     return "" if monto is None else f"{monto:,.2f}"
+
+
+# Cuántos diálogos se está dispuesto a cerrar buscando el propio. Es un tope de
+# seguridad: normalmente hay 0 o 1 aviso encima.
+_MAX_POPS_CIERRE = 5
+
+
+def cerrar_dialogo(page, dialogo, max_pops: int = _MAX_POPS_CIERRE) -> None:
+    """Cierra un modal CONCRETO, aunque se haya apilado algo encima.
+
+    `page.pop_dialog()` cierra "el último diálogo abierto", no uno en concreto, y
+    los avisos (SnackBar de `app.avisar`) se muestran con `show_dialog`, así que
+    comparten la pila. Un solo pop tras un aviso cerraba el AVISO y dejaba el
+    modal abierto, obligando al usuario a cerrarlo otra vez con la X.
+
+    Por eso se cierran los de encima hasta llegar al propio, usando el valor que
+    devuelve `pop_dialog()` para saber cuál se cerró. Y al final se marca el
+    nuestro con `open = False` de todos modos: si nunca estuvo en la pila (o algo
+    lo sacó por otro camino), eso lo baja igual.
+
+    Pensado para los modales de LARGA VIDA —los que siguen abiertos mientras el
+    usuario hace cosas que muestran avisos—. Un diálogo que se abre y se cierra
+    en el acto no necesita esto: puede usar `page.pop_dialog()` directo.
+    """
+    if dialogo is None:
+        return
+    for _ in range(max_pops):
+        try:
+            cerrado = page.pop_dialog()
+        except Exception:  # noqa: BLE001 — se intenta igual por la otra vía
+            break
+        if cerrado is dialogo or cerrado is None:
+            break
+    try:
+        dialogo.open = False
+        page.update()
+    except Exception:  # noqa: BLE001 — nada más que hacer; ya no bloquea
+        pass

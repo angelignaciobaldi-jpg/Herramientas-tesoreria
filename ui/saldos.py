@@ -68,7 +68,8 @@ from core import rutas
 from core import saldos as motor
 from core import (saldos_estado, saldos_export, saldos_insumos,
                   saldos_lectores, saldos_plantilla)
-from ui.comun import CENTRO, GRIS, NARANJA, ROJO, ROJO_BOTON, VERDE, tarjeta
+from ui.comun import (CENTRO, GRIS, NARANJA, ROJO, ROJO_BOTON, VERDE,
+                      cerrar_dialogo, tarjeta)
 
 # Todo lo que puede entrar: los portales emiten estos formatos (ver
 # core/saldos_lectores) y los insumos de flujo siempre son hojas de cálculo.
@@ -1033,21 +1034,11 @@ class SeccionSaldos:
     def _cerrar_espera(self) -> None:
         """Cierra el modal de espera. Tiene que funcionar SIEMPRE.
 
-        `page.pop_dialog()` saca lo que esté encima de la pila, no un diálogo en
-        concreto, así que además se marca el nuestro como cerrado: si algo más se
-        apiló en medio, `open = False` lo baja igual."""
+        Ver ui.comun.cerrar_dialogo: `pop_dialog()` saca lo que esté encima de la
+        pila, no un diálogo en concreto, así que además se marca el nuestro como
+        cerrado por si algo se apiló en medio."""
         dlg, self._dlg_espera = getattr(self, "_dlg_espera", None), None
-        if dlg is None:
-            return
-        try:
-            self.page.pop_dialog()
-        except Exception:  # noqa: BLE001 — se reintenta por la otra vía
-            pass
-        try:
-            dlg.open = False
-            self.page.update()
-        except Exception:  # noqa: BLE001 — nada más que hacer; ya no bloquea
-            pass
+        cerrar_dialogo(self.page, dlg)
 
     def _registrar_error(self, exc: BaseException, ruta: str) -> str:
         """Guarda el detalle del fallo en un archivo y devuelve su ruta.
