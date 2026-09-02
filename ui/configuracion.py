@@ -179,22 +179,40 @@ class SeccionConfiguracion:
             ft.OutlinedButton(
                 "Imprimir hoja de calibración", icon=ft.Icons.PRINT,
                 on_click=self._imprimir_calibracion, expand=True))
+        self.btn_borrar_cuentas = ft.OutlinedButton(
+            "Eliminar", icon=ft.Icons.DELETE_OUTLINE,
+            on_click=self._eliminar_cuentas,
+            style=ft.ButtonStyle(color=ROJO),
+            tooltip="Borra el Excel de cuentas cargado y su caché. Sirve para "
+                    "partir de cero o para quitar un catálogo equivocado.")
         cuentas = self._apartado(
             "Catálogo de Cuentas",
             "Adjunta el Excel de cuentas bancarias; se guardará donde la app lo "
             "consulta y reemplazará al anterior si ya había uno.",
-            ft.OutlinedButton(
-                "Adjuntar Excel de cuentas", icon=ft.Icons.UPLOAD_FILE,
-                on_click=self._adjuntar_cuentas, expand=True),
+            ft.Row([
+                ft.OutlinedButton(
+                    "Adjuntar Excel de cuentas", icon=ft.Icons.UPLOAD_FILE,
+                    on_click=self._adjuntar_cuentas, expand=True),
+                self.btn_borrar_cuentas,
+            ], spacing=8),
             self.txt_estado_cuentas)
+        self.btn_borrar_cuentas_disp = ft.OutlinedButton(
+            "Eliminar", icon=ft.Icons.DELETE_OUTLINE,
+            on_click=self._eliminar_cuentas_dispersion,
+            style=ft.ButtonStyle(color=ROJO),
+            tooltip="Borra el Excel de cuentas de dispersión cargado y su caché.")
         cuentas_disp = self._apartado(
             "Catálogo de Cuentas Dispersión",
             "Adjunta el Excel con las columnas 'id Empresa', 'Cuenta' y 'CLABE "
             "interbancaria' (opcional). Determina las cuentas y CLABEs que aparecen "
             "en los selectores de la pantalla de Dispersión (por empresa).",
-            ft.OutlinedButton(
-                "Adjuntar Excel de cuentas de dispersión", icon=ft.Icons.UPLOAD_FILE,
-                on_click=self._adjuntar_cuentas_dispersion, expand=True),
+            ft.Row([
+                ft.OutlinedButton(
+                    "Adjuntar Excel de cuentas de dispersión",
+                    icon=ft.Icons.UPLOAD_FILE,
+                    on_click=self._adjuntar_cuentas_dispersion, expand=True),
+                self.btn_borrar_cuentas_disp,
+            ], spacing=8),
             self.txt_estado_cuentas_disp)
 
         # --- Grupos (tarjeta: título + cuerpo) ---
@@ -328,12 +346,16 @@ class SeccionConfiguracion:
     # ----------------------------------------------- catálogo de cuentas
     def _actualizar_estado_cuentas(self) -> None:
         """Refleja si ya hay un Excel de cuentas cargado."""
-        if cuentas_bancarias.hay_excel():
+        hay = cuentas_bancarias.hay_excel()
+        if hay:
             self.txt_estado_cuentas.value = "Archivo de cuentas cargado ✓"
             self.txt_estado_cuentas.color = VERDE
         else:
             self.txt_estado_cuentas.value = "Sin archivo de cuentas cargado."
             self.txt_estado_cuentas.color = GRIS
+        # Sin catálogo cargado no hay nada que borrar.
+        if getattr(self, "btn_borrar_cuentas", None) is not None:
+            self.btn_borrar_cuentas.disabled = not hay
 
     async def _adjuntar_cuentas(self, _e=None) -> None:
         """Deja elegir el Excel de cuentas y lo instala (reemplazando el anterior).
@@ -372,12 +394,15 @@ class SeccionConfiguracion:
     # ------------------------------------------- cuentas de dispersión
     def _actualizar_estado_cuentas_dispersion(self) -> None:
         """Refleja si ya hay un Excel de cuentas de dispersión cargado."""
-        if cuentas_dispersion.hay_excel():
+        hay = cuentas_dispersion.hay_excel()
+        if hay:
             self.txt_estado_cuentas_disp.value = "Archivo de cuentas de dispersión cargado ✓"
             self.txt_estado_cuentas_disp.color = VERDE
         else:
             self.txt_estado_cuentas_disp.value = "Sin archivo de cuentas de dispersión cargado."
             self.txt_estado_cuentas_disp.color = GRIS
+        if getattr(self, "btn_borrar_cuentas_disp", None) is not None:
+            self.btn_borrar_cuentas_disp.disabled = not hay
 
     async def _adjuntar_cuentas_dispersion(self, _e=None) -> None:
         """Deja elegir el Excel de cuentas de dispersión (id Empresa + Cuenta) y lo
@@ -410,6 +435,73 @@ class SeccionConfiguracion:
         self.app.avisar(
             f"Cuentas de dispersión actualizadas ({empresas} empresa(s)).", VERDE)
 
+    # --------------------------------------------- eliminar catálogos
+    def _eliminar_cuentas(self, _e=None) -> None:
+        """Borra el Excel de cuentas bancarias, con confirmación previa."""
+        self._confirmar_eliminar_catalogo(
+            "Catálogo de Cuentas",
+            "Se borrará el Excel de cuentas bancarias que la app tiene cargado. "
+            "Las pantallas que dependen de él (devoluciones, dispersión) se "
+            "quedarán sin catálogo hasta que adjuntes otro.",
+            cuentas_bancarias.eliminar_excel,
+            self._actualizar_estado_cuentas,
+            "Catálogo de cuentas eliminado.",
+        )
+
+    def _eliminar_cuentas_dispersion(self, _e=None) -> None:
+        """Borra el Excel de cuentas de dispersión, con confirmación previa."""
+        self._confirmar_eliminar_catalogo(
+            "Catálogo de Cuentas Dispersión",
+            "Se borrará el Excel de cuentas de dispersión que la app tiene "
+            "cargado. Los selectores de cuenta origen de la pantalla de "
+            "Dispersión se quedarán vacíos hasta que adjuntes otro.",
+            cuentas_dispersion.eliminar_excel,
+            self._actualizar_estado_cuentas_dispersion,
+            "Catálogo de cuentas de dispersión eliminado.",
+        )
+
+    def _confirmar_eliminar_catalogo(self, titulo: str, aviso: str, borrar,
+                                     actualizar_estado, exito: str) -> None:
+        """Pide confirmación y borra. Común a los dos catálogos.
+
+        Se confirma porque es destructivo y el archivo original puede no estar a
+        mano para volver a adjuntarlo."""
+        def eliminar(_ev=None):
+            self.page.pop_dialog()
+            try:
+                habia = borrar()
+            except OSError as exc:
+                self.app.avisar(
+                    f"No se pudo eliminar: {exc}. Si lo tienes abierto en Excel, "
+                    "ciérralo e intenta de nuevo.", ROJO)
+                return
+            except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+                self.app.avisar(f"No se pudo eliminar: {exc}", ROJO)
+                return
+            actualizar_estado()
+            self._safe_update()
+            # Las pantallas releen el catálogo para no seguir mostrando las
+            # cuentas de un archivo que ya no existe.
+            self._recargar_catalogos()
+            self.app.avisar(
+                exito if habia else "No había ningún archivo que eliminar.",
+                VERDE if habia else GRIS)
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"Eliminar {titulo}"),
+            content=ft.Container(
+                content=ft.Text(aviso + " Esto no se puede deshacer desde la "
+                                        "herramienta.", size=13),
+                width=520),
+            actions=[
+                ft.TextButton("Cancelar",
+                              on_click=lambda e: self.page.pop_dialog()),
+                ft.FilledButton("Eliminar", on_click=eliminar,
+                                color=ft.Colors.WHITE, bgcolor=ROJO),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
     def _recargar_catalogos(self) -> None:
         """Refresca en caliente las pantallas que consultan el catálogo de
         cuentas (para que el Excel nuevo se refleje sin reabrir la app)."""

@@ -57,6 +57,28 @@ def hay_excel() -> bool:
     return os.path.exists(RUTA_EXCEL)
 
 
+def eliminar_excel() -> bool:
+    """Elimina el Excel instalado y su caché. Devuelve True si había algo que borrar.
+
+    Borrar el caché junto con el Excel no es opcional: si quedara, la próxima
+    consulta lo leería y el catálogo seguiría "disponible" con los datos del
+    archivo que se acaba de eliminar.
+
+    Propaga `OSError` si el archivo no se puede borrar —lo típico es tenerlo
+    abierto en Excel— para que la pantalla lo explique en vez de decir que se
+    borró algo que sigue ahí.
+    """
+    habia = os.path.exists(RUTA_EXCEL)
+    if habia:
+        os.remove(RUTA_EXCEL)
+    try:
+        if os.path.exists(_RUTA_CACHE):
+            os.remove(_RUTA_CACHE)
+    except OSError:
+        pass  # el caché sin su Excel se regenera solo; no vale fallar por esto
+    return habia
+
+
 class ExcelCuentasInvalido(ValueError):
     """El Excel adjuntado no tiene el formato esperado de cuentas bancarias."""
 
