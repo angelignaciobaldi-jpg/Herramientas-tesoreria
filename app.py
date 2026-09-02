@@ -115,25 +115,35 @@ class AppTesoreria:
         for nombre in ("pick_files", "get_directory_path", "save_file"):
             original = getattr(self.picker, nombre, None)
             if callable(original):
-                setattr(self.picker, nombre, self._envolver_al_frente(original))
+                setattr(self.picker, nombre,
+                        self._envolver_al_frente(original, nombre))
 
-    def _envolver_al_frente(self, original):
+    def _envolver_al_frente(self, original, nombre=""):
         async def envuelto(*args, **kwargs):
+            from core import diagnostico
+            diagnostico.registrar("picker.{}: abriendo".format(nombre))
             # Se lleva la cuenta para que dos diálogos anidados no se pisen: el
             # aviso solo se levanta cuando se cerró el último.
             self._pickers_abiertos += 1
             self._sin_picker.clear()
             self._fijar_topmost(True)
+            diagnostico.registrar("picker.{}: topmost puesto".format(nombre))
             try:
-                return await original(*args, **kwargs)
+                res = await original(*args, **kwargs)
+                diagnostico.registrar(
+                    "picker.{}: devolvió".format(nombre),
+                    "{} elemento(s)".format(len(res)) if isinstance(res, list)
+                    else repr(res)[:120])
+                return res
             finally:
                 self._fijar_topmost(False)
+                diagnostico.registrar("picker.{}: topmost quitado".format(nombre))
                 self._pickers_abiertos = max(0, self._pickers_abiertos - 1)
                 if not self._pickers_abiertos:
                     self._sin_picker.set()
         return envuelto
 
-    def _fijar_topmost(self, valor: bool) -> None:
+    def _fijar_topmost(self, valor: bool) -> None:  # noqa: D401
         """Pone/quita el 'siempre encima' de la ventana (best-effort: nunca debe
         romper la apertura del diálogo)."""
         try:
@@ -311,6 +321,12 @@ class AppTesoreria:
         self._pintar_barra_titulo(oscuro)
         # Ya con la página construida, se cargan los registros guardados.
         self.alta.cargar_desde_db()
+        try:
+            from core import diagnostico
+            from core.version import __version__ as _v
+            diagnostico.marcar_arranque(_v)
+        except Exception:  # noqa: BLE001 — el diagnóstico nunca bloquea el arranque
+            pass
         # La pantalla que arranca al frente también cuenta como «entrada»: si no,
         # una que difiera su carga a `al_entrar` no la haría nunca mientras nadie
         # navegue fuera y vuelva.
