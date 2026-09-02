@@ -214,12 +214,18 @@ class SeccionSaldos:
         finally:
             # El indicador se apaga AQUÍ, no después de pintar: si el repintado
             # fallara, dejarlo prendido es lo peor que puede pasar —la pantalla
-            # se queda «Recuperando…» para siempre y parece colgada—.
+            # se queda «Recuperando…» para siempre y parece colgada—. Solo se
+            # cambia la bandera; de pintarla se encarga `_pintar` más abajo.
             self._estado_cargado = True
             self._cargando_estado = False
             self._estado_listo.set()
             self.cargando_insumos.visible = False
-            self._refrescar(self.cargando_insumos)
+
+        # NO se pinta si el usuario tiene abierto el navegador de archivos. Esta
+        # lectura tarda sus segundos y es normal que termine justo mientras él
+        # está eligiendo un archivo; tocar los controles en ese momento congela
+        # la ventana entera. Se espera a que cierre y recién entonces se pinta.
+        await self.app.esperar_sin_dialogo_archivos()
         self._pintar()
         if aviso:
             self.app.avisar("No se recuperaron los insumos: " + aviso, NARANJA,
