@@ -46,7 +46,10 @@ from .saldos_lectores import (ErrorLector, _buscar_encabezado, _filas_xls,
 _ALIAS = {
     "PEMEX": ({
         "referencia": ("numero de documento", "no de documento"),
-        "fecha": ("fecha de vencimiento",),
+        # El portal escribe la columna de las dos formas, con «de» y sin él
+        # («Fecha Vencimiento»). Con una sola variante, un export legítimo no
+        # casaba y las 3 127 facturas se perdían enteras.
+        "fecha": ("fecha de vencimiento", "fecha vencimiento"),
         "importe": ("saldo",),
     }, ("referencia", "fecha", "importe")),
     "MGC": ({
@@ -233,6 +236,15 @@ def _leer_ledger_en(filas: list, nombre: str, origen: str = "") -> list:
     return salida
 
 
+def _con_datos(filas) -> bool:
+    """Si la pestaña trae algo más que su fila de encabezados.
+
+    La plantilla en blanco que se ofrece a descargar sale con los encabezados y
+    nada más: esa no es un error, es el punto de partida."""
+    llenas = [f for f in (filas or ()) if any(c is not None for c in f)]
+    return len(llenas) > 1
+
+
 def _sin_cola_vacia(fila: list) -> list:
     """La fila sin las celdas vacías del final."""
     fin = len(fila)
@@ -327,7 +339,7 @@ def leer(ruta: str, nombre: str = None) -> tuple:
                         for n in libro.sheetnames}
             combinado = {}
 
-            def _tomar(hoja, tipo):
+            def _tomar(hoja, tipo, exigir=False):
                 if tipo is None or tipo in combinado:
                     return
                 try:
@@ -336,7 +348,14 @@ def leer(ruta: str, nombre: str = None) -> tuple:
                         else _leer_ledger_en(por_hoja[hoja], tipo,
                                              os.path.basename(ruta)))
                 except (ErrorInsumo, ErrorLector):
-                    pass   # una pestaña ilegible no invalida las demás
+                    # Una pestaña que solo SE PARECE a un insumo y no se deja
+                    # leer no invalida las demás. Pero una que se LLAMA como la
+                    # sección y trae datos, sí: significa que el usuario la subió
+                    # esperando que entrara. Callarlo dejaba su panel en cero sin
+                    # decir nada, que es justo el fallo silencioso que este
+                    # módulo existe para no repetir.
+                    if exigir and _con_datos(por_hoja.get(hoja)):
+                        raise
 
             # Dos pasadas, y el ORDEN importa. El nombre de la pestaña manda sobre
             # el olfateo de encabezados: si alguien sube el formato completo, su
@@ -353,7 +372,7 @@ def leer(ruta: str, nombre: str = None) -> tuple:
                 # reserva la pestaña y SALDOS todavía no la consulta. Se deja
                 # caer a la segunda pasada, que simplemente no la reconocerá.
                 if clave == "CREDITOS" or clave in _ALIAS:
-                    _tomar(hoja, clave)
+                    _tomar(hoja, clave, exigir=True)
                 else:
                     pendientes.append(hoja)
             for hoja in pendientes:
