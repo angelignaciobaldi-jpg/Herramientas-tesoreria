@@ -66,6 +66,7 @@ import flet as ft
 
 from core import rutas
 from core import saldos as motor
+from core import diagnostico
 from core import (saldos_estado, saldos_export, saldos_insumos,
                   saldos_lectores, saldos_plantilla)
 from ui.comun import CENTRO, GRIS, NARANJA, ROJO, ROJO_BOTON, VERDE, tarjeta
@@ -376,12 +377,20 @@ class SeccionSaldos:
 
     # ------------------------------------------------------- carga de archivos
     async def _cargar(self, _e=None) -> None:
+        # Rastro paso a paso. Hay un cuelgue que solo aparece en una máquina, no
+        # deja traceback —no es una excepción, se queda bloqueada— y obliga a
+        # matar el proceso. Con esto, el último renglón del log dice en qué punto
+        # exacto se detuvo. Cuesta unos microsegundos por paso.
+        diagnostico.registrar("saldos._cargar: pidiendo archivos")
         archivos = await self.app.picker.pick_files(
             dialog_title="Selecciona los reportes de saldos y los insumos",
             allowed_extensions=_EXTENSIONES, allow_multiple=True)
+        diagnostico.registrar("saldos._cargar: seleccionados",
+                              "{}".format(len(archivos or [])))
         if not archivos:
             return
         rutas = [a.path for a in archivos]
+        diagnostico.registrar("saldos._cargar: rutas", " | ".join(rutas)[:400])
         # Un archivo que ya está cargado no se vuelve a leer: repetirlo solo
         # produciría cuentas duplicadas que después hay que descartar.
         ya = {a["ruta"] for a in self.archivos} | {x["ruta"] for x in self.insumos}
@@ -392,12 +401,15 @@ class SeccionSaldos:
             return
 
         self._ocupado(True, f"Leyendo {len(nuevas)} archivo(s)…")
+        diagnostico.registrar("saldos._cargar: leyendo", "{}".format(len(nuevas)))
         try:
             leidos = await asyncio.to_thread(self._leer_en_hilo, nuevas)
         except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            diagnostico.registrar("saldos._cargar: falló la lectura", str(exc)[:200])
             self._ocupado(False)
             self.app.avisar(f"No se pudieron leer los archivos: {exc}", ROJO)
             return
+        diagnostico.registrar("saldos._cargar: leídos", "{}".format(len(leidos)))
 
         bancarios = [x for x in leidos if x["clase"] != "insumo"]
         insumos = [x for x in leidos if x["clase"] == "insumo"]
@@ -411,13 +423,18 @@ class SeccionSaldos:
             # Antes de fundir hay que tener lo de días anteriores: si la lectura
             # diferida siguiera en curso, se guardaría encima de un diccionario
             # vacío y se perderían las secciones ya capturadas.
+            diagnostico.registrar("saldos._cargar: esperando estado")
             await self._asegurar_estado()
+            diagnostico.registrar("saldos._cargar: guardando insumos")
             await asyncio.to_thread(self._guardar_insumos, insumos)
 
+        diagnostico.registrar("saldos._cargar: identificando")
         self._reidentificar()
         self._ocupado(False)
+        diagnostico.registrar("saldos._cargar: pintando")
         self._pintar()
         self.app.avisar(*self._resumen_carga(bancarios, insumos, repetidos))
+        diagnostico.registrar("saldos._cargar: listo")
 
     @staticmethod
     def _resumen_carga(bancarios, insumos, repetidos) -> tuple:
@@ -455,6 +472,9 @@ class SeccionSaldos:
         out: list[dict] = []
         total = len(rutas)
         for i, ruta in enumerate(rutas, 1):
+            diagnostico.registrar("saldos: leyendo archivo",
+                                  "{}/{} {}".format(i, total,
+                                                    os.path.basename(ruta)))
             out.append(self._clasificar(ruta))
             self._progreso(i, total)
         return out
@@ -474,6 +494,15 @@ class SeccionSaldos:
         registro = {"ruta": ruta, "clase": "banco", "banco": "", "cuentas": 0,
                     "tipo": "", "filas": 0, "error": "", "lineas": [],
                     "datos": None, "secciones": []}
+
+        # Atajo por los NOMBRES de las pestañas, antes de tocar el contenido. El
+        # libro de insumos son 2 MB y 32 000 filas, y el detector bancario lo
+        # abría entero solo para mirarle las primeras quince y concluir que no
+        # era de ningún banco: quince segundos tirados en cada carga. El índice
+        # de hojas se lee sin abrir una sola fila.
+        if saldos_insumos.es_libro_de_insumos(ruta):
+            return self._como_insumo(registro, "")
+
         try:
             lineas, banco = saldos_lectores.leer(ruta)
             registro["banco"] = banco
@@ -485,10 +514,21 @@ class SeccionSaldos:
         except Exception as exc:  # noqa: BLE001 — un archivo raro no aborta
             fallo_banco = f"{type(exc).__name__}: {exc}"
 
+        return self._como_insumo(registro, fallo_banco)
+
+    @staticmethod
+    def _como_insumo(registro: dict, fallo_banco: str) -> dict:
+        """Intenta leerlo como insumo de flujo y deja el registro listo.
+
+        `fallo_banco` es el motivo que dio el lector bancario, y es el que se
+        reporta si tampoco es insumo: para un archivo que el usuario creía un
+        reporte de banco, «no se reconoce de qué banco es» dice mucho más que
+        «no parece ninguno de los insumos». Va vacío cuando ni se intentó."""
+        ruta = registro["ruta"]
         try:
             tipo, datos = saldos_insumos.leer(ruta)
-        except Exception:  # noqa: BLE001 — tampoco es insumo
-            registro["error"] = fallo_banco
+        except Exception as exc:  # noqa: BLE001 — tampoco es insumo
+            registro["error"] = fallo_banco or str(exc)
             return registro
 
         if tipo == "COMBINADO":
