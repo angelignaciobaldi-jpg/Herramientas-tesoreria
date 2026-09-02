@@ -71,12 +71,15 @@ jobs:
       # 1. Compilar la app con flet pack (onedir). Incluye el driver de Playwright
       #    via --collect-all. NO empaqueta Chromium: se descarga en la 1ra
       #    ejecución del RPA en la PC del usuario. tessdata no va (no está en el
-      #    repo); Imagenes sí (está versionada).
+      #    repo); Imagenes sí (está versionada). core/datos TAMBIÉN va: lleva la
+      #    plantilla del reporte de Saldos (libro base + mapa) y sin ella el
+      #    módulo no puede identificar ni generar nada.
       - name: Compilar con flet pack
         shell: pwsh
         run: >
           flet pack app.py -n "Tesoreria" -D
           --add-data "Imagenes:Imagenes"
+          --add-data "core/datos:core/datos"
           --hidden-import openpyxl
           --hidden-import xlwt
           --pyinstaller-build-args=--collect-all=playwright
