@@ -70,7 +70,25 @@ class AppTesoreria:
         # Listeners de redimensionado (page.on_resize es un slot único): se despachan
         # a todos desde _despachar_resize. Las pantallas se registran con registrar_on_resize.
         self._on_resize_cbs: list = []
+        # Cuántos diálogos NATIVOS de archivo hay abiertos, y un aviso para quien
+        # necesite esperar a que no haya ninguno. Mientras uno está abierto, la
+        # ventana la gobierna Windows: tocarle el árbol de controles a Flet en ese
+        # momento cuelga la aplicación (ver `esperar_sin_dialogo_archivos`).
+        self._pickers_abiertos = 0
+        self._sin_picker = asyncio.Event()
+        self._sin_picker.set()
         self._construir()
+
+    # ------------------------------------------------ diálogos nativos
+    async def esperar_sin_dialogo_archivos(self) -> None:
+        """Espera a que se cierre el diálogo de archivos, si hay uno abierto.
+
+        Existe por un cuelgue real: una tarea de fondo que terminaba mientras el
+        usuario tenía abierto el navegador de archivos repintaba la pantalla, y
+        la app se congelaba —Windows la marcaba como detenida— sin dejar ni un
+        traceback. Quien haga trabajo en segundo plano y luego toque la interfaz
+        debe pasar por aquí antes de pintar."""
+        await self._sin_picker.wait()
 
     # ------------------------------------------------ redimensionado
     def registrar_on_resize(self, callback) -> None:
@@ -101,11 +119,18 @@ class AppTesoreria:
 
     def _envolver_al_frente(self, original):
         async def envuelto(*args, **kwargs):
+            # Se lleva la cuenta para que dos diálogos anidados no se pisen: el
+            # aviso solo se levanta cuando se cerró el último.
+            self._pickers_abiertos += 1
+            self._sin_picker.clear()
             self._fijar_topmost(True)
             try:
                 return await original(*args, **kwargs)
             finally:
                 self._fijar_topmost(False)
+                self._pickers_abiertos = max(0, self._pickers_abiertos - 1)
+                if not self._pickers_abiertos:
+                    self._sin_picker.set()
         return envuelto
 
     def _fijar_topmost(self, valor: bool) -> None:
