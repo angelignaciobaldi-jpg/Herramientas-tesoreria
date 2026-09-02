@@ -1,31 +1,48 @@
-"""Identificación de saldos: de qué empresa es cada cuenta que reportó el banco.
+"""Colocación de saldos: en qué fila del formato va cada cuenta que reportó el banco.
 
-Es el corazón del módulo de Saldos y lo que sustituye al mecanismo del formato de
-Excel, donde cada saldo se tomaba de una CELDA FIJA de la hoja pegada
-(`=BANAMEX!E4`). Esa relación cuenta↔empresa vivía en la posición de la fila: si el
-portal cambiaba el orden, el reporte salía mal sin avisar. Aquí se casa por el
-NÚMERO DE CUENTA contra el catálogo, que es un dato estable.
+Es el corazón del módulo de Saldos. Sustituye al mecanismo del formato de Excel,
+donde cada saldo se tomaba de una CELDA FIJA de la hoja pegada (`=HSBC!C2`): la
+relación cuenta↔empresa vivía en la POSICIÓN de la fila, así que bastaba con que
+el portal cambiara el orden de la descarga para que el reporte saliera mal en
+silencio. No es hipotético — el formato que usa tesorería hoy trae seis renglones
+de HSBC leyendo la cuenta equivocada.
 
-Reglas, de más a menos confiable (se aplican en orden y la primera que resuelve
-gana):
+Aquí no se tiran las fórmulas: se les quita el supuesto. Cada línea que leen los
+lectores se casa por NÚMERO DE CUENTA contra la plantilla, que dice en qué fila
+canónica va. Colocada ahí, `=HSBC!C2` vuelve a ser correcta por construcción.
+
+Reglas, de más a menos confiable (la primera que resuelve gana):
 
   1. **CLABE completa** — 18 dígitos con dígito de control. Inequívoca.
-  2. **Número de cuenta completo** — contra el `numeroCuenta` del catálogo y contra
-     la cuenta que va embebida en la CLABE (posiciones 7 a 17).
-  3. **Últimos 4 dígitos + banco** — último recurso, y SOLO si resuelve a una
-     única cuenta.
+  2. **Número de cuenta** — en todas las formas en que el portal puede darlo
+     (completo, corto, y el embebido en la CLABE, posiciones 6 a 17).
+  3. **Últimos 4 dígitos dentro de la pestaña** — último recurso, acotado a los
+     siete renglones que el formato no numera (Monex por alias, BX+, y los que se
+     capturan a mano en Santander y Banamex), y solo si resuelve único.
 
-Sobre la regla 3 hay que ser explícito, porque es la que puede hacer daño: en el
-catálogo real **41 de 341 colas de 4 dígitos son ambiguas**. La cola `0012` de
-Banregio, por ejemplo, corresponde a cinco empresas distintas, porque todas sus
-cuentas empiezan igual (`1149…`) y solo difieren en medio. Por eso una cola
-ambigua NO se resuelve al azar: se reporta como ambigua y el usuario decide. Meter
-un saldo en la empresa equivocada es peor que dejarlo fuera — el hueco se ve, el
-error no.
+Sobre la regla 3 hay que ser explícito, porque es la que puede hacer daño:
+compartir los últimos cuatro dígitos no significa nada por sí solo. La cuenta
+`16084470201` de Abastecedora y la `388379020201` de Merarid son ambas de Bajío y
+ambas terminan en `0201`. Por eso la regla no se ofrece como desempate general:
+solo la ven renglones que ya sabemos que no tienen número, y la plantilla
+descarta de antemano cualquier cola que no sea única en su pestaña. Meter un
+saldo en la empresa equivocada es peor que dejar el renglón vacío — el hueco se
+ve, el error no.
 
-Lo mismo aplica a los DUPLICADOS: si dos reportes traen la misma cuenta (pasa con
-BBVA, que se descarga en varios archivos), no se suman. Se toma uno y se avisa,
-porque sumar dos veces el mismo saldo infla el reporte en silencio.
+Lo mismo aplica a los DUPLICADOS: si dos archivos traen la misma cuenta (pasa con
+BBVA, que se descarga en varios), no se suman. Se toma uno y se avisa, porque
+sumar dos veces el mismo saldo infla el reporte en silencio.
+
+Ojo con una distinción que es fácil de perder: las pestañas del formato traen la
+descarga COMPLETA del portal y la hoja SALDOS solo desglosa parte de ella. Banamex
+manda 16 cuentas y el reporte muestra 7; Banorte manda 24 y muestra 21. Las demás
+son cuentas reales —tarjetas, cuentas en ceros— que sí van pegadas en su pestaña
+aunque el reporte no las liste. Por eso el casado va contra TODAS las filas de las
+pestañas (`plantilla.destinos`) y no contra los 209 renglones de SALDOS.
+
+Lo que no casa con ninguna fila no se pierde ni se cuela: va a `nuevas`, y el
+exportador la lista en su propia pestaña. Es la única forma de enterarse de que
+se abrió una cuenta que el formato todavía no contempla.
 """
 
 from __future__ import annotations
@@ -34,26 +51,21 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
-from . import cuentas_dispersion
 from .catalogo_bancos import CATALOGO_BANCOS
 from .extractores import validar_clabe
 from .saldos_lectores import LineaSaldo
-
-# Cuántos dígitos finales se comparan en la regla 3. Cuatro es lo que enseñan los
-# reportes y las máscaras bancarias; con menos, la ambigüedad se dispara.
-_COLA = 4
+from .saldos_plantilla import (Destino, Plantilla, Renglon,
+                               cargar as cargar_plantilla)
 
 # Nombre canónico de banco -> prefijo de CLABE. Se deriva del catálogo de Banxico
-# para no mantener dos listas: los lectores ya nombran los bancos con ese mismo
+# para no mantener dos listas: los lectores nombran los bancos con ese mismo
 # vocabulario (ver saldos_lectores).
 _PREFIJO_POR_BANCO = {nombre.casefold(): codigo
                       for codigo, nombre in CATALOGO_BANCOS.items()}
 
-# Cómo escribe el banco el CATÁLOGO dentro del texto de la cuenta ('BBVA BANCOMER
-# 0100647012 ABASTECEDORA'). Hace falta aparte del mapa canónico porque ahí los
-# nombres van a mano, con abreviaturas y erratas. Sirve para saber de qué banco es
-# una cuenta del catálogo que no tiene CLABE — 49 de las 220 están en ese caso, y
-# sin esto quedarían fuera de la regla de la cola.
+# Cómo aparece el banco dentro de un texto libre. Hace falta aparte del mapa
+# canónico porque algunos lectores anteponen 'Banco ' ('Banco Sabadell' no está
+# en el catálogo, 'Sabadell' sí) y porque el formato escribe los nombres a mano.
 _PREFIJO_POR_TEXTO = {
     "BANAMEX": "002", "BANAMEC": "002",
     "BANBAJIO": "030", "BAJIO": "030",
@@ -66,6 +78,31 @@ _PREFIJO_POR_TEXTO = {
     "SCOTIABANK": "044", "SCOTIANBANK": "044",
     "AFIRME": "062",
 }
+
+
+# Cuentas que NO deben entrar al reporte, por banco y número tal como lo da el
+# portal. Son cuentas de operación o en desuso que el formato nunca contempló:
+# sin esta lista caen en «cuentas nuevas» y ensucian la pestaña de excepciones
+# cada día, invitando a darlas de alta en la plantilla por error.
+#
+# Se excluye AQUÍ, en el embudo de identificación, y no en cada lector: así vale
+# para todas las vías de carga y queda un solo lugar que mantener. La línea sale
+# del flujo por completo: no se coloca, no se avisa en pantalla y no aparece en
+# ninguna pestaña del libro. Queda en `Asignacion.excluidas` únicamente para
+# poder revisarla desde el código si algún día hay que auditar la lista.
+#
+# El número se compara normalizado (solo dígitos) contra las mismas formas que usa
+# el casado —la completa, la corta del portal y la embebida en la CLABE—, así que
+# da igual con qué máscara venga escrito.
+CUENTAS_EXCLUIDAS = (
+    ("Banamex", "2375605601410"),
+    ("Banamex", "23727547902799"),
+    ("Banamex", "31617886014"),
+    ("Banamex", "8182756227"),
+    ("Scotiabank", "11700560642"),
+    ("Scotiabank", "25603184671"),
+    ("Scotiabank", "25605313032"),
+)
 
 
 def prefijo_desde_texto(texto: str) -> str | None:
@@ -84,271 +121,229 @@ def prefijo_desde_texto(texto: str) -> str | None:
     return None
 
 
-@dataclass
-class SaldoCuenta:
-    """Un saldo ya atribuido a una empresa del catálogo."""
-
-    id_empresa: int
-    banco: str
-    cuenta: str              # número tal como lo reportó el banco
-    cuenta_catalogo: str     # texto 'Cuenta' del catálogo (lo que ve el usuario)
-    saldo: float
-    moneda: str
-    regla: str               # clabe | numero | cola  (cómo se resolvió)
-    linea: LineaSaldo = None
-
-
-@dataclass
-class SinIdentificar:
-    """Un saldo que NO se pudo atribuir, con el porqué."""
-
-    linea: LineaSaldo
-    motivo: str
-    candidatos: list = field(default_factory=list)
-
-
-@dataclass
-class Resultado:
-    identificados: list[SaldoCuenta] = field(default_factory=list)
-    sin_identificar: list[SinIdentificar] = field(default_factory=list)
-    duplicados: list[SinIdentificar] = field(default_factory=list)
-
-    @property
-    def total(self) -> int:
-        return (len(self.identificados) + len(self.sin_identificar)
-                + len(self.duplicados))
-
-    def por_empresa(self) -> dict[int, list[SaldoCuenta]]:
-        """Saldos agrupados por id de empresa, en el orden en que se encontraron."""
-        out: dict[int, list[SaldoCuenta]] = {}
-        for s in self.identificados:
-            out.setdefault(s.id_empresa, []).append(s)
-        return out
+def prefijo_banco(nombre: str) -> str | None:
+    """Prefijo de CLABE del banco, por nombre canónico y si no por texto libre."""
+    directo = _PREFIJO_POR_BANCO.get((nombre or "").casefold())
+    return directo if directo else prefijo_desde_texto(nombre)
 
 
 def _digitos(valor) -> str:
     return re.sub(r"\D", "", str(valor or ""))
 
 
-def _sin_ceros(digitos: str) -> str:
-    """Número sin ceros a la izquierda. Los portales rellenan a un ancho fijo
-    (BBVA manda '000000000121510312') y el catálogo no, así que hay que comparar
-    en la misma forma."""
-    return digitos.lstrip("0")
+# ---------------------------------------------------------------------------
+# Resultado
+# ---------------------------------------------------------------------------
+
+@dataclass
+class Colocada:
+    """Un saldo ya asignado a su fila del formato."""
+
+    destino: Destino
+    linea: LineaSaldo
+    regla: str          # clabe | numero | cola
+
+    @property
+    def saldo(self) -> float:
+        return self.linea.saldo
+
+    @property
+    def renglon(self) -> Renglon:
+        """El renglón de SALDOS que lee esta fila, si alguno.
+
+        Puede ser None: hay cuentas que van pegadas en su pestaña pero que el
+        reporte no desglosa (tarjetas, cuentas en ceros)."""
+        return self.destino.renglon
 
 
-def _colas(digitos: str) -> set[str]:
-    """Colas de `_COLA` dígitos con las que puede aparecer esta cuenta.
+@dataclass
+class Suelta:
+    """Una línea que no se colocó, con el porqué."""
 
-    De una CLABE se derivan DOS: la suya y la de la cuenta que lleva embebida. No
-    son la misma, porque el dígito verificador va al final y las desplaza
-    (012320001103245316 termina en '5316', pero su cuenta termina en '4531')."""
-    if not digitos:
-        return set()
-    colas = {digitos[-_COLA:]}
-    if len(digitos) == 18:
-        colas.add(digitos[6:17][-_COLA:])
-    return colas
+    linea: LineaSaldo
+    motivo: str
 
 
-def _compatibles(reporte: str, catalogo: str) -> bool:
-    """True si dos números de cuenta pueden ser EL MISMO, uno enmascarado.
+@dataclass
+class Asignacion:
+    """Lo que hay que escribir en el libro, y lo que quedó fuera."""
 
-    Compartir los últimos cuatro dígitos no basta ni de lejos. En el catálogo real,
-    la cuenta 16084470201 de Abastecedora y la 388379020201 de Merarid son ambas de
-    Bajío y ambas terminan en '0201': casarlas por la cola mandó 7.4 millones de
-    pesos a la empresa equivocada. Enmascarar un número lo RECORTA, así que el
-    corto tiene que ser sufijo del largo — '7012' de '0100647012' sí, '0201' de dos
-    cuentas largas distintas no."""
-    a, b = _sin_ceros(reporte), _sin_ceros(catalogo)
-    if not a or not b:
-        return False
-    return a.endswith(b) or b.endswith(a)
+    plantilla: Plantilla
+    colocadas: dict = field(default_factory=dict)   # (hoja, fila) -> Colocada
+    nuevas: list = field(default_factory=list)      # Suelta
+    duplicados: list = field(default_factory=list)  # Suelta
+    excluidas: list = field(default_factory=list)   # Suelta
+
+    @property
+    def vacios(self) -> list:
+        """Renglones de la hoja SALDOS que ningún archivo llenó.
+
+        Es el dato que el módulo anterior no daba y que hace visible el hueco: si
+        no subieron el archivo de Banorte, aquí salen sus 21 renglones.
+
+        Se mide sobre los renglones de SALDOS, no sobre todas las filas de las
+        pestañas: la cobertura que le importa al usuario es la del reporte que va
+        a imprimir."""
+        return [r for r in self.plantilla.renglones
+                if (r.hoja, r.hoja_fila) not in self.colocadas]
+
+    @property
+    def llenos(self) -> int:
+        """Renglones de SALDOS que quedaron con saldo."""
+        return self.total_renglones - len(self.vacios)
+
+    @property
+    def pegadas(self) -> int:
+        """Filas escritas en las pestañas, incluidas las que SALDOS no desglosa."""
+        return len(self.colocadas)
+
+    @property
+    def total_renglones(self) -> int:
+        return len(self.plantilla.renglones)
+
+    def totales(self) -> dict:
+        """Suma por divisa de lo que aparece en el reporte.
+
+        Cuenta solo las filas que la hoja SALDOS desglosa. Las demás se pegan en
+        su pestaña pero el reporte no las suma, así que incluirlas aquí daría un
+        total que no cuadra con el que la usuaria ve impreso."""
+        acumulado = {}
+        for c in self.colocadas.values():
+            if c.renglon is None:
+                continue
+            divisa = (c.linea.moneda or "MXN").upper()
+            acumulado[divisa] = acumulado.get(divisa, 0.0) + (c.saldo or 0.0)
+        return acumulado
+
+    def bancos_faltantes(self) -> list:
+        """Pestañas cuyos renglones quedaron TODOS vacíos.
+
+        Distinto de 'faltan cuentas': si una pestaña entera está vacía es que no
+        subieron ese archivo, y conviene decirlo así."""
+        por_hoja = {}
+        for r in self.plantilla.renglones:
+            por_hoja.setdefault(r.hoja, [0, 0])[1] += 1
+        for hoja, _fila in self.colocadas:
+            if hoja in por_hoja:
+                por_hoja[hoja][0] += 1
+        return sorted(h for h, (puestos, _) in por_hoja.items() if puestos == 0)
+
+    def resumen(self) -> str:
+        partes = ["{} de {} renglones".format(self.llenos, self.total_renglones)]
+        if self.nuevas:
+            partes.append("{} cuenta(s) nueva(s)".format(len(self.nuevas)))
+        if self.duplicados:
+            partes.append("{} duplicada(s)".format(len(self.duplicados)))
+        return " · ".join(partes)
 
 
-def prefijo_banco(nombre: str) -> str | None:
-    """Prefijo de CLABE del banco a partir de su nombre canónico."""
-    return _PREFIJO_POR_BANCO.get((nombre or "").casefold())
-
-
-class _Indice:
-    """Índice del catálogo por cada forma en que puede venir una cuenta.
-
-    Guarda TODAS las coincidencias por clave, no solo la primera: es lo que permite
-    detectar que una clave es ambigua en vez de resolverla al azar."""
-
-    def __init__(self, catalogo):
-        self.por_clabe: dict[str, list] = {}
-        self.por_numero: dict[str, list] = {}
-        self.por_cola: dict[tuple, list] = {}
-        for id_empresa in catalogo.empresas():
-            for reg in catalogo._registros(id_empresa):
-                self._agregar(id_empresa, reg)
-
-    def _agregar(self, id_empresa: int, reg: dict) -> None:
-        entrada = (id_empresa, reg)
-        clabe = _digitos(reg.get("clabe", ""))
-        numero = _digitos(reg.get("numero", ""))
-        if len(clabe) == 18 and validar_clabe(clabe):
-            self.por_clabe.setdefault(clabe, []).append(entrada)
-            # La cuenta embebida en la CLABE es otra forma válida del número.
-            embebida = _sin_ceros(clabe[6:17])
-            if embebida:
-                self.por_numero.setdefault(embebida, []).append(entrada)
-        if numero:
-            corto = _sin_ceros(numero)
-            if corto:
-                self.por_numero.setdefault(corto, []).append(entrada)
-        # El banco sale de la CLABE cuando la hay; si no, del texto de la cuenta.
-        prefijo = (clabe[:3] if len(clabe) == 18
-                   else prefijo_desde_texto(reg.get("cuenta", "")))
-        for cola in _colas(clabe) | _colas(numero):
-            self.por_cola.setdefault((prefijo, cola), []).append(entrada)
-
-    @staticmethod
-    def _unico(entradas):
-        """La entrada si la clave resuelve a UNA sola cuenta; None si no o si es
-        ambigua. Varias filas del catálogo que apunten a la misma cuenta de la
-        misma empresa cuentan como una."""
-        if not entradas:
-            return None
-        distintas = {(i, r.get("cuenta", "")) for i, r in entradas}
-        return entradas[0] if len(distintas) == 1 else None
-
+# ---------------------------------------------------------------------------
+# Casado
+# ---------------------------------------------------------------------------
 
 def _formas_cuenta(linea: LineaSaldo) -> list[str]:
-    """Todas las formas en que el número de esta línea puede estar en el catálogo.
+    """Todas las formas en que el número de esta línea puede estar en el formato.
 
-    Un mismo número se escribe distinto según el portal: Banamex reporta sucursal y
-    cuenta en columnas separadas y aquí se concatenan (7004 + 965783), pero el
-    catálogo puede guardar solo la corta. Que el lector declare sus variantes deja
+    Un mismo número se escribe distinto según el portal: Banamex reporta sucursal
+    y cuenta en columnas separadas y el lector las concatena (394 + 7680454),
+    pero el formato guarda solo la corta. Que el lector declare sus variantes deja
     el caso resuelto por número —la regla fuerte— en vez de depender de la cola."""
     formas = [_digitos(linea.cuenta)]
-    for clave in ("cuenta_corta", "cuenta_alterna"):
-        alterna = _digitos((linea.extra or {}).get(clave, ""))
-        if alterna and alterna not in formas:
-            formas.append(alterna)
+    corta = _digitos((linea.extra or {}).get("cuenta_corta", ""))
+    if corta and corta not in formas:
+        formas.append(corta)
+    clabe = _digitos(linea.clabe)
+    if len(clabe) == 18:
+        embebida = clabe[6:17]
+        if embebida and embebida not in formas:
+            formas.append(embebida)
     return [f for f in formas if f]
 
 
-def _casar(linea: LineaSaldo, idx: _Indice):
-    """Aplica la cascada. Devuelve `(entrada, regla, candidatos)`.
+# Índice de las exclusiones: prefijo de CLABE del banco -> números normalizados.
+# Se agrupa por PREFIJO y no por el nombre del banco porque los lectores lo
+# escriben de varias formas ('Scotiabank', 'Scotianbank', 'Banco Sabadell'); el
+# prefijo de Banxico es el único identificador estable que ya maneja el módulo.
+_EXCLUIDAS_POR_PREFIJO: dict[str, set] = {}
+for _banco, _cuenta in CUENTAS_EXCLUIDAS:
+    _pref = prefijo_banco(_banco) or prefijo_desde_texto(_banco)
+    if _pref is None:
+        raise RuntimeError(
+            "CUENTAS_EXCLUIDAS: no se reconoce el banco «{}»".format(_banco))
+    _EXCLUIDAS_POR_PREFIJO.setdefault(_pref, set()).add(_digitos(_cuenta))
+del _banco, _cuenta, _pref
 
-    `entrada` es None si no casó; `candidatos` trae las opciones cuando la cola
-    resultó ambigua, para poder explicárselo al usuario."""
+
+def _excluida(linea: LineaSaldo) -> bool:
+    """Si esta línea está en la lista de cuentas que no van al reporte.
+
+    Se exige que COINCIDAN banco y número. Comparar solo el número invitaría a un
+    choque entre bancos distintos —los formatos cortos son de 7 u 8 dígitos— y
+    dejaría fuera un saldo bueno sin que nadie se entere."""
     clabe = _digitos(linea.clabe)
-    if len(clabe) == 18:
-        entrada = idx._unico(idx.por_clabe.get(clabe, []))
-        if entrada:
-            return entrada, "clabe", []
+    prefijo = clabe[:3] if len(clabe) == 18 else prefijo_banco(linea.banco)
+    numeros = _EXCLUIDAS_POR_PREFIJO.get(prefijo)
+    if not numeros:
+        return False
+    return any(f in numeros for f in _formas_cuenta(linea))
 
-    for forma in _formas_cuenta(linea):
-        corta = _sin_ceros(forma)
-        if not corta:
+
+def _casar(linea: LineaSaldo, plantilla: Plantilla):
+    """Aplica la cascada. Devuelve `(destino, regla)`; `destino` es None si no casó."""
+    clabe = _digitos(linea.clabe)
+    if len(clabe) == 18 and validar_clabe(clabe):
+        destino = plantilla.buscar(clabe)
+        if destino is not None:
+            return destino, "clabe"
+
+    formas = _formas_cuenta(linea)
+    destino = plantilla.buscar(*formas)
+    if destino is not None:
+        return destino, "numero"
+
+    # Último recurso, y solo dentro de la pestaña de ese banco. El prefijo sale de
+    # la CLABE cuando la hay y del nombre canónico cuando no.
+    prefijo = clabe[:3] if len(clabe) == 18 else prefijo_banco(linea.banco)
+    hoja = plantilla.hoja_de_prefijo(prefijo)
+    destino = plantilla.buscar_por_cola(hoja, *formas)
+    if destino is not None:
+        return destino, "cola"
+
+    return None, ""
+
+
+def identificar(lineas, plantilla: Plantilla = None) -> Asignacion:
+    """Coloca cada línea leída en su renglón del formato.
+
+    `lineas` son las `LineaSaldo` que devolvieron los lectores. El orden importa
+    solo para los duplicados: gana la primera que llegó."""
+    plantilla = plantilla or cargar_plantilla()
+    res = Asignacion(plantilla=plantilla)
+
+    for linea in lineas or ():
+        # Antes de casar: una cuenta excluida no debe llegar siquiera a la
+        # plantilla. Si mañana se le abre un renglón, la exclusión seguiría
+        # ganando y el renglón saldría vacío sin explicación.
+        if _excluida(linea):
+            res.excluidas.append(Suelta(
+                linea=linea,
+                motivo="cuenta excluida del reporte a propósito"))
             continue
-        entrada = idx._unico(idx.por_numero.get(corta, []))
-        if entrada:
-            return entrada, "numero", []
-
-    # Último recurso: cola + banco. Solo vale si resuelve a una única cuenta.
-    prefijo = prefijo_banco(linea.banco) or (clabe[:3] if len(clabe) == 18 else None)
-    digitos_reporte = _digitos(linea.cuenta)
-    candidatos: list = []
-    for cola in _colas(digitos_reporte) | _colas(clabe):
-        entradas = idx.por_cola.get((prefijo, cola), [])
-        if not entradas:
+        destino, regla = _casar(linea, plantilla)
+        if destino is None:
+            res.nuevas.append(Suelta(
+                linea=linea,
+                motivo="la cuenta no está en ninguna pestaña del formato"))
             continue
-        # Solo cuentan las que además son compatibles como número: la cola sola
-        # empareja cuentas que no tienen nada que ver (ver _compatibles).
-        viables = [
-            (i, r) for i, r in entradas
-            if _compatibles(digitos_reporte, _digitos(r.get("numero", "")))
-            or _compatibles(digitos_reporte, _digitos(r.get("clabe", ""))[6:17])
-        ]
-        entrada = idx._unico(viables)
-        if entrada:
-            return entrada, "cola", []
-        candidatos.extend(viables)
-    return None, "", candidatos
-
-
-def identificar(lineas, catalogo=None) -> Resultado:
-    """Atribuye cada saldo leído a una empresa del catálogo.
-
-    `catalogo` es un `CatalogoCuentasDispersion`; si no se pasa, se carga el
-    instalado. Devuelve un `Resultado` con lo identificado, lo que no se pudo y los
-    duplicados — los tres importan: un reporte de saldos con huecos silenciosos es
-    peor que uno que los señala.
-    """
-    if catalogo is None:
-        catalogo = cuentas_dispersion.CatalogoCuentasDispersion()
-    idx = _Indice(catalogo)
-    res = Resultado()
-    vistas: dict[tuple, SaldoCuenta] = {}
-
-    for linea in lineas:
-        entrada, regla, candidatos = _casar(linea, idx)
-        if entrada is None:
-            if candidatos:
-                nombres = sorted({f"id {i} · {r.get('cuenta', '')}"
-                                  for i, r in candidatos})
-                res.sin_identificar.append(SinIdentificar(
-                    linea,
-                    f"los últimos {_COLA} dígitos corresponden a "
-                    f"{len(nombres)} cuentas distintas del catálogo",
-                    nombres))
-            else:
-                res.sin_identificar.append(SinIdentificar(
-                    linea, "la cuenta no está en el catálogo"))
+        clave = (destino.hoja, destino.fila)
+        previa = res.colocadas.get(clave)
+        if previa is not None:
+            res.duplicados.append(Suelta(
+                linea=linea,
+                motivo="ya venía en {}; no se suma".format(
+                    previa.linea.origen or "otro archivo")))
             continue
-
-        id_empresa, reg = entrada
-        clave = (id_empresa, reg.get("cuenta", ""))
-        # La moneda del catálogo manda sobre la del reporte: varios portales
-        # (Banregio, Santander) no traen columna de divisa, y el catálogo sí sabe
-        # cuáles cuentas son en dólares.
-        moneda_cat = cuentas_dispersion.MONEDAS.get(reg.get("moneda"))
-        moneda = ("USD" if reg.get("moneda") == 2
-                  else "MXN" if reg.get("moneda") == 1
-                  else (linea.moneda or "MXN"))
-        saldo = SaldoCuenta(
-            id_empresa=id_empresa, banco=linea.banco, cuenta=linea.cuenta,
-            cuenta_catalogo=reg.get("cuenta", ""), saldo=linea.saldo,
-            moneda=moneda, regla=regla, linea=linea)
-
-        anterior = vistas.get(clave)
-        if anterior is not None:
-            # Misma cuenta en dos archivos. No se suma: se conserva la primera y se
-            # reporta, porque duplicar un saldo infla el total sin que se note.
-            res.duplicados.append(SinIdentificar(
-                linea,
-                f"la cuenta ya venía en «{anterior.linea.origen}» "
-                f"(${anterior.saldo:,.2f}); no se suma"))
-            continue
-        vistas[clave] = saldo
-        res.identificados.append(saldo)
-        _ = moneda_cat  # nombre legible de la moneda, por si se quiere mostrar
+        res.colocadas[clave] = Colocada(destino=destino, linea=linea,
+                                        regla=regla)
 
     return res
-
-
-def totales_por_empresa(res: Resultado) -> dict[int, dict[str, float]]:
-    """Total por empresa y moneda: {id_empresa: {'MXN': x, 'USD': y}}.
-
-    No se convierten divisas: mezclar pesos y dólares en un solo total daría una
-    cifra que no significa nada."""
-    out: dict[int, dict[str, float]] = {}
-    for s in res.identificados:
-        out.setdefault(s.id_empresa, {}).setdefault(s.moneda, 0.0)
-        out[s.id_empresa][s.moneda] += s.saldo
-    return out
-
-
-def resumen(res: Resultado) -> str:
-    """Una línea con el desenlace, para el aviso de la interfaz."""
-    partes = [f"{len(res.identificados)} cuenta(s) identificada(s)"]
-    if res.sin_identificar:
-        partes.append(f"{len(res.sin_identificar)} sin identificar")
-    if res.duplicados:
-        partes.append(f"{len(res.duplicados)} duplicada(s)")
-    return " · ".join(partes) + "."

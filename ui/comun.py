@@ -123,13 +123,55 @@ def encabezado_col(titulo: str, ancho: int) -> ft.Container:
     )
 
 
-def tarjeta(titulo: str, cuerpo: ft.Control) -> ft.Card:
+# Alto máximo del menú de un selector buscable. Sin esto, un catálogo largo
+# (las cuentas de dispersión son 199) abre un menú tan alto como la ventana que
+# TAPA el propio campo: no se ve lo que se escribe, ni que se pueda escribir.
+# Acotado, el menú cae debajo del campo y el texto tecleado queda a la vista.
+ALTO_MENU_SELECTOR = 260
+
+
+def selector_buscable(**kwargs) -> ft.Dropdown:
+    """Dropdown con búsqueda por texto que SE NOTA y no tapa el campo.
+
+    Flet ya filtra al escribir con `enable_filter` + `editable`, pero por sí solo
+    eso no se descubre: el control se ve igual que un combo cualquiera y, al
+    abrirlo, la lista se monta encima del campo. El usuario no llega a ver que
+    hay dónde teclear.
+
+    Se resuelve con tres cosas juntas —lupa, texto de pista y alto de menú
+    acotado—, y van aquí para que valgan para todos los selectores y para que el
+    próximo que se agregue las traiga sin tener que acordarse.
+
+    Cualquiera se puede sobrescribir pasándola como argumento."""
+    kwargs.setdefault("enable_filter", True)
+    kwargs.setdefault("editable", True)
+    kwargs.setdefault("leading_icon", ft.Icons.SEARCH)
+    kwargs.setdefault("hint_text", "Escribe para buscar…")
+    kwargs.setdefault("menu_height", ALTO_MENU_SELECTOR)
+    return ft.Dropdown(**kwargs)
+
+
+def tarjeta(titulo: str, cuerpo: ft.Control, ayuda: str = "") -> ft.Card:
+    """Tarjeta con título y, opcionalmente, un ícono de ayuda junto a él.
+
+    `ayuda` mueve las instrucciones del cuerpo al tooltip del ícono: el texto
+    solo hace falta la primera vez, y ocupando un párrafo fijo le roba espacio a
+    lo que sí cambia en cada uso. Mismo patrón que en dispersión (No Pemex)."""
+    encabezado = ft.Text(titulo, weight=ft.FontWeight.BOLD, size=15)
+    if ayuda:
+        # wait_duration=0: el tooltip aparece de inmediato al pasar el mouse, sin
+        # obligar a descubrir que hay que esperar (ni a hacer clic).
+        encabezado = ft.Row(
+            [encabezado,
+             ft.Icon(ft.Icons.HELP_OUTLINE, size=18, color=GRIS,
+                     tooltip=ft.Tooltip(
+                         message=ayuda,
+                         wait_duration=ft.Duration(milliseconds=0)))],
+            spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            tight=True)
     return ft.Card(
         content=ft.Container(
-            content=ft.Column(
-                [ft.Text(titulo, weight=ft.FontWeight.BOLD, size=15), cuerpo],
-                spacing=10,
-            ),
+            content=ft.Column([encabezado, cuerpo], spacing=10),
             padding=16,
         )
     )

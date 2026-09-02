@@ -766,13 +766,31 @@ def _huella(ruta: str) -> str:
         return ""
 
 
+def es_temporal(ruta: str) -> bool:
+    """Archivo de bloqueo de Office (`~$Reporte.xlsx`), no un reporte.
+
+    Word y Excel crean uno junto a cada libro abierto. Aparecen en el diálogo de
+    archivos y se cuelan con un 'seleccionar todo', pero ni siquiera se pueden
+    abrir: Windows los tiene bloqueados."""
+    return os.path.basename(ruta).startswith("~$")
+
+
 def detectar(ruta: str) -> str | None:
     """Nombre del banco cuyo reporte parece ser `ruta`, o None.
 
     Se decide por el CONTENIDO. El nombre del archivo solo desempata cuando dos
-    firmas encajan (p. ej. BANREGIO y MULTIVA comparten 'empresa/cuenta/alias')."""
+    firmas encajan (p. ej. BANREGIO y MULTIVA comparten 'empresa/cuenta/alias').
+
+    Devuelve None también cuando el archivo no se puede ni abrir. La firma dice
+    `str | None` y dejar escapar la excepción la rompía: quien solo quiere saber
+    de qué banco es un archivo no espera tener que atrapar nada."""
+    if es_temporal(ruta):
+        return None
     ext = os.path.splitext(ruta)[1].lower()
-    huella = _huella(ruta)
+    try:
+        huella = _huella(ruta)
+    except ErrorLector:
+        return None
     if not huella:
         return None
     candidatos = [(n, m) for n, exts, m, _ in _LECTORES
@@ -799,8 +817,17 @@ def leer(ruta: str, banco: str | None = None) -> tuple[list[LineaSaldo], str]:
     sus encabezados). Lanza ErrorLector si no se reconoce o si el lector falla."""
     if not os.path.exists(ruta):
         raise ErrorLector(f"No se encontró el archivo «{ruta}».")
+    if es_temporal(ruta):
+        raise ErrorLector(
+            f"«{os.path.basename(ruta)}» es un archivo temporal que Excel crea "
+            "mientras un libro está abierto, no un reporte.")
     nombre = banco or detectar(ruta)
     if nombre is None:
+        # `detectar` devuelve None tanto si no reconoce el formato como si no
+        # pudo abrir el archivo. Se vuelve a intentar la huella para dar el
+        # motivo REAL —«está abierto en Excel» es accionable, «no se reconoce»
+        # manda al usuario a buscar el problema donde no está—.
+        _huella(ruta)
         raise ErrorLector(
             f"No se reconoce de qué banco es «{os.path.basename(ruta)}». "
             "Puede ser un formato nuevo del portal.")
