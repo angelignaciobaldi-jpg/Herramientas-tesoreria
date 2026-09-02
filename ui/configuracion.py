@@ -267,9 +267,26 @@ class SeccionConfiguracion:
         self._recalcular_layout()  # ya con page.width/height reales
         self.page.show_dialog(self.dialogo)
 
+    # Cuántos diálogos se está dispuesto a cerrar buscando el de configuración.
+    # Es un tope de seguridad: normalmente hay 0 o 1 aviso encima.
+    _MAX_POPS_CIERRE = 5
+
     def _cerrar(self, _e=None) -> None:
+        """Cierra el modal de Configuración.
+
+        No basta con un `pop_dialog()`: esa API cierra el ÚLTIMO diálogo abierto,
+        y los avisos (SnackBar de `app.avisar`) también se muestran con
+        `show_dialog`, así que comparten la pila. Si se acaba de mostrar uno —al
+        eliminar un catálogo o quitar un token, por ejemplo— un solo pop cerraba
+        el AVISO y dejaba la configuración abierta, obligando a cerrarla con la X.
+
+        Se cierran los diálogos de encima hasta llegar al propio, usando el valor
+        que devuelve `pop_dialog()` para saber cuál se cerró."""
         self._abierto = False
-        self.page.pop_dialog()
+        for _ in range(self._MAX_POPS_CIERRE):
+            cerrado = self.page.pop_dialog()
+            if cerrado is self.dialogo or cerrado is None:
+                break
 
     # ---------------------------------------------- impresión de cheques
     def _imprimir_calibracion(self, _e=None) -> None:
