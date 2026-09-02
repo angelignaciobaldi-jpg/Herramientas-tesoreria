@@ -87,6 +87,9 @@ bncLay*.pdf
 
 # Registro de fallos al generar el reporte de saldos (ver ui/saldos.py).
 saldos_errores.log
+# Rastro de pasos para diagnosticar cuelgues (ver core/diagnostico.py).
+diagnostico.log
+diagnostico.log.1
 saldos_insumos.xlsx
 saldos_insumos.xlsx.tmp
 saldos_insumos.dañado.xlsx

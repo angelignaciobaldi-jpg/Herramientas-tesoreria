@@ -108,6 +108,20 @@ def _filas(ruta: str, hoja: str = None) -> list:
         libro.close()
 
 
+def es_libro_de_insumos(ruta: str) -> bool:
+    """Si el archivo es el LIBRO de insumos, por los nombres de sus pestañas.
+
+    Se mira solo el índice de hojas —que openpyxl entrega sin leer una sola
+    fila— para no pagar la lectura completa del libro antes de saber qué es.
+    Importa: el libro de insumos ronda los 2 MB y 32 000 filas, y cada apertura
+    cuesta más de diez segundos.
+
+    Basta con DOS secciones para reconocerlo: con una sola, un reporte bancario
+    que por casualidad tuviera una pestaña llamada «NOMINA» se colaría."""
+    hojas = {_clave(h) for h in hojas_de(ruta)}
+    return len(hojas & set(SECCIONES)) >= 2
+
+
 def hojas_de(ruta: str) -> list:
     """Nombres de las pestañas de un .xlsx (vacío si no se puede abrir)."""
     if os.path.splitext(ruta)[1].lower() != ".xlsx":
