@@ -41,7 +41,8 @@ from core.rpa_sipp import (
     SesionSipp,
 )
 from ui.comun import (CENTRO, EMPRESAS, GRIS, ID_POR_EMPRESA, NARANJA,
-                      NOMBRES_EMPRESAS, ROJO, ROJO_BOTON, VERDE)
+                      NOMBRES_EMPRESAS, ROJO, ROJO_BOTON, VERDE,
+                      selector_buscable)
 from ui.tabla_responsiva import (Cabecera, ColumnaTabla, FilaDatos,
                                  SegmentoCabecera, TablaResponsiva)
 from ui.tabla_responsiva import DER as _TDER
@@ -426,8 +427,8 @@ class _Multiseleccion:
 
         # Combo: solo muestra las opciones aún no elegidas; al elegir, se agrega.
         # Sin ancho fijo: llena la columna donde se coloque (ResponsiveRow).
-        self.dd = ft.Dropdown(
-            label=etiqueta, enable_filter=True, editable=True,
+        self.dd = selector_buscable(
+            label=etiqueta,
             options=[ft.dropdown.Option(key=o, text=o) for o in self._opciones],
             on_select=self._agregar,
         )
@@ -637,9 +638,9 @@ class _TablaSolicitudes:
         # más Concepto y Referencia de pago (opcionales). Van en la misma línea
         # que el filtro de vencimiento. Cada 'cuenta' es el valor 'Cuenta' del
         # catálogo de dispersión: es lo que se muestra y por lo que busca el RPA.
-        self.dd_cuenta = ft.Dropdown(
+        self.dd_cuenta = selector_buscable(
             label=_label_requerido("Cuenta Bancaria Origen"),
-            width=340, enable_filter=True, editable=True,
+            width=340,
             tooltip="Cuenta con la que se pagan los proveedores que no tengan una "
                     "propia (ver 'Cuenta origen por proveedor'). Solo puede quedar "
                     "vacía si TODOS los proveedores seleccionados tienen la suya.",
@@ -911,10 +912,9 @@ class _TablaSolicitudes:
             prov, cuenta = par
             etiqueta = f"{prov} · {cuenta}" if cuenta else str(prov)
             propia = self._cuenta_prov.get(par, "")
-            dd = ft.Dropdown(
+            dd = selector_buscable(
                 label="Cuenta Bancaria Origen", width=340,
                 tooltip=f"Cuenta con la que se pagará a {etiqueta}",
-                enable_filter=True, editable=True,
                 value=propia or _OPCION_CUENTA_GENERAL,
                 options=([ft.dropdown.Option(
                     key=_OPCION_CUENTA_GENERAL, text=_OPCION_CUENTA_GENERAL)]
@@ -1013,9 +1013,9 @@ class _TablaSolicitudes:
                 on_change=lambda e, p=par: _toggle(e, p))
             # Cuenta Origen / Concepto / Referencia SIEMPRE se muestran; habilitados
             # solo si el par está marcado. Sin 'dense' (altura estándar de Material).
-            dd_origen = ft.Dropdown(
+            dd_origen = selector_buscable(
                 label="Cuenta Origen (pago en pesos)", width=340,
-                enable_filter=True, editable=True, disabled=not marcado,
+                disabled=not marcado,
                 value=self._clabe_prov.get(par),
                 options=[ft.dropdown.Option(key=cl, text=cta)
                          for cta, cl in self._clabes],
@@ -4796,9 +4796,8 @@ class SeccionDispersionNoPemex:
                 f"No hay cuentas de dispersión{detalle} cargadas para «{empresa}». "
                 "Revisa el catálogo de cuentas en Configuración.", NARANJA)
             return
-        dd = ft.Dropdown(
+        dd = selector_buscable(
             label=_label_requerido("Cuenta Bancaria Origen"), width=420,
-            enable_filter=True, editable=True,
             value=actual if actual in opciones else None,
             options=[ft.dropdown.Option(key=c, text=c) for c in opciones])
 
@@ -4885,9 +4884,8 @@ class SeccionDispersionNoPemex:
         for par in pares:
             prov, cuenta = par
             etiqueta = f"{prov} · {cuenta}" if cuenta else str(prov)
-            dd = ft.Dropdown(
+            dd = selector_buscable(
                 label="Cuenta Origen (pago en pesos)", width=340,
-                enable_filter=True, editable=True,
                 value=clabes_prev.get(par) or None,
                 options=[ft.dropdown.Option(key=cl, text=cta)
                          for cta, cl in opciones])
