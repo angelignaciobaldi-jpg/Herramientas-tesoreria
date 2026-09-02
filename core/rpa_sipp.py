@@ -543,6 +543,9 @@ class SesionSipp:
     # --- Tiempos de espera (ms) ---
     TIMEOUT_NAV = 60_000        # navegación / carga de página
     TIMEOUT_ELEMENTO = 20_000   # aparición de un elemento
+    # Cierre de un modal: es instantáneo o no ocurre. Esperar el timeout
+    # normal aquí solo alarga cada solicitud del lote sin ganar nada.
+    TIMEOUT_MODAL_CIERRE = 5_000
     # Espera de la RESPUESTA de una consulta al backend (buscar solicitudes,
     # listar cuentas, guardar la dispersión). Es aparte de TIMEOUT_NAV y mucho
     # más larga a propósito.
@@ -2612,6 +2615,10 @@ class SesionSipp:
     SEL_DEV_FECHA = "#fh_Devolucion"
     SEL_DEV_GUARDAR = '[ng-click="guardarDevolucion(sn_verDetalle)"]'
     SEL_DEV_REGRESAR = '[ng-click="regresar(true)"]'
+    # Contenedor del modal de solicitudes autorizadas. Se vigila POR EL
+    # CONTENEDOR y no por su botón: mientras siga montado, su overlay
+    # (z-index 999, pointer-events auto) tapa toda la pantalla.
+    SEL_DEV_MODAL_BLOQUEO = "#divBloqueo_modalAyudaSolicitudesAutorizadas"
 
     async def ir_a_devoluciones(self) -> None:
         """Navega a 'Devoluciones de Saldos de Clientes' y deja la pantalla lista.
@@ -2688,17 +2695,55 @@ class SesionSipp:
         return False
 
     async def _cerrar_modal_autorizadas(self) -> None:
-        """Cierra el modal y vuelve al listado, para dejar la pantalla en un estado
-        conocido antes de la siguiente solicitud."""
+        """Cierra el modal de solicitudes autorizadas y vuelve al listado.
+
+        Su botón de cerrar NO pasa la prueba de visibilidad de Playwright (el
+        widget lo dibuja fuera del flujo), así que se dispara su ng-click a nivel
+        DOM. Hacerlo bien importa más de lo que parece: si el modal se queda
+        montado, su overlay tapa la pantalla completa y TODOS los clics
+        posteriores se interceptan. No fallan —`_click_seguro` cae al clic por
+        DOM— pero cada uno paga el timeout entero antes de rendirse, y eso
+        convertía cada solicitud del lote en ~68 s en vez de ~8 s.
+
+        Se comprueba que el contenedor quede oculto de verdad; solo si persiste
+        se recurre a "Regresar", que devuelve al listado desde cero.
+        """
         page = self._exigir_pagina()
-        for sel in ('[ng-click="modalClose()"]', self.SEL_DEV_REGRESAR):
-            try:
-                loc = page.locator(sel).first
-                if await loc.count() and await loc.is_visible():
-                    await self._click_seguro(loc)
-                    await page.wait_for_timeout(1_200)
-            except Exception:  # noqa: BLE001 — cerrar es best-effort
-                pass
+        try:
+            await page.evaluate(
+                """(sel) => {
+                    const b = document.querySelector(sel);
+                    if (b) b.click();
+                }""",
+                '[ng-click="modalClose()"]',
+            )
+        except Exception:  # noqa: BLE001 — se comprueba abajo si funcionó
+            pass
+        try:
+            await page.locator(self.SEL_DEV_MODAL_BLOQUEO).wait_for(
+                state="hidden", timeout=self.TIMEOUT_MODAL_CIERRE)
+            return
+        except PlaywrightTimeoutError:
+            pass
+        # Respaldo: volver al listado, que remonta la vista desde cero y deja la
+        # pantalla utilizable. Se hace por DOM porque, si el modal sigue montado,
+        # su overlay se comería un clic normal.
+        #
+        # NO se intenta ocultar el overlay a mano (display:none sobre el
+        # contenedor): se probó y deja al portal con un estado interno
+        # inconsistente —el botón de agregar desaparece y el lote se detiene—.
+        # Es preferible pagar la espera que quedarse sin pantalla.
+        try:
+            await page.evaluate(
+                """(sel) => {
+                    const b = document.querySelector(sel);
+                    if (b) b.click();
+                }""",
+                self.SEL_DEV_REGRESAR,
+            )
+            await page.wait_for_timeout(1_200)
+        except Exception:  # noqa: BLE001 — cerrar es best-effort
+            pass
 
     async def llenar_devolucion(self, ruta_pdf: str, referencia: str,
                                 fecha: str = "") -> None:
