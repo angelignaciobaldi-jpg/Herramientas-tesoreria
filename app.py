@@ -55,7 +55,7 @@ class AppTesoreria:
         ("devoluciones", "Generar dispersión devoluciones", "CURRENCY_EXCHANGE", True),
         ("dispersion_no_pemex", "Dispersión (No Pemex)", "PAYMENTS", True),
         ("cheques", "Cheques", "REQUEST_QUOTE", False),      # en desarrollo
-        ("saldos", "Saldos", "SAVINGS", False),              # en desarrollo
+        ("saldos", "Saldos", "SAVINGS", True),
     )
 
     @classmethod
@@ -216,8 +216,9 @@ class AppTesoreria:
         # Área de contenido: las pantallas visibles viven aquí; solo se muestra la
         # activa (se alterna 'visible'), en vez de un TabBarView de Material. El
         # orden lo marca MODULOS, el mismo que ordena la barra de navegación.
-        self._secciones = [getattr(self, attr).contenido
+        self._pantallas = [getattr(self, attr)
                            for attr, _etq, _ico, _vis in self._modulos_visibles()]
+        self._secciones = [p.contenido for p in self._pantallas]
         for i, seccion in enumerate(self._secciones):
             seccion.visible = i == 0
         self._area = ft.Column(self._secciones, expand=True)
@@ -285,6 +286,10 @@ class AppTesoreria:
         self._pintar_barra_titulo(oscuro)
         # Ya con la página construida, se cargan los registros guardados.
         self.alta.cargar_desde_db()
+        # La pantalla que arranca al frente también cuenta como «entrada»: si no,
+        # una que difiera su carga a `al_entrar` no la haría nunca mientras nadie
+        # navegue fuera y vuelva.
+        self._avisar_entrada(0)
 
     # ------------------------------------------------------ navegación
     def _construir_nav(self) -> ft.Control:
@@ -356,6 +361,24 @@ class AppTesoreria:
         self._nav_items[anterior]["container"].update()
         self._nav_items[idx]["container"].update()
         self._area.update()
+        self._avisar_entrada(idx)
+
+    def _avisar_entrada(self, idx: int) -> None:
+        """Le avisa a la pantalla que acaba de quedar al frente, si le interesa.
+
+        Sirve para diferir trabajo caro: una pantalla puede dejar sin cargar lo
+        suyo hasta que alguien la abre, en vez de pagarlo en el arranque y hacer
+        esperar a quien ni siquiera va a entrar. Es opcional —la mayoría no lo
+        implementa— y best-effort: un fallo aquí no debe impedir el cambio de
+        pantalla, que ya ocurrió."""
+        pantalla = self._pantallas[idx]
+        al_entrar = getattr(pantalla, "al_entrar", None)
+        if not callable(al_entrar):
+            return
+        try:
+            al_entrar()
+        except Exception:  # noqa: BLE001 — la navegación no debe romperse
+            pass
 
     @staticmethod
     def _logo_src(oscuro: bool) -> str:
