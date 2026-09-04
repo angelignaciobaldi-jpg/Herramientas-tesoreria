@@ -66,7 +66,7 @@ import flet as ft
 
 from core import rutas
 from core import saldos as motor
-from core import diagnostico
+from core import diagnostico, portapapeles
 from core import (saldos_estado, saldos_export, saldos_insumos,
                   saldos_lectores, saldos_plantilla)
 from ui.comun import CENTRO, GRIS, NARANJA, ROJO, ROJO_BOTON, VERDE, tarjeta
@@ -74,6 +74,28 @@ from ui.comun import CENTRO, GRIS, NARANJA, ROJO, ROJO_BOTON, VERDE, tarjeta
 # Todo lo que puede entrar: los portales emiten estos formatos (ver
 # core/saldos_lectores) y los insumos de flujo siempre son hojas de cálculo.
 _EXTENSIONES = ["xlsx", "xls", "csv", "txt", "pdf"]
+
+# Alto máximo de la vista previa del pegado. Da para una docena de renglones —lo
+# que suele traer un portal— sin que el diálogo se estire hasta salirse de la
+# pantalla cuando alguien pega una tabla de doscientas filas.
+_ALTO_VISTA_PEGADO = 260
+# Hasta cuántas pestañas sin llegar se consideran «va avanzando» (ámbar) en vez
+# de «apenas empieza» (rojo). Con quince bancos, tres pendientes es la recta
+# final de una carga normal.
+_BANCOS_POCOS = 3
+# Ancho máximo del contenido de la pantalla. Más allá, las filas se estiran y
+# separan el titular de su importe hasta perder la lectura.
+_ANCHO_CONTENIDO = 1180
+# Ancho útil de la vista previa y de la caja del diálogo. La tabla se reparte
+# dentro de ese ancho, así que nunca hay que desplazarse en horizontal.
+_ANCHO_DIALOGO_PEGADO = 860
+_ANCHO_VISTA_PEGADO = 810
+# Un carácter de Consolas a 11 px. Sirve para repartir el ancho entre columnas
+# según lo que de verdad ocupa cada una, en vez de darles a todas lo mismo.
+_ANCHO_CARACTER = 6.6
+# Separación entre columnas de la vista previa. Se descuenta del presupuesto de
+# ancho al repartirlo (ver `_anchos_columnas`).
+_ESPACIO_COLUMNA = 8
 
 # Cómo se llama cada insumo en pantalla.
 _NOMBRES_INSUMO = {
@@ -250,10 +272,23 @@ class SeccionSaldos:
         self.btn_cargar = ft.FilledTonalButton(
             content="Cargar archivos", icon=ft.Icons.UPLOAD_FILE,
             on_click=self._cargar)
+        # Tres formas de traer lo mismo, porque el diálogo de multiselección es
+        # justo el que da problemas con muchos archivos de nombre largo —y los
+        # reportes de los portales son eso—. Con la carpeta se evita elegirlos
+        # uno por uno; con Ctrl+V, el diálogo entero.
+        self.btn_carpeta = ft.TextButton(
+            content="Cargar carpeta", icon=ft.Icons.FOLDER_OPEN_OUTLINED,
+            tooltip="Toma de una carpeta todo lo que la herramienta reconozca, "
+                    "sin abrir el selector de archivos",
+            on_click=self._cargar_carpeta)
         self.btn_limpiar = ft.TextButton(
             content="Quitar todo", icon=ft.Icons.DELETE_SWEEP_OUTLINED,
             visible=False, on_click=self._limpiar,
             style=ft.ButtonStyle(color=ROJO_BOTON))
+        # Aparece y desaparece con «Quitar todo»: un separador solo, colgando
+        # después del último botón, se lee como un fallo de dibujo.
+        self.separador = ft.Container(width=1, height=22, visible=False,
+                                      bgcolor=ft.Colors.OUTLINE_VARIANT)
         self.btn_generar = ft.FilledButton(
             content="Generar reporte", icon=ft.Icons.TABLE_VIEW,
             disabled=True, on_click=self._generar, style=_estilo_verde())
@@ -271,10 +306,16 @@ class SeccionSaldos:
 
         # Las dos acciones en extremos opuestos del mismo renglón: el grupo de la
         # izquierda se expande y empuja el botón verde al borde derecho.
+        # A la izquierda SOLO lo de todos los días —traer archivos—; a la
+        # derecha el resultado. Antes convivían ahí cuatro acciones con el mismo
+        # peso: «Descargar formato de insumos», que es una tarea semanal, y
+        # «Quitar todo», que es destructiva, entre las dos de cargar. La primera
+        # se movió a la pestaña de Insumos, que es su contexto; la segunda queda
+        # apartada del grupo por un separador.
         acciones = ft.Row(
             [
-                ft.Row([self.btn_cargar, self.btn_formato, self.btn_limpiar,
-                        self.anillo, self.txt_estado],
+                ft.Row([self.btn_cargar, self.btn_carpeta, self.separador,
+                        self.btn_limpiar, self.anillo, self.txt_estado],
                        spacing=8, expand=True, wrap=True,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 self.btn_generar,
@@ -282,6 +323,9 @@ class SeccionSaldos:
             spacing=12, vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
         self.hero = ft.Container(visible=False)
+        # Las quince pestañas del formato, justo debajo de la cifra de cobertura:
+        # la cifra dice CUÁNTO falta y el tablero dice QUÉ falta.
+        self.tablero = ft.Container(visible=False)
         self.avisos = ft.Column(spacing=6, tight=True, visible=False)
 
         # Las dos vistas del resultado. Solo una está visible a la vez; la barra
@@ -318,6 +362,7 @@ class SeccionSaldos:
                 acciones,
                 self.barra,
                 self.hero,
+                self.tablero,
                 self.avisos,
                 self.pestanas,
                 self.cargando_insumos,
@@ -332,8 +377,15 @@ class SeccionSaldos:
                              ayuda=_AYUDA)]
         if self.error_plantilla:
             controles.insert(0, self._aviso_plantilla())
-        return ft.Column(controles, spacing=14, scroll=ft.ScrollMode.AUTO,
-                         expand=True)
+        # Ancho máximo y centrado. A pantalla completa las filas se estiraban a
+        # 1500 px y quedaban mil de vacío entre el titular y su importe: el ojo
+        # pierde el renglón a medio camino. Acotado, la fila se lee de un golpe.
+        return ft.Row(
+            [ft.Container(
+                content=ft.Column(controles, spacing=14,
+                                  scroll=ft.ScrollMode.AUTO, expand=True),
+                width=_ANCHO_CONTENIDO, expand=False)],
+            alignment=ft.MainAxisAlignment.CENTER, expand=True)
 
     def _zona_vacia(self) -> ft.Control:
         """Estado inicial.
@@ -343,6 +395,10 @@ class SeccionSaldos:
         `Draggable` solo mueven controles dentro de la app—, así que un marco
         punteado con una nube prometería algo que no funciona: el usuario
         arrastraría, no pasaría nada, y pensaría que la app está rota.
+
+        Lo que sí se puede es PEGAR, y eso se dice aquí porque no hay forma de
+        adivinarlo: copiar los archivos en el Explorador y soltarlos con Ctrl+V
+        se acerca bastante a arrastrarlos, y de paso se salta el diálogo.
 
         Tampoco lleva botón propio: «Cargar archivos» está a unos pixeles, justo
         arriba, y repetir la misma acción a dos centímetros solo obliga a decidir
@@ -356,7 +412,10 @@ class SeccionSaldos:
             content=ft.Column(
                 [ft.Icon(ft.Icons.FOLDER_OPEN_OUTLINED, size=32, color=GRIS),
                  ft.Text("Todavía no has cargado ningún archivo",
-                         size=13, color=GRIS)],
+                         size=13, color=GRIS),
+                 ft.Text("Cópialos en el Explorador y pégalos aquí con Ctrl+V, "
+                         "o usa «Cargar carpeta»",
+                         size=11, color=GRIS, italic=True)],
                 spacing=8, tight=True,
                 horizontal_alignment=ft.CrossAxisAlignment.CENTER),
             alignment=CENTRO, padding=ft.Padding.symmetric(vertical=24),
@@ -389,10 +448,265 @@ class SeccionSaldos:
                               "{}".format(len(archivos or [])))
         if not archivos:
             return
-        rutas = [a.path for a in archivos]
-        diagnostico.registrar("saldos._cargar: rutas", " | ".join(rutas)[:400])
+        await self._ingerir([a.path for a in archivos])
+
+    async def _cargar_carpeta(self, _e=None) -> None:
+        """Toma de una carpeta todo lo que reconozca, sin elegir uno por uno.
+
+        Es la vía cómoda para la carpeta de descargas del navegador, donde caen
+        los reportes tal cual los deja cada portal. Y evita el diálogo de
+        MULTISELECCIÓN, que en esta app ya dio problemas con muchos archivos de
+        nombre largo (misma nota en ui/alta_beneficiarios) — y los reportes de
+        saldos son justo eso.
+
+        Solo el primer nivel: las subcarpetas suelen ser de otros días."""
+        diagnostico.registrar("saldos._cargar_carpeta: pidiendo carpeta")
+        carpeta = await self.app.picker.get_directory_path(
+            dialog_title="Elige la carpeta con los reportes de saldos")
+        diagnostico.registrar("saldos._cargar_carpeta: carpeta",
+                              str(carpeta or "")[:300])
+        if not carpeta:
+            return
+        exts = tuple("." + e.lower() for e in _EXTENSIONES)
+        try:
+            rutas = [os.path.join(carpeta, n) for n in sorted(os.listdir(carpeta))
+                     if n.lower().endswith(exts)
+                     and os.path.isfile(os.path.join(carpeta, n))]
+        except OSError as exc:
+            self.app.avisar(f"No se pudo leer la carpeta: {exc}", ROJO)
+            return
+        if not rutas:
+            self.app.avisar(
+                "Esa carpeta no tiene archivos que la herramienta pueda leer "
+                "({}).".format(", ".join(_EXTENSIONES)), NARANJA)
+            return
+        await self._ingerir(rutas)
+
+    def _on_teclado(self, e) -> None:
+        """Ctrl+V pega los archivos que se hayan copiado en el Explorador.
+
+        El evento llega a TODAS las pantallas —el slot de teclado es único y el
+        shell lo reparte—, así que lo primero es comprobar que la nuestra sea la
+        que está al frente."""
+        if not getattr(self.contenido, "visible", False):
+            return
+        if not (e.ctrl and str(e.key).lower() in ("v", "insert")):
+            return
+        if self._leyendo:
+            return   # ya hay una lectura en curso
+        self.page.run_task(self._pegar)
+
+    async def _pegar(self, _e=None) -> None:
+        """Carga lo que haya en el portapapeles: archivos o una tabla copiada.
+
+        Los archivos ganan: si hay ambos —pasa al copiar desde Excel— lo que el
+        usuario quiso traer casi siempre es el archivo."""
+        diagnostico.registrar("saldos._pegar: leyendo portapapeles")
+        rutas = await asyncio.to_thread(portapapeles.archivos)
+        diagnostico.registrar("saldos._pegar: rutas", "{}".format(len(rutas)))
+        if rutas:
+            await self._ingerir(rutas)
+            return
+
+        texto = await asyncio.to_thread(portapapeles.texto)
+        diagnostico.registrar("saldos._pegar: texto",
+                              "{} caracteres".format(len(texto or "")))
+        if texto and texto.strip():
+            self._confirmar_pegado(texto)
+            return
+        self.app.avisar(
+            "No hay nada que pegar. Copia los archivos en el Explorador, o "
+            "selecciona la tabla del portal del banco y cópiala con Ctrl+C.",
+            NARANJA)
+
+    def _confirmar_pegado(self, texto: str) -> None:
+        """Muestra qué se pegó y de qué banco cree que es, antes de cargarlo.
+
+        NO se carga en silencio a propósito. Un pegado no trae nombre de archivo
+        ni extensión, así que la firma tiene que desambiguar sola y hay bancos
+        que comparten encabezados (`alias`, `cuenta`, `divisa`). Enseñar la tabla
+        y dejar corregir el banco cuesta un clic; meter los saldos de un banco en
+        la pestaña de otro no se ve hasta que el reporte ya se firmó."""
+        filas = saldos_lectores.filas_pegadas(texto)
+        detectado = saldos_lectores.detectar_pegado(filas)
+        bancos = saldos_lectores.bancos_pegables()
+
+        # Sin banco no se puede cargar, y el botón apagado junto a un selector
+        # vacío ya lo dice: sustituye al texto que antes explicaba que no se
+        # había reconocido, sin gastar un renglón en decirlo.
+        boton = ft.FilledButton("Cargar", disabled=detectado is None,
+                                style=_estilo_verde())
+        # En un Column `expand` estira a lo ALTO, así que para ocupar todo el
+        # ancho el selector va dentro de un Row, donde `expand` es horizontal.
+        selector = ft.Dropdown(
+            label="Banco", value=detectado, expand=True,
+            options=[ft.dropdown.Option(key=b, text=b) for b in bancos])
+
+        def elegir(_ev=None):
+            boton.disabled = not selector.value
+            # Se refresca el DIÁLOGO, no el botón: los controles de `actions`
+            # viven fuera del árbol del contenido y actualizarlos por separado no
+            # llega a la pantalla —el botón se quedaba apagado aunque ya hubiera
+            # banco elegido, y no había forma de cargar—.
+            self._refrescar(dlg)
+
+        # `on_select`, NO `on_change`: el Dropdown de Flet 0.85 solo expone el
+        # primero (el segundo se puede asignar sin error y no dispara nunca, que
+        # es lo que dejaba el botón apagado con el banco ya elegido). Mismo
+        # evento que usan los selectores de dispersión.
+        selector.on_select = elegir
+
+        def cargar(_ev=None):
+            self.page.pop_dialog()
+            self.page.run_task(self._cargar_pegado, texto, selector.value)
+
+        boton.on_click = cargar
+        dlg = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Pegar datos"),
+            content=ft.Column(
+                [ft.Row([selector], tight=True), self._vista_previa(filas)],
+                spacing=12, tight=True, width=_ANCHO_DIALOGO_PEGADO,
+                horizontal_alignment=ft.CrossAxisAlignment.STRETCH),
+            actions=[
+                ft.TextButton("Cancelar",
+                              on_click=lambda e: self.page.pop_dialog()),
+                boton,
+            ],
+            actions_alignment=ft.MainAxisAlignment.END)
+        self.page.show_dialog(dlg)
+
+    @staticmethod
+    def _vista_previa(filas: list) -> ft.Control:
+        """Todo lo pegado, en una tabla con UNA sola barra de desplazamiento.
+
+        Se muestran TODOS los renglones: quien pega viene a comprobar que están
+        sus cuentas, y un «… y 12 más» deja fuera justo lo que quería revisar.
+
+        Antes había dos barras y se estorbaban. La horizontal pertenecía a un
+        renglón tan alto como la tabla entera, así que quedaba al fondo del
+        CONTENIDO y no de la caja: para alcanzarla había que bajar hasta el final,
+        y al llegar tapaba la última fila. Anidar scrolls al revés solo cambia
+        cuál de las dos estorba.
+
+        La solución es que sobre una. Las columnas se reparten el ancho según lo
+        que de verdad ocupa cada una —«Hora» no necesita lo mismo que «Titular»—,
+        así que la tabla cabe y solo queda la barra vertical, siempre en el mismo
+        sitio. Lo que no cabe se recorta con puntos suspensivos y se puede leer
+        completo en el tooltip de la celda."""
+        if not filas:
+            return ft.Container(
+                content=ft.Text("(vacío)", size=11, color=GRIS),
+                padding=10, border_radius=6,
+                bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.ON_SURFACE),
+                height=_ALTO_VISTA_PEGADO)
+
+        def texto(v):
+            return str(v if v is not None else "").strip()
+
+        anchos = SeccionSaldos._anchos_columnas(filas)
+
+        def celda(v, ancho, cabecera=False):
+            t = texto(v)
+            return ft.Text(
+                t, size=11, font_family="Consolas", width=ancho, no_wrap=True,
+                overflow=ft.TextOverflow.ELLIPSIS,
+                weight=ft.FontWeight.BOLD if cabecera else None,
+                # El tooltip salva lo que el recorte esconde, sin gastar ancho.
+                tooltip=t if len(t) * _ANCHO_CARACTER > ancho else None)
+
+        renglones = [
+            ft.Row([celda(v, a, i == 0) for v, a in zip(f, anchos)],
+                   spacing=_ESPACIO_COLUMNA, tight=True)
+            for i, f in enumerate(filas)]
+        return ft.Container(
+            content=ft.Column(renglones, scroll=ft.ScrollMode.AUTO, spacing=2,
+                              tight=True),
+            # El relleno derecho deja libre el carril de la barra vertical, para
+            # que no se monte sobre la última columna.
+            padding=ft.Padding.only(left=10, top=10, bottom=10, right=22),
+            border_radius=6,
+            bgcolor=ft.Colors.with_opacity(0.05, ft.Colors.ON_SURFACE),
+            height=_ALTO_VISTA_PEGADO)
+
+    @staticmethod
+    def _anchos_columnas(filas: list) -> list:
+        """Ancho en píxeles de cada columna, repartiendo `_ANCHO_VISTA_PEGADO`.
+
+        Cada columna pide lo que ocupa su celda más larga. Si entre todas se
+        pasan del ancho disponible, se recorta a las MÁS ANCHAS primero: son las
+        de texto libre —titulares, mensajes de error— donde perder el final no
+        impide reconocer la fila, mientras que cuentas e importes se leen enteros
+        precisamente porque son cortos."""
+        columnas = max((len(f) for f in filas), default=0)
+        if not columnas:
+            return []
+        pedidos = []
+        for c in range(columnas):
+            largo = max((len(str(f[c]).strip()) if c < len(f) and f[c] is not None
+                         else 0) for f in filas)
+            pedidos.append(max(4, largo) * _ANCHO_CARACTER + 8)
+
+        # Los separadores entre columnas también ocupan: si no se descuentan del
+        # presupuesto, la tabla se pasa por justo esos pixeles y reaparece la
+        # barra horizontal que este reparto existe para evitar.
+        disponible = _ANCHO_VISTA_PEGADO - _ESPACIO_COLUMNA * (columnas - 1)
+        # Se baja el techo hasta que la suma quepa. Es un reparto sencillo y
+        # estable: no depende del orden de las columnas ni deja huecos.
+        #
+        # El piso es lo que le tocaría a cada columna a partes iguales: por
+        # debajo de eso, encoger a las anchas ya no puede hacer caber la tabla y
+        # el bucle solo estrecharía las angostas sin ganar nada. Con un piso fijo
+        # —antes 40 px— una tabla de veinte columnas se pasaba igual.
+        techo = max(pedidos)
+        piso = max(28.0, disponible / columnas)
+        while sum(min(p, techo) for p in pedidos) > disponible and techo > piso:
+            techo -= 5
+        return [min(p, techo) for p in pedidos]
+
+    async def _cargar_pegado(self, texto: str, banco: str) -> None:
+        """Interpreta la tabla pegada y la suma como un reporte más."""
+        diagnostico.registrar("saldos._cargar_pegado", str(banco))
+        self._ocupado(True, "Leyendo lo pegado…")
+        try:
+            lineas, nombre = await asyncio.to_thread(
+                saldos_lectores.leer_pegado, texto, banco)
+        except saldos_lectores.ErrorLector as exc:
+            self._ocupado(False)
+            self.app.avisar(str(exc), ROJO, duracion=ft.Duration(seconds=12))
+            return
+        except BaseException as exc:  # noqa: BLE001 — se reporta al usuario
+            self._ocupado(False)
+            self._registrar_error(exc, "(pegado)")
+            self.app.avisar(f"No se pudo leer lo pegado: {exc}", ROJO)
+            return
+
+        # Se etiqueta con la hora para distinguir dos pegados del mismo banco
+        # —el portal a veces entrega pesos y dólares en tablas aparte— y para
+        # que el descarte de repetidos no los confunda con un archivo.
+        etiqueta = "(pegado) {} · {}".format(
+            nombre, datetime.datetime.now().strftime("%H:%M:%S"))
+        self.archivos.append({
+            "ruta": etiqueta, "clase": "banco", "banco": nombre,
+            "cuentas": len(lineas), "tipo": "", "filas": 0, "error": "",
+            "lineas": lineas, "datos": None, "secciones": []})
+        self._reidentificar()
+        self._ocupado(False)
+        self._pintar()
+        self.app.avisar(
+            "Se leyeron {} cuenta(s) de {} desde lo pegado.".format(
+                len(lineas), nombre),
+            VERDE if lineas else NARANJA)
+
+    async def _ingerir(self, rutas: list) -> None:
+        """Lee y suma los archivos, vengan de donde vengan.
+
+        Los tres caminos —elegirlos, tomar una carpeta o pegarlos— terminan aquí:
+        así el descarte de repetidos, la lectura y el aviso final son idénticos y
+        no hay tres versiones que mantener."""
+        diagnostico.registrar("saldos._ingerir: rutas", " | ".join(rutas)[:400])
         # Un archivo que ya está cargado no se vuelve a leer: repetirlo solo
-        # produciría cuentas duplicadas que después hay que descartar.
+        # produciría cuentas duplicadas que después hay que descartar.  # noqa
         ya = {a["ruta"] for a in self.archivos} | {x["ruta"] for x in self.insumos}
         nuevas = [r for r in rutas if r not in ya]
         repetidos = len(rutas) - len(nuevas)
@@ -642,6 +956,46 @@ class SeccionSaldos:
             border=ft.Border(bottom=ft.BorderSide(1, ft.Colors.OUTLINE_VARIANT)))
 
     # ------------------------------------------------------------------ hero
+    def _tablero_bancos(self) -> ft.Control:
+        """Las quince pestañas del formato, con cuáles ya llegaron.
+
+        Sustituye al aviso en prosa —«No llegó ningún saldo de BAJIO, BANCOMER,
+        BANCOPPEL, …»—, que era trece nombres corridos a lo ancho de la pantalla.
+        La pregunta de cada mañana es «¿cuál me falta?», y esa lista obligaba a
+        compararla de memoria contra lo ya subido.
+
+        Aquí están SIEMPRE las quince: verde la que está completa, ámbar la que
+        llegó a medias y apagada la que no ha llegado. Es una lista de pendientes
+        que se va tachando sola conforme se cargan archivos."""
+        cobertura = self.asignacion.cobertura_por_hoja()
+        return ft.Row([self._ficha_banco(h, *v) for h, v in cobertura.items()],
+                      spacing=6, wrap=True, run_spacing=6)
+
+    @staticmethod
+    def _ficha_banco(hoja: str, llenos: int, total: int) -> ft.Control:
+        """Una pestaña del formato y cómo va. Verde / ámbar / apagada."""
+        if llenos >= total:
+            color, icono = VERDE, ft.Icons.CHECK_CIRCLE
+        elif llenos:
+            color, icono = NARANJA, ft.Icons.INCOMPLETE_CIRCLE
+        else:
+            color, icono = GRIS, ft.Icons.CIRCLE_OUTLINED
+        detalle = ("{}/{}".format(llenos, total) if 0 < llenos < total
+                   else str(total))
+        return ft.Container(
+            content=ft.Row(
+                [ft.Icon(icono, size=13, color=color),
+                 ft.Text(hoja, size=11, color=color,
+                         weight=ft.FontWeight.W_500 if llenos else None),
+                 ft.Text(detalle, size=10, color=GRIS)],
+                spacing=5, tight=True,
+                vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            padding=ft.Padding.symmetric(vertical=4, horizontal=9),
+            border_radius=20,
+            bgcolor=ft.Colors.with_opacity(0.10 if llenos else 0.04, color),
+            border=ft.Border.all(1, ft.Colors.with_opacity(
+                0.35 if llenos else 0.15, color)))
+
     def _panel_cobertura(self) -> ft.Control:
         """La cifra que manda: cuántos renglones del formato quedaron llenos.
 
@@ -650,8 +1004,14 @@ class SeccionSaldos:
         segundo que revisa tesorería."""
         res = self.asignacion
         razon = res.llenos / res.total_renglones if res.total_renglones else 0
-        color = (VERDE if razon >= _COBERTURA_BUENA
-                 else NARANJA if razon >= _COBERTURA_REGULAR else ROJO)
+        # El color lo mandan los BANCOS que faltan, no el porcentaje de
+        # renglones. Con el porcentaje, subir los quince reportes de uno en uno
+        # dejaba el indicador en rojo durante todo el proceso normal: solo se
+        # ponía verde al final, así que el 90% del tiempo gritaba alarma sin que
+        # hubiera nada mal. Contado por bancos distingue «voy a la mitad» de
+        # «terminé y hay un hueco», que es lo que de verdad importa.
+        faltan = len(res.bancos_faltantes())
+        color = VERDE if not faltan else NARANJA if faltan <= _BANCOS_POCOS else ROJO
 
         izquierda = ft.Column(
             [
@@ -765,8 +1125,9 @@ class SeccionSaldos:
         # plegar y desplegar no debe rehacer el trabajo.
         def al_cambiar(_e, tile=tile, cuentas=cuentas):
             if not tile.controls:
-                tile.controls = [self._fila_cuenta(c, compartida)
-                                 for c in cuentas]
+                tile.controls = [self._encabezado_cuentas(compartida)]
+                tile.controls += [self._fila_cuenta(c, compartida)
+                                  for c in cuentas]
                 self._refrescar(tile)   # traga el update si aún no está montado
         tile.on_change = al_cambiar
         return tile
@@ -792,13 +1153,39 @@ class SeccionSaldos:
         celdas += [
             ft.Text("" if divisa == "MXN" else divisa, size=11, color=GRIS,
                     width=34, text_align=ft.TextAlign.RIGHT),
+            # Los ceros van atenuados. En una pestaña típica la mayoría de las
+            # cuentas están en cero, y con el mismo peso que los saldos vivos
+            # obligan a leer las quince filas para encontrar las dos que hay que
+            # cotejar contra el portal.
             ft.Text(f"{colocada.saldo:,.2f}", size=12, width=126,
-                    text_align=ft.TextAlign.RIGHT),
+                    text_align=ft.TextAlign.RIGHT,
+                    color=GRIS if not colocada.saldo else None),
         ]
         return ft.Container(
             content=ft.Row(celdas, spacing=10,
                            vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.Padding.symmetric(vertical=4))
+
+    @staticmethod
+    def _encabezado_cuentas(con_banco: bool = False) -> ft.Control:
+        """Los títulos de las columnas del desplegable.
+
+        Sin ellos, `7680454 · ABASTECEDORA … · 131,151.64` no dice si el primer
+        número es la cuenta, la sucursal o un folio."""
+        def celda(texto, **kw):
+            return ft.Text(texto, size=10, color=GRIS,
+                           weight=ft.FontWeight.W_500, **kw)
+        celdas = [celda("Cuenta", width=130),
+                  celda("Titular", expand=True)]
+        if con_banco:
+            celdas.append(celda("Banco", width=90))
+        celdas += [celda("", width=34),
+                   celda("Saldo", width=126, text_align=ft.TextAlign.RIGHT)]
+        return ft.Container(
+            content=ft.Row(celdas, spacing=10),
+            padding=ft.Padding.only(bottom=4),
+            border=ft.Border(
+                bottom=ft.BorderSide(1, ft.Colors.OUTLINE_VARIANT)))
 
     # ------------------------------------------------- insumos persistidos
     def _filas_secciones(self) -> list:
@@ -807,18 +1194,23 @@ class SeccionSaldos:
         Se listan LAS SEIS aunque estén vacías: así se ve de un vistazo qué falta
         capturar, no solo lo que ya está."""
         filas = []
-        # Acción en bloque, arriba y sobre la misma columna que los botones de
-        # cada renglón: quien viene a empezar de cero no tiene que ir borrando de
-        # uno en uno. Solo aparece si hay algo que borrar.
+        acciones = [self.btn_formato]
+        # «Vaciar todo» solo aparece si hay algo que borrar: quien viene a
+        # empezar de cero no tiene que ir borrando de uno en uno.
         if any(self.guardados.values()):
-            filas.append(ft.Container(
-                content=ft.Row(
-                    [ft.TextButton(
-                        content="Vaciar todo", icon=ft.Icons.DELETE_SWEEP_OUTLINED,
-                        style=ft.ButtonStyle(color=ROJO_BOTON),
-                        on_click=self._confirmar_vaciar_todo)],
-                    alignment=ft.MainAxisAlignment.END),
-                padding=ft.Padding.only(bottom=4)))
+            acciones.append(ft.TextButton(
+                content="Vaciar todo", icon=ft.Icons.DELETE_SWEEP_OUTLINED,
+                style=ft.ButtonStyle(color=ROJO_BOTON),
+                on_click=self._confirmar_vaciar_todo))
+        # Las dos acciones de los insumos en un solo renglón y en extremos
+        # opuestos: traer el formato a la izquierda, vaciar a la derecha. El
+        # formato se descarga desde AQUÍ —donde se está pensando en los
+        # insumos— y no desde la barra de acciones diarias, que es de todos los
+        # días mientras que esto se hace una vez por semana.
+        filas.insert(0, ft.Container(
+            content=ft.Row(acciones,
+                           alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            padding=ft.Padding.only(bottom=6)))
         for seccion in saldos_insumos.SECCIONES:
             datos = self.guardados.get(seccion)
             n = _filas_de(datos)
@@ -1012,14 +1404,12 @@ class SeccionSaldos:
         res = self.asignacion
         avisos = []
 
-        faltan = res.bancos_faltantes()
-        if faltan:
-            avisos.append((
-                ft.Icons.WARNING_AMBER, NARANJA,
-                "No llegó ningún saldo de " + ", ".join(faltan)
-                + ". Si te faltó subir ese reporte, sus renglones saldrán "
-                  "vacíos."))
-        elif res.vacios:
+        # Qué pestañas faltan ya lo dice el tablero de fichas, con los quince
+        # bancos a la vista; repetirlo aquí en prosa era la peor versión de la
+        # misma información. Solo se conserva el aviso de los renglones sueltos,
+        # que el tablero NO cubre: una pestaña puede haber llegado y aun así
+        # dejar cuentas vacías dentro.
+        if res.vacios and not res.bancos_faltantes():
             avisos.append((
                 ft.Icons.HELP_OUTLINE, NARANJA,
                 f"{len(res.vacios)} renglón(es) quedaron vacíos porque ningún "
@@ -1075,6 +1465,7 @@ class SeccionSaldos:
             else self._fila_archivo(x) for x in cargados]
         self.vacio.visible = not hay
         self.btn_limpiar.visible = hay
+        self.separador.visible = hay
         self.tab_archivos.label = f"Archivos cargados ({len(cargados)})"
         # Basta con un archivo bancario leído: los insumos nunca son requisito.
         self.btn_generar.disabled = not (self.asignacion
@@ -1083,6 +1474,8 @@ class SeccionSaldos:
         if self.asignacion is not None:
             self.hero.content = self._panel_cobertura()
             self.hero.visible = True
+            self.tablero.content = self._tablero_bancos()
+            self.tablero.visible = True
             self.avisos.controls = self._lista_avisos()
             self.avisos.visible = bool(self.avisos.controls)
             self.bancos.controls = self._grupos_por_banco()
@@ -1091,6 +1484,8 @@ class SeccionSaldos:
         else:
             self.hero.visible = False
             self.hero.content = None
+            self.tablero.visible = False
+            self.tablero.content = None
             self.avisos.visible = False
             self.avisos.controls = []
             self.bancos.controls = []
@@ -1103,13 +1498,16 @@ class SeccionSaldos:
         self._aplicar_pestana()
 
         self.secciones.controls = self._filas_secciones()
+        # Las tres pestañas cuentan ELEMENTOS. El «5 de 6» de antes mezclaba una
+        # métrica de completitud con dos de conteo, y sobre todo se leía como si
+        # faltara algo urgente cuando cinco es lo normal: impuestos no se usa.
         vivos = sum(1 for x in self.guardados.values() if x)
-        self.tab_insumos.label = "Insumos de flujo ({} de {})".format(
-            vivos, len(saldos_insumos.SECCIONES))
+        self.tab_insumos.label = "Insumos de flujo ({})".format(vivos)
         self._refrescar(self.lista, self.vacio, self.pestanas,
-                        self.btn_limpiar, self.btn_generar, self.hero,
+                        self.btn_limpiar, self.separador, self.btn_generar,
+                        self.hero,
                         self.avisos, self.bancos, self.secciones,
-                        self.cargando_insumos)
+                        self.cargando_insumos, self.tablero)
 
     def _cambiar_pestana(self, e) -> None:
         self._pestana = e.control.selected_index
@@ -1131,10 +1529,14 @@ class SeccionSaldos:
         self.anillo.visible = activo
         self.barra.visible = activo
         self.barra.value = 0 if activo else None
+        # Se bloquean las TRES entradas, no solo el botón: si no, pegar con
+        # Ctrl+V a media lectura arrancaría otra en paralelo sobre los mismos
+        # archivos. `_leyendo` es lo que consulta el atajo de teclado.
         self.btn_cargar.disabled = activo
+        self.btn_carpeta.disabled = activo
         self.txt_estado.value = mensaje
         self._refrescar(self.anillo, self.barra, self.btn_cargar,
-                        self.txt_estado)
+                        self.btn_carpeta, self.txt_estado)
 
     @staticmethod
     def _refrescar(*controles) -> None:
@@ -1196,6 +1598,41 @@ class SeccionSaldos:
         except Exception:  # noqa: BLE001 — nada más que hacer; ya no bloquea
             pass
 
+    @staticmethod
+    def _capturas_de_la_semana() -> dict:
+        """Lo que tesorería tecleó a mano en el reporte, para volver a ponerlo.
+
+        Los pagos y los importes de ACP e IMPUESTOS no salen de ningún archivo:
+        se escriben en Excel sobre el reporte ya generado. Como cada corrida
+        parte del libro base, salían en blanco y había que recapturarlos.
+
+        Se leen del ÚLTIMO reporte generado, que es donde están los más nuevos, y
+        se guardan aparte por si ese archivo se mueve o se borra. Lo que traiga
+        el archivo gana sobre lo guardado: es lo que el usuario acaba de escribir.
+
+        Todo es best-effort. Si algo falla se genera sin las capturas —que es
+        exactamente lo que pasaba antes— en vez de no generar."""
+        lunes = saldos_export._lunes_de(datetime.datetime.now())
+        try:
+            guardadas = saldos_estado.manuales_semana(lunes)
+        except Exception:  # noqa: BLE001 — se sigue sin lo guardado
+            guardadas = {}
+        try:
+            del_archivo = saldos_export.leer_manuales(
+                saldos_estado.ultimo_reporte())
+        except Exception:  # noqa: BLE001 — se sigue sin releer el anterior
+            del_archivo = {}
+        guardadas.update(del_archivo)
+        diagnostico.registrar(
+            "saldos: capturas de la semana",
+            "{} celda(s), semana del {}".format(len(guardadas), lunes.date()))
+        if guardadas:
+            try:
+                saldos_estado.guardar_manuales(lunes, guardadas)
+            except Exception:  # noqa: BLE001 — guardar no es crítico
+                pass
+        return guardadas
+
     def _registrar_error(self, exc: BaseException, ruta: str) -> str:
         """Guarda el detalle del fallo en un archivo y devuelve su ruta.
 
@@ -1222,6 +1659,21 @@ class SeccionSaldos:
         if not (self.asignacion and self.asignacion.colocadas):
             self.app.avisar("No hay saldos que reportar.", NARANJA)
             return
+        # El botón se apaga desde el PRIMER clic y no se vuelve a encender hasta
+        # el final. El modal de espera no alcanza: entre pulsar y verlo aparecer
+        # hay que pasar por el diálogo de guardado y por la lectura de lo
+        # capturado, y ahí el botón seguía vivo. `disabled` no se pierde con los
+        # repintados intermedios porque `_pintar` lo recalcula igual.
+        self.btn_generar.disabled = True
+        self._refrescar(self.btn_generar)
+        try:
+            await self._generar_ya()
+        finally:
+            self.btn_generar.disabled = not (self.asignacion
+                                             and self.asignacion.colocadas)
+            self._refrescar(self.btn_generar)
+
+    async def _generar_ya(self) -> None:
         await self._asegurar_estado()
         hoy = datetime.date.today().strftime("%d-%m-%Y")
         ruta = await self.app.picker.save_file(
@@ -1231,11 +1683,14 @@ class SeccionSaldos:
             return
         if not ruta.lower().endswith(".xlsx"):
             ruta += ".xlsx"
-        # Lo guardado manda como base y lo de esta sesión ya está fundido ahí,
-        # así que se usa `self.guardados`: es lo mismo que el usuario descargaría.
-        insumos = dict(self.guardados)
-        anterior = saldos_estado.totales_dia_anterior()
-
+        # La espera se abre AQUÍ, en cuanto hay ruta, y no justo antes de
+        # escribir: entre medias se relee lo capturado del reporte anterior, y
+        # eso tarda lo suyo. Con el modal después, la ventana se quedaba quieta
+        # sin explicación y el usuario volvía a pulsar «Generar».
+        #
+        # No puede abrirse antes del diálogo de guardado: ese es una ventana del
+        # sistema y quedaría por detrás del modal.
+        #
         # NO se avisa nada mientras el modal está abierto. `app.avisar` muestra el
         # snackbar con `page.show_dialog`, o sea LA MISMA PILA que el modal: si se
         # avisa antes de cerrarlo, el `pop_dialog` de después se lleva el snackbar
@@ -1244,9 +1699,15 @@ class SeccionSaldos:
         info = fallo = None
         self._abrir_espera()
         try:
+            # Lo guardado manda como base y lo de esta sesión ya está fundido
+            # ahí, así que se usa `self.guardados`: es lo mismo que el usuario
+            # descargaría.
+            insumos = dict(self.guardados)
+            anterior = saldos_estado.totales_dia_anterior()
+            manuales = await asyncio.to_thread(self._capturas_de_la_semana)
             info = await asyncio.to_thread(
                 saldos_export.generar, ruta, self.asignacion, insumos,
-                None, anterior)
+                None, anterior, manuales)
         except BaseException as exc:  # noqa: BLE001 — se reporta abajo, ya cerrado
             fallo = exc
         finally:
@@ -1269,6 +1730,9 @@ class SeccionSaldos:
             return
 
         saldos_estado.guardar_totales(info.get("totales_cabecera") or {})
+        # Se recuerda ESTE reporte: mañana es de donde salen los pagos y los
+        # importes que se escriban hoy en él.
+        saldos_estado.guardar_ultimo_reporte(ruta)
 
         detalle = f"{info['llenos']} de {info['renglones']} renglones"
         if info["nuevas"]:
