@@ -59,6 +59,39 @@ _ROL_CUENTA_ABAJO = "_fila_cuenta_abajo"
 CELDA_FECHA = "L3"
 CELDA_HORA = "L4"
 
+# El calendario de flujo lleva la fecha de cada día en la columna L, pero SOLO el
+# lunes está escrito: los demás son `=+L10+1` y encadenan solos. Son cuatro
+# anclas, una por panel, y de ellas cuelgan los paneles de abajo (`L50=+L30`,
+# `L60=+L40`, `L68=+L60`), así que basta con escribir estas cuatro para que las
+# siete semanas queden en su sitio.
+#
+# Estaban clavadas en el formato —traían la semana del 24 de agosto— y nadie las
+# movía al generar: el reporte salía con el calendario de una semana vieja y los
+# importes de esta, que es peor que no traer fecha.
+CELDAS_SEMANA = ("L10", "L20", "L30", "L40")
+
+# Lo que tesorería CAPTURA A MANO en el calendario de flujo y hay que conservar
+# durante la semana. El formato no lo calcula: son celdas vacías que se llenan en
+# Excel, así que cada reporte nuevo salía en blanco y había que recapturarlas.
+#
+# La columna la fija el propio formato en la fila 8: M='Pago', N='Saldo',
+# O='Importe'. Los ocho paneles son TOTAL (10-16), PEMEX (20), MGC (30), TESORO
+# (40), ACP (50), NÓMINA (60), IMPUESTOS (68) y CRÉDITOS (76).
+#
+# El panel TOTAL queda FUERA a propósito: su `M10` es `=+M20+M30+M50+…`, la suma
+# de los demás. Escribir ahí un valor destruiría la consolidación.
+_PANELES_MANUALES = ((20, 26), (30, 36), (40, 46), (50, 56), (60, 64),
+                     (68, 72), (76, 82))
+CELDAS_PAGOS = tuple("M{}".format(f)
+                     for ini, fin in _PANELES_MANUALES
+                     for f in range(ini, fin + 1))
+# El importe solo se teclea en los dos paneles que no lo derivan de un ledger:
+# ACP e IMPUESTOS. En los demás es fórmula y no se toca.
+CELDAS_IMPORTES = tuple("O{}".format(f)
+                        for ini, fin in ((50, 56), (68, 72))
+                        for f in range(ini, fin + 1))
+CELDAS_MANUALES = CELDAS_PAGOS + CELDAS_IMPORTES
+
 _FMT_FECHA = "dd/mm/yyyy"
 _FMT_HORA = "hh:mm"
 # Dos decimales, negativos en rojo entre paréntesis. El formato original recortaba
@@ -403,7 +436,11 @@ def _escribir_dia_anterior(libro, plantilla, anterior):
 
 
 def _sellar(libro, fecha):
-    """Pone fecha y hora de actualización donde el formato las espera."""
+    """Pone fecha y hora de actualización, y la semana del calendario de flujo.
+
+    La semana se deriva de la MISMA `fecha` con la que se sella el reporte, no de
+    `date.today()`: si algún día se regenera un reporte con fecha de ayer, el
+    calendario tiene que ser el de ayer y no el de hoy."""
     hoja = libro["SALDOS"]
     celda = hoja[CELDA_FECHA]
     celda.value = datetime.datetime(fecha.year, fecha.month, fecha.day)
@@ -412,9 +449,80 @@ def _sellar(libro, fecha):
     celda.value = fecha
     celda.number_format = _FMT_HORA
 
+    # Lunes de la semana en curso. Se escribe solo en las anclas; el resto de la
+    # columna son fórmulas del formato y NO se tocan, para que Excel siga
+    # calculando los días como siempre lo hizo.
+    #
+    # No se le pone `number_format`: las celdas ya traen el suyo del libro base
+    # (`dd/mm/yy;@`) y pisarlo cambiaría cómo se ve el formato sin que nadie lo
+    # haya pedido.
+    lunes = _lunes_de(fecha)
+    for referencia in CELDAS_SEMANA:
+        hoja[referencia].value = lunes
+
+
+def _lunes_de(fecha) -> datetime.datetime:
+    """El lunes de la semana que contiene `fecha`, a medianoche.
+
+    `weekday()` da 0 el lunes, así que restarlo cae siempre en el lunes de esa
+    misma semana, incluso en fin de semana: un reporte del sábado sigue mostrando
+    la semana que empezó el lunes anterior, que es la que está corriendo."""
+    dia = datetime.date(fecha.year, fecha.month, fecha.day)
+    dia -= datetime.timedelta(days=dia.weekday())
+    return datetime.datetime(dia.year, dia.month, dia.day)
+
+
+def leer_manuales(ruta: str) -> dict:
+    """Rescata de un reporte YA GENERADO lo que se capturó a mano en él.
+
+    Es la única forma de conservarlo: esos valores se teclean en Excel, la app
+    nunca los ve. Al generar el reporte del día siguiente se vuelven a poner.
+
+    Se ignoran las celdas vacías y las que traigan fórmula —si alguien pegó una,
+    la fórmula del formato manda—. Nunca lanza: no poder recuperar la captura de
+    ayer no puede impedir el reporte de hoy."""
+    if not ruta or not os.path.exists(ruta):
+        return {}
+    try:
+        libro = openpyxl.load_workbook(ruta, data_only=True)
+    except Exception:  # noqa: BLE001 — un reporte ilegible se trata como ausente
+        return {}
+    try:
+        hoja = libro["SALDOS"]
+    except KeyError:
+        libro.close()
+        return {}
+    try:
+        fuera = {}
+        for celda in CELDAS_MANUALES:
+            valor = hoja[celda].value
+            if valor is None or isinstance(valor, str):
+                continue
+            fuera[celda] = valor
+        return fuera
+    finally:
+        libro.close()
+
+
+def _escribir_manuales(libro, manuales: dict) -> int:
+    """Vuelve a poner lo capturado a mano. Devuelve cuántas celdas se llenaron."""
+    if not manuales:
+        return 0
+    hoja = libro["SALDOS"]
+    puestas = 0
+    for celda, valor in manuales.items():
+        # Solo las celdas declaradas: un JSON viejo o tocado a mano no puede
+        # escribir en cualquier parte de la hoja.
+        if celda not in CELDAS_MANUALES or valor is None:
+            continue
+        hoja[celda].value = valor
+        puestas += 1
+    return puestas
+
 
 def generar(ruta: str, asignacion, insumos: dict = None,
-            fecha: datetime.datetime = None, anterior: tuple = None) -> dict:
+            fecha: datetime.datetime = None, anterior: tuple = None,
+            manuales: dict = None) -> dict:
     """Escribe el libro completo en `ruta` y devuelve qué tanto se pudo llenar.
 
     `asignacion` es lo que devuelve `saldos.identificar()`. `insumos` es opcional:
@@ -440,6 +548,7 @@ def generar(ruta: str, asignacion, insumos: dict = None,
     _hoja_excepciones(libro, asignacion)
     totales_cabecera = calcular_totales_cabecera(plantilla, asignacion)
     comparativas = _escribir_dia_anterior(libro, plantilla, anterior)
+    capturadas = _escribir_manuales(libro, manuales)
     _sellar(libro, fecha)
     libro.save(ruta)
 
@@ -457,4 +566,5 @@ def generar(ruta: str, asignacion, insumos: dict = None,
         "ledgers_faltantes": sorted(set(plantilla.ledgers) - set(ledgers)),
         "totales_cabecera": totales_cabecera,
         "comparativas": comparativas,
+        "capturadas": capturadas,
     }
