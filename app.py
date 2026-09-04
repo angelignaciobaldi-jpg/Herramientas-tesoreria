@@ -77,6 +77,15 @@ class AppTesoreria:
         # necesite esperar a que no haya ninguno. Mientras uno está abierto, la
         # ventana la gobierna Windows: tocarle el árbol de controles a Flet en ese
         # momento cuelga la aplicación (ver `esperar_sin_dialogo_archivos`).
+        # El 'siempre encima' al abrir un diálogo de archivos se puede apagar: es
+        # un adorno y es el sospechoso del cuelgue de una máquina concreta.
+        self._topmost_activo = True
+        try:
+            from core import preferencias
+            self._topmost_activo = bool(
+                preferencias.cargar_valor("picker_topmost", True))
+        except Exception:  # noqa: BLE001 — sin preferencias, se queda activo
+            pass
         self._pickers_abiertos = 0
         self._sin_picker = asyncio.Event()
         self._sin_picker.set()
@@ -159,13 +168,34 @@ class AppTesoreria:
         return envuelto
 
     def _fijar_topmost(self, valor: bool) -> None:  # noqa: D401
-        """Pone/quita el 'siempre encima' de la ventana (best-effort: nunca debe
-        romper la apertura del diálogo)."""
+        """Pone/quita el 'siempre encima' de la ventana.
+
+        Es un ADORNO: sirve para que el diálogo nativo no se abra detrás. Y es el
+        principal sospechoso del cuelgue que sufre una máquina —el rastro se
+        detiene justo aquí, entre «abriendo» y «topmost puesto», donde lo único
+        que corre son estas dos líneas—, así que se puede desactivar sin tocar
+        nada más: `preferencias.guardar_valor("picker_topmost", False)`.
+
+        Los dos pasos se registran por separado para que el log diga CUÁL de los
+        dos es el que se queda trabado; hasta ahora solo se sabía que era uno de
+        ellos.
+
+        Se actualiza SOLO la ventana y no la página entera: `page.update()`
+        recalcula el diff de los 513 controles de la app (unos 8 ms aquí, pero
+        esta pantalla no tiene por qué pagarlo) mientras que `window.update()`
+        no llega a la décima de milisegundo."""
+        from core import diagnostico
+        if not self._topmost_activo:
+            diagnostico.registrar("topmost: desactivado por preferencia")
+            return
         try:
+            diagnostico.registrar("topmost: asignando", str(valor))
             self.page.window.always_on_top = valor
-            self.page.update()
-        except Exception:  # noqa: BLE001 — el traer-al-frente no es crítico
-            pass
+            diagnostico.registrar("topmost: asignado, actualizando ventana")
+            self.page.window.update()
+            diagnostico.registrar("topmost: ventana actualizada")
+        except Exception as exc:  # noqa: BLE001 — el traer-al-frente no es crítico
+            diagnostico.registrar("topmost: falló", str(exc)[:120])
 
     def abrir_en_sistema(self, ruta: str) -> None:
         """Abre un archivo o carpeta en el programa predeterminado (Explorador/visor)
