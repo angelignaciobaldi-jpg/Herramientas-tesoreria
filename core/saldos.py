@@ -219,6 +219,21 @@ class Asignacion:
             acumulado[divisa] = acumulado.get(divisa, 0.0) + (c.saldo or 0.0)
         return acumulado
 
+    def cobertura_por_hoja(self) -> dict:
+        """{pestaña: (renglones llenos, renglones que tiene)} para las 15 hojas.
+
+        `bancos_faltantes` solo dice cuáles están en cero, que sirve para avisar
+        pero no para saber POR DÓNDE VA la carga: con esto la pantalla puede
+        mostrar las quince y cuáles ya llegaron, que es la pregunta de cada
+        mañana. Se listan TODAS, también las que aún no tienen nada."""
+        por_hoja: dict = {}
+        for r in self.plantilla.renglones:
+            datos = por_hoja.setdefault(r.hoja, [0, 0])
+            datos[1] += 1
+            if (r.hoja, r.hoja_fila) in self.colocadas:
+                datos[0] += 1
+        return {h: tuple(v) for h, v in sorted(por_hoja.items())}
+
     def bancos_faltantes(self) -> list:
         """Pestañas cuyos renglones quedaron TODOS vacíos.
 
