@@ -1659,6 +1659,21 @@ class SeccionSaldos:
         if not (self.asignacion and self.asignacion.colocadas):
             self.app.avisar("No hay saldos que reportar.", NARANJA)
             return
+        # El botón se apaga desde el PRIMER clic y no se vuelve a encender hasta
+        # el final. El modal de espera no alcanza: entre pulsar y verlo aparecer
+        # hay que pasar por el diálogo de guardado y por la lectura de lo
+        # capturado, y ahí el botón seguía vivo. `disabled` no se pierde con los
+        # repintados intermedios porque `_pintar` lo recalcula igual.
+        self.btn_generar.disabled = True
+        self._refrescar(self.btn_generar)
+        try:
+            await self._generar_ya()
+        finally:
+            self.btn_generar.disabled = not (self.asignacion
+                                             and self.asignacion.colocadas)
+            self._refrescar(self.btn_generar)
+
+    async def _generar_ya(self) -> None:
         await self._asegurar_estado()
         hoy = datetime.date.today().strftime("%d-%m-%Y")
         ruta = await self.app.picker.save_file(
@@ -1668,12 +1683,14 @@ class SeccionSaldos:
             return
         if not ruta.lower().endswith(".xlsx"):
             ruta += ".xlsx"
-        # Lo guardado manda como base y lo de esta sesión ya está fundido ahí,
-        # así que se usa `self.guardados`: es lo mismo que el usuario descargaría.
-        insumos = dict(self.guardados)
-        anterior = saldos_estado.totales_dia_anterior()
-        manuales = await asyncio.to_thread(self._capturas_de_la_semana)
-
+        # La espera se abre AQUÍ, en cuanto hay ruta, y no justo antes de
+        # escribir: entre medias se relee lo capturado del reporte anterior, y
+        # eso tarda lo suyo. Con el modal después, la ventana se quedaba quieta
+        # sin explicación y el usuario volvía a pulsar «Generar».
+        #
+        # No puede abrirse antes del diálogo de guardado: ese es una ventana del
+        # sistema y quedaría por detrás del modal.
+        #
         # NO se avisa nada mientras el modal está abierto. `app.avisar` muestra el
         # snackbar con `page.show_dialog`, o sea LA MISMA PILA que el modal: si se
         # avisa antes de cerrarlo, el `pop_dialog` de después se lleva el snackbar
@@ -1682,6 +1699,12 @@ class SeccionSaldos:
         info = fallo = None
         self._abrir_espera()
         try:
+            # Lo guardado manda como base y lo de esta sesión ya está fundido
+            # ahí, así que se usa `self.guardados`: es lo mismo que el usuario
+            # descargaría.
+            insumos = dict(self.guardados)
+            anterior = saldos_estado.totales_dia_anterior()
+            manuales = await asyncio.to_thread(self._capturas_de_la_semana)
             info = await asyncio.to_thread(
                 saldos_export.generar, ruta, self.asignacion, insumos,
                 None, anterior, manuales)

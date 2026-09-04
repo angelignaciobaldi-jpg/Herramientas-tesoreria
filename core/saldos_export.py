@@ -91,6 +91,8 @@ CELDAS_IMPORTES = tuple("O{}".format(f)
                         for ini, fin in ((50, 56), (68, 72))
                         for f in range(ini, fin + 1))
 CELDAS_MANUALES = CELDAS_PAGOS + CELDAS_IMPORTES
+# Las filas que abarcan, para leerlas de un tirón sin abrir el libro entero.
+_FILAS_MANUALES = frozenset(int(c[1:]) for c in CELDAS_MANUALES)
 
 _FMT_FECHA = "dd/mm/yyyy"
 _FMT_HORA = "hh:mm"
@@ -483,19 +485,34 @@ def leer_manuales(ruta: str) -> dict:
     ayer no puede impedir el reporte de hoy."""
     if not ruta or not os.path.exists(ruta):
         return {}
+    # `read_only` y solo las filas que interesan. Abrir el libro completo para
+    # leer 57 celdas costaba DIEZ SEGUNDOS —hay que parsear las 24 pestañas, con
+    # los 32 000 renglones de los ledgers— y eso ocurría antes de que apareciera
+    # la pantalla de espera: el usuario veía la ventana quieta y volvía a pulsar
+    # «Generar». En modo perezoso se corta en la fila 82 y baja a una décima.
     try:
-        libro = openpyxl.load_workbook(ruta, data_only=True)
+        libro = openpyxl.load_workbook(ruta, data_only=True, read_only=True)
     except Exception:  # noqa: BLE001 — un reporte ilegible se trata como ausente
         return {}
     try:
-        hoja = libro["SALDOS"]
-    except KeyError:
-        libro.close()
-        return {}
-    try:
+        try:
+            hoja = libro["SALDOS"]
+        except KeyError:
+            return {}
+        primera = min(_FILAS_MANUALES)
+        ultima = max(_FILAS_MANUALES)
+        filas = {primera + i: f for i, f in enumerate(
+            hoja.iter_rows(min_row=primera, max_row=ultima, values_only=True))}
         fuera = {}
         for celda in CELDAS_MANUALES:
-            valor = hoja[celda].value
+            columna, fila = celda[0], int(celda[1:])
+            valores = filas.get(fila)
+            if not valores:
+                continue
+            i = column_index_from_string(columna) - 1
+            valor = valores[i] if i < len(valores) else None
+            # Se ignoran las vacías y las que traigan fórmula: si alguien pegó
+            # una, la del formato manda.
             if valor is None or isinstance(valor, str):
                 continue
             fuera[celda] = valor
