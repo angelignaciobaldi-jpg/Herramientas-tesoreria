@@ -38,6 +38,7 @@ if _disponible:
     # un int de 32 bits, trunca el puntero del portapapeles en Python de 64 y la
     # primera lectura revienta con una violación de acceso.
     _u32.IsClipboardFormatAvailable.argtypes = [wintypes.UINT]
+    _u32.CloseClipboard.argtypes = []
     _u32.OpenClipboard.argtypes = [wintypes.HWND]
     _u32.GetClipboardData.argtypes = [wintypes.UINT]
     _u32.GetClipboardData.restype = wintypes.HANDLE
@@ -47,6 +48,41 @@ if _disponible:
     _shell.DragQueryFileW.argtypes = [ctypes.c_void_p, wintypes.UINT,
                                       wintypes.LPWSTR, wintypes.UINT]
     _shell.DragQueryFileW.restype = wintypes.UINT
+
+
+CF_UNICODETEXT = 13
+
+
+def texto() -> str:
+    """El texto copiado, o "" si el portapapeles no trae texto.
+
+    Es lo que queda al seleccionar una tabla en el portal del banco y copiarla:
+    los renglones separados por saltos de línea y las columnas por tabulador. De
+    convertirlo en filas y reconocer el banco se encarga `saldos_lectores`."""
+    if not _disponible:
+        return ""
+    try:
+        if not _u32.IsClipboardFormatAvailable(CF_UNICODETEXT):
+            return ""
+        if not _u32.OpenClipboard(None):
+            return ""
+    except Exception:  # noqa: BLE001 — leer el portapapeles nunca es crítico
+        return ""
+    try:
+        mango = _u32.GetClipboardData(CF_UNICODETEXT)
+        if not mango:
+            return ""
+        puntero = _k32.GlobalLock(mango)
+        if not puntero:
+            return ""
+        try:
+            return ctypes.c_wchar_p(puntero).value or ""
+        finally:
+            _k32.GlobalUnlock(mango)
+    except Exception:  # noqa: BLE001 — se trata como «no había nada que pegar»
+        return ""
+    finally:
+        _u32.CloseClipboard()
 
 
 def hay_archivos() -> bool:
