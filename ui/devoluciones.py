@@ -1549,12 +1549,22 @@ class SeccionDevoluciones:
                         resultados["error"] += 1
                         continue
                     resultados[estado] = resultados.get(estado, 0) + 1
-                    if estado in ("guardada", "ya_estaba"):
+                    # SOLO lo guardado se da por hecho. Un 'ya_estaba' es una
+                    # inferencia (la solicitud no aparecía en el listado), y darla
+                    # por registrada dejaba pendientes sin subir y sin forma de
+                    # reintentarlas. Reintentar no hace daño: el propio SIPP evita
+                    # el duplicado.
+                    if estado == "guardada":
                         self._sub_registradas.add(id(fila))
                     if estado == "error":
                         errores.append(
                             f"Solicitud {folio}: se abrió pero no se pudo "
                             "guardar (hay diagnóstico en _diagnostico_rpa).")
+                    if estado == "sin_listado":
+                        errores.append(
+                            f"Solicitud {folio}: el listado de autorizadas llegó "
+                            "vacío, así que no se pudo saber si estaba pendiente. "
+                            "Vuelve a intentarlo.")
 
             await asyncio.wrap_future(self.bucle_rpa.enviar(flujo()))
         except RpaDetenido:
@@ -1597,11 +1607,13 @@ class SeccionDevoluciones:
             partes.append(f"{resultados['guardada']} registrada(s)")
         if resultados.get("ya_estaba"):
             partes.append(f"{resultados['ya_estaba']} ya estaban registradas")
+        if resultados.get("sin_listado"):
+            partes.append(f"{resultados['sin_listado']} sin poder comprobar (reintenta)")
         if resultados.get("error"):
             partes.append(f"{resultados['error']} con error")
         if not partes:
             return
-        color = ROJO if resultados.get("error") else VERDE
+        color = ROJO if (resultados.get("error") or resultados.get("sin_listado")) else VERDE
         texto = "Subida al SIPP: " + "; ".join(partes) + "."
         if errores:
             texto += " " + errores[0]

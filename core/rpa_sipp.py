@@ -546,6 +546,10 @@ class SesionSipp:
     # Cierre de un modal: es instantáneo o no ocurre. Esperar el timeout
     # normal aquí solo alarga cada solicitud del lote sin ganar nada.
     TIMEOUT_MODAL_CIERRE = 5_000
+    # El grid del modal se llena por AJAX. Se sondea hasta este plazo antes de
+    # dar por vacío el listado: leerlo a destiempo marcaba solicitudes
+    # pendientes como ya registradas.
+    TIMEOUT_GRID_MODAL = 15_000
     # Espera de la RESPUESTA de una consulta al backend (buscar solicitudes,
     # listar cuentas, guardar la dispersión). Es aparte de TIMEOUT_NAV y mucho
     # más larga a propósito.
@@ -2641,34 +2645,66 @@ class SesionSipp:
         await self._confirmar_aviso_si_hay(timeout=6_000)
         await page.wait_for_timeout(800)
 
-    async def abrir_solicitud_autorizada(self, folio: str) -> bool:
+    async def abrir_solicitud_autorizada(self, folio: str) -> str:
         """Abre el formulario de captura de la solicitud `folio`.
 
         Camino: el botón '+' abre el formulario EN BLANCO (no un modal); dentro,
         'Ayuda de Solicitudes Autorizadas' lista las solicitudes capturables; y la
         flecha de la fila carga la elegida.
 
-        Devuelve True si quedó abierta. False si esa solicitud no aparece entre las
-        autorizadas, que es lo que pasa cuando YA se registró: es la guarda de
-        idempotencia, y por eso no se trata como error."""
+        Devuelve:
+          'abierta'     : el formulario quedó listo para llenarse.
+          'no_listada'  : el listado SÍ trajo solicitudes pero esta no está entre
+                          ellas, o sea que ya se registró. Es la guarda de
+                          idempotencia, y por eso no se trata como error.
+          'sin_listado' : el listado llegó VACÍO. No se puede concluir nada: puede
+                          que no haya autorizadas pendientes o que el grid no
+                          alcanzara a cargar. Confundir esto con 'no_listada'
+                          hacía que una solicitud pendiente quedara marcada como
+                          registrada sin haberse subido.
+        """
         page = self._exigir_pagina()
         await self._click_seguro(page.locator(self.SEL_DEV_AGREGAR).first)
         await page.wait_for_timeout(2_500)
         await self._click_seguro(
             page.locator(self.SEL_DEV_MODAL_AUTORIZADAS).first)
-        await page.wait_for_timeout(4_000)   # el grid del modal tarda en poblarse
 
+        filas = await self._esperar_filas_autorizadas()
+        if not filas:
+            await self._cerrar_modal_autorizadas()
+            return "sin_listado"
         if not await self._elegir_fila_autorizada(str(folio)):
             await self._cerrar_modal_autorizadas()
-            return False
+            return "no_listada"
         try:
             await page.locator(self.SEL_DEV_COMPROBANTE).wait_for(
                 state="visible", timeout=self.TIMEOUT_ELEMENTO)
         except PlaywrightTimeoutError:
             await self._capturar_diagnostico("devolucion_sin_formulario")
-            return False
-        return True
+            return "sin_listado"
+        return "abierta"
 
+    async def _esperar_filas_autorizadas(self) -> int:
+        """Espera a que el grid del modal se pueble y devuelve cuántas filas trajo.
+
+        El grid se llena por AJAX después de abrir el modal. Con una espera fija
+        se leía a veces vacío y la solicitud se daba por "ya registrada" sin
+        estarlo. Se sondea hasta que aparezca la primera fila; si no aparece
+        ninguna en el plazo, se devuelve 0 y quien llama decide (no se asume que
+        no existan: puede que el portal fuera lento).
+        """
+        page = self._exigir_pagina()
+        filas = page.locator(self.SEL_DEV_ELEGIR_FILA)
+        limite = asyncio.get_event_loop().time() + self.TIMEOUT_GRID_MODAL / 1000
+        while True:
+            n = await filas.count()
+            if n:
+                # Deja que el grid termine de pintar el resto antes de leerlo.
+                await page.wait_for_timeout(1_200)
+                return await filas.count()
+            if asyncio.get_event_loop().time() >= limite:
+                return 0
+            await asyncio.sleep(0.5)
     async def _elegir_fila_autorizada(self, folio: str) -> bool:
         """Pulsa la flecha de la fila cuyo número de solicitud es `folio`.
 
@@ -2845,15 +2881,22 @@ class SesionSipp:
 
           'guardada'   : se adjuntó el comprobante, se escribió la referencia y
                          el SIPP la acepto.
-          'ya_estaba'  : la solicitud no aparece entre las autorizadas, o sea que
+          'ya_estaba'  : el listado trajo solicitudes y esta no estaba, o sea que
                          ya se registró antes. NO es un error: es lo que evita
                          duplicar el trabajo si el proceso se corre dos veces.
+          'sin_listado': el listado llegó vacío y no se puede concluir nada. Se
+                         reporta aparte para poder reintentarla: darla por
+                         registrada dejaba pendientes sin subir.
           'error'      : se abrió pero no se pudo guardar (queda diagnóstico).
 
         Cada solicitud arranca desde el listado, así que un fallo en una no arrastra
         a las siguientes."""
-        if not await self.abrir_solicitud_autorizada(folio):
+        apertura = await self.abrir_solicitud_autorizada(folio)
+        if apertura == "no_listada":
             return "ya_estaba"
+        if apertura != "abierta":
+            # Listado vacío: NO se concluye que ya estuviera registrada.
+            return "sin_listado"
         try:
             await self.llenar_devolucion(ruta_pdf, referencia, fecha)
             guardada = await self.guardar_devolucion()
