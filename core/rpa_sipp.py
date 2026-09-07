@@ -2889,8 +2889,12 @@ class SesionSipp:
                          registrada dejaba pendientes sin subir.
           'error'      : se abrió pero no se pudo guardar (queda diagnóstico).
 
-        Cada solicitud arranca desde el listado, así que un fallo en una no arrastra
-        a las siguientes."""
+        Cada solicitud arranca RENAVEGANDO al listado. No es cosmético: el portal
+        va dejando estado entre operaciones —modales montados, la vista a medio
+        rehacer— y encadenando sin volver al principio el grid de autorizadas
+        llegaba vacío a partir de la segunda, que es lo que hacía dar por
+        registradas solicitudes que seguían pendientes."""
+        await self.ir_a_devoluciones()
         apertura = await self.abrir_solicitud_autorizada(folio)
         if apertura == "no_listada":
             return "ya_estaba"

@@ -1524,7 +1524,9 @@ class SeccionDevoluciones:
                 # con la que se entró (ver EMPRESA_SESION).
                 await sesion.seleccionar_empresa_sucursal(
                     self.EMPRESA_SESION, self.SUCURSAL_SESION)
-                await sesion.ir_a_devoluciones()
+                # No se navega aquí: registrar_devolucion vuelve al listado
+                # por su cuenta antes de cada una, para no arrastrar el estado
+                # que el portal deja entre operaciones.
                 for i, fila in enumerate(filas, start=1):
                     await ctrl.punto_control()
                     folio = fila.folio_valor
