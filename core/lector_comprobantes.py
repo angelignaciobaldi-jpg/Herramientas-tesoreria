@@ -103,6 +103,117 @@ def _campos_de_texto(texto: str) -> dict:
     return campos
 
 
+
+
+# --- Formato Banregio ----------------------------------------------------
+# El comprobante de Banregio no usa "Etiqueta: valor": aplana un layout de DOS
+# COLUMNAS, así que cada etiqueta queda pegada a su valor pero unas veces ANTES
+# y otras DESPUÉS. Por eso no se asume la dirección: se miran los dos vecinos y
+# se toma el que tenga la forma esperada (un importe donde va un importe, algo
+# con dígitos donde va una cuenta).
+_ETIQUETAS_BANREGIO = ("Cantidad a Transferir", "Número de referencia",
+                       "Cuenta Origen", "Cuenta Destino")
+
+# TODAS las etiquetas del formato. Se usan para descartar candidatos: al mirar
+# los vecinos de una etiqueta, el de un lado suele ser OTRA etiqueta, y sin esta
+# lista se colaba como valor (el concepto salía "Cantidad a Transferir").
+_ROTULOS_BANREGIO = frozenset(_clave_etiqueta(e) for e in (
+    "Tipo de Transferencia", "Cuenta Origen", "Cuenta Destino",
+    "Cantidad a Transferir", "Concepto de pago", "Número de referencia",
+    "Quien autoriza", "Quien solicita", "Recibo de la solicitud",
+    "Fecha solicita", "Banco", "Verificador", "Datos de tu operación",
+))
+
+_MESES = {
+    "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
+    "julio": 7, "agosto": 8, "septiembre": 9, "setiembre": 9, "octubre": 10,
+    "noviembre": 11, "diciembre": 12,
+}
+
+
+def es_banregio(texto: str) -> bool:
+    """True si la página tiene la pinta del comprobante de Banregio."""
+    plano = _clave_etiqueta(texto)
+    return any(_clave_etiqueta(e) in plano for e in _ETIQUETAS_BANREGIO)
+
+
+def _fecha_larga(texto: str) -> str:
+    """'7 mayo 2026 - 11:45 a. m.' -> '07/05/2026'. '' si no parsea.
+
+    Banregio escribe la fecha con el mes en palabras, no en dígitos.
+    """
+    m = re.search(r"(\d{1,2})\s+([A-Za-zÁÉÍÓÚáéíóú]+)\s+(\d{4})", texto or "")
+    if not m:
+        return ""
+    mes = _MESES.get(_clave_etiqueta(m.group(2)))
+    if not mes:
+        return ""
+    return f"{int(m.group(1)):02d}/{mes:02d}/{m.group(3)}"
+
+
+def _vecino(lineas: list, etiqueta: str, valido) -> str:
+    """Valor pegado a `etiqueta`: se prueba la línea de ARRIBA y la de ABAJO y
+    se devuelve la primera que pase `valido`. Así da igual de qué lado quedó al
+    aplanarse el PDF."""
+    objetivo = _clave_etiqueta(etiqueta)
+    for i, linea in enumerate(lineas):
+        if _clave_etiqueta(linea) != objetivo:
+            continue
+        for j in (i - 1, i + 1):
+            if not 0 <= j < len(lineas):
+                continue
+            candidato = lineas[j]
+            if _clave_etiqueta(candidato) in _ROTULOS_BANREGIO:
+                continue   # el vecino es otra etiqueta, no un valor
+            if valido(candidato):
+                return candidato.strip()
+    return ""
+
+
+def _cuenta_de(texto: str) -> str:
+    """Cuenta dentro de 'NOMBRE - 137456101298786280' o 'NOMBRE - *0011'.
+
+    Se queda con el ÚLTIMO tramo tras el guion: los nombres de empresa traen
+    guiones propios ("S.A. DE C.V. - *0011").
+    """
+    cola = str(texto or "").rsplit("-", 1)[-1].strip()
+    return cola if re.search(r"\d", cola) else ""
+
+
+def _campos_banregio(texto: str) -> dict:
+    """Extrae los datos de pago de un comprobante Banregio.
+
+    Devuelve las mismas claves que el formato BBVA para que el casado y la
+    referencia funcionen igual, vengan del banco que vengan.
+    """
+    lineas = [l.strip() for l in (texto or "").splitlines() if l.strip()]
+    tiene_digitos = lambda s: bool(re.search(r"\d", s))  # noqa: E731
+    es_importe = lambda s: bool(re.match(r"^\$?\s*[\d,]+\.\d{2}$", s.strip()))  # noqa: E731
+
+    origen = _cuenta_de(_vecino(lineas, "Cuenta Origen", tiene_digitos))
+    destino = _cuenta_de(_vecino(lineas, "Cuenta Destino", tiene_digitos))
+    importe = _vecino(lineas, "Cantidad a Transferir", es_importe)
+    referencia = _vecino(lineas, "Número de referencia",
+                         lambda s: s.strip().isdigit())
+    # Banregio no rotula "fecha de aplicación": la operación es del mismo día
+    # hábil (SPEI), así que la fecha de la solicitud ES la de aplicación.
+    fecha = _fecha_larga(_vecino(lineas, "Fecha solicita",
+                                 lambda s: bool(_fecha_larga(s))))
+    concepto = _vecino(lineas, "Concepto de pago",
+                       lambda s: bool(s.strip()) and not tiene_digitos(s))
+    banco = _vecino(lineas, "Banco", lambda s: s.strip().isalpha())
+    return {
+        "cuenta_origen": origen,
+        "cuenta_destino": destino,
+        "importe": importe,
+        "fecha_aplicacion": fecha,
+        "referencia": referencia,
+        "concepto_pago": concepto,
+        "banco_beneficiario": banco,
+        "tipo_operacion": _vecino(lineas, "Tipo de Transferencia",
+                                  lambda s: bool(s.strip())),
+    }
+
 def leer_pdf(ruta_pdf: str) -> list[dict]:
     """Lee un comprobante y devuelve UNA lectura por página con texto aprovechable.
 
@@ -119,12 +230,20 @@ def leer_pdf(ruta_pdf: str) -> list[dict]:
         if doc.needs_pass:
             raise ErrorLectura(f"«{nombre}»: el PDF está protegido con contraseña.")
         for i, pagina in enumerate(doc, start=1):
-            campos = _campos_de_texto(pagina.get_text("text") or "")
+            texto = pagina.get_text("text") or ""
+            # Cada banco arma el comprobante a su manera; se detecta el formato y
+            # se normaliza a las MISMAS claves, para que el casado y la referencia
+            # no tengan que saber de qué banco vino.
+            if es_banregio(texto):
+                campos, emisor = _campos_banregio(texto), "Banregio"
+            else:
+                campos, emisor = _campos_de_texto(texto), "BBVA"
             # Sin importe ni cuentas no hay nada que casar: no es un comprobante.
             if not campos.get("importe") and not campos.get("cuenta_destino"):
                 continue
             lecturas.append({
                 "documento_lectura": nombre,
+                "emisor": emisor,
                 "pagina": i,
                 "cuenta_origen": campos.get("cuenta_origen", ""),
                 "cuenta_destino": campos.get("cuenta_destino", ""),

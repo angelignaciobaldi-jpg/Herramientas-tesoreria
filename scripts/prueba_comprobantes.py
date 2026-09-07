@@ -432,10 +432,87 @@ def prueba_banco_clabe() -> None:
     nombre, corregido = cb.banco_a_mostrar("", "")
     check(nombre == "" and not corregido, "sin ningun dato devuelve vacio")
 
+# Comprobante de Banregio: NO usa "Etiqueta: valor". Aplana un layout de dos
+# columnas, asi que cada etiqueta queda pegada a su valor unas veces ARRIBA y
+# otras ABAJO, y la fecha viene con el mes en palabras.
+_PLANTILLA_BANREGIO = """
+Tipo de Transferencia
+Mismo día hábil (SPEI)
+GC MOTORS DE OCCIDENTE S.A. DE C.V. - *0011
+Cuenta Origen
+Cuenta Destino
+ADALBERTO LAFARGA ARELLANO - 137456101298786280
+$7,764.70
+Cantidad a Transferir
+Concepto de pago
+SALDO A FAVOR CLIENTE GC MOTORS
+698552
+Número de referencia
+Quien autoriza
+Quien solicita
+Recibo de la solicitud
+7 mayo 2026 - 11:45 a. m.
+Fecha solicita
+Banco
+BANCOPPEL
+"""
+
+
+def prueba_banregio() -> None:
+    import tempfile
+    print("\nformato Banregio")
+    tmp = tempfile.mkdtemp(prefix="prueba_banregio_")
+    ruta = _pdf_con_texto(os.path.join(tmp, "banregio.pdf"), _PLANTILLA_BANREGIO)
+    lecturas, errores = lc.leer_varios([ruta])
+    check(len(lecturas) == 1 and not errores, "lee el comprobante de Banregio")
+    b = lecturas[0]
+    check(b["emisor"] == "Banregio", "se identifica el emisor")
+    check(b["cuenta_origen"] == "*0011",
+          "cuenta origen enmascarada, como la imprime Banregio")
+    check(b["cuenta_destino"] == "137456101298786280", "CLABE destino completa")
+    check(b["importe"] == 7764.70, "importe con $ y separador de miles")
+    check(b["referencia"] == "698552", "numero de referencia")
+
+    print("\n  las etiquetas no se cuelan como valor")
+    # El vecino de arriba de "Concepto de pago" es OTRA etiqueta; sin descartarla
+    # el concepto salia "Cantidad a Transferir".
+    check(b["concepto"] == "SALDO A FAVOR CLIENTE GC MOTORS",
+          "el concepto es el valor, no la etiqueta vecina")
+    check(b["banco_beneficiario"] == "BANCOPPEL", "banco del beneficiario")
+
+    print("\n  fecha con el mes en palabras")
+    check(b["fecha_aplicacion"] == "07/05/2026", "7 mayo 2026 -> 07/05/2026")
+    check(lc.referencia_aaaammdd(b) == "20260507", "referencia AAAAMMDD")
+    check(lc.fecha_aplicacion_ddmmaaaa(b) == "07/05/2026", "fecha DD/MM/AAAA")
+
+    print("\n  se casa igual que un BBVA")
+    objetivo = c.Objetivo(origenes={"*0011"},
+                          beneficiarios={"137456101298786280"}, total=7764.70)
+    check(c.evaluar_coincidencia(b, objetivo)["coincide"],
+          "una lectura Banregio casa con evaluar_coincidencia")
+    # Y con la CLABE completa de la misma cuenta (claves_cuenta las cruza).
+    obj2 = c.Objetivo(origenes={"058320000000000115"},
+                      beneficiarios={"137456101298786280"}, total=7764.70)
+    check(c.evaluar_coincidencia(b, obj2)["origen"],
+          "la cuenta enmascarada cruza con la CLABE origen completa")
+
+    print("\n  no se confunde con el formato BBVA")
+    bbva = _pdf_con_texto(os.path.join(tmp, "bbva.pdf"),
+                          _PLANTILLA_MISMO_BANCO.format(estado="Operado"))
+    (l_bbva,), _ = lc.leer_varios([bbva])
+    check(l_bbva["emisor"] == "BBVA", "un BBVA sigue detectandose como BBVA")
+    check(not lc.es_banregio(_PLANTILLA_MISMO_BANCO.format(estado="Operado")),
+          "el texto de BBVA no pasa por Banregio")
+    check(lc.es_banregio(_PLANTILLA_BANREGIO), "el de Banregio si")
+
+    import shutil
+    shutil.rmtree(tmp, ignore_errors=True)
+
 def main() -> int:
     for prueba in (prueba_ultimos_digitos, prueba_claves_cuenta, prueba_nombres, prueba_resolucion_rutas,
                    prueba_reparto, prueba_coincidencia, prueba_lector,
-                   prueba_vinculacion, prueba_banco_clabe):
+                   prueba_vinculacion, prueba_banco_clabe,
+                   prueba_banregio):
         prueba()
     print()
     if _fallos:
