@@ -686,12 +686,12 @@ _MONEX_CLABE = re.compile(r"Clabe\s*:\s*(\d{18})")
 _MONEX_TOTAL = re.compile(r"Total en pesos\s*\n\s*([\d,.]+)")
 
 
-def leer_monex(ruta: str) -> list[LineaSaldo]:
+def leer_monex(ruta: str, texto: str = None) -> list[LineaSaldo]:
     """Monex emite un PDF por contrato, no un consolidado.
 
     Se toma 'Total en pesos', que es el equivalente a la columna 'VALUACIÓN TOTAL'
     que el formato usa hoy (SALDOS!I22 apunta a MONEX!F3)."""
-    texto = _texto_pdf(ruta)
+    texto = texto if texto is not None else _texto_pdf(ruta)
     contrato = _MONEX_CONTRATO.search(texto)
     clabe = _MONEX_CLABE.search(texto)
     total = _MONEX_TOTAL.search(texto)
@@ -849,7 +849,182 @@ _POR_NOMBRE = {n: f for n, _, _, f in _LECTORES}
 #
 # Los lectores de PDF (Monex, Sabadell) quedan fuera a propósito: no leen filas
 # sino un texto con una disposición concreta, y un pegado la pierde.
-_SIN_PEGADO = ("MONEX", "SABADELL")
+# Sabadell queda fuera del pegado: su lector busca secciones dentro del texto de
+# un PDF con una disposición concreta que al copiar se pierde. Monex SÍ entra:
+# su lector ya trabaja sobre texto con expresiones regulares, así que le da igual
+# venir de un PDF o del portapapeles.
+_SIN_PEGADO = ("SABADELL",)
+
+
+# --------------------------------------------------- recetas de pegado
+# Lo que se copia del portal NO tiene la forma del archivo que ese mismo portal
+# descarga, y a veces no tiene forma de tabla siquiera. Bancoppel entrega una
+# línea de «etiqueta: valor»; el consolidado de HSBC trae un encabezado que no
+# corresponde a las columnas de sus renglones. Con la regla de los archivos, esos
+# pegados o no se reconocen o —peor— los reclama otro banco: el de Intercam se
+# detectaba como BANORTE y su saldo habría acabado en la pestaña equivocada.
+#
+# Por eso estas RECETAS van aparte y se prueban ANTES: cada una exige marcas muy
+# suyas, así que solo reclaman lo que es suyo. Lo que ninguna reconozca sigue
+# cayendo en la regla de siempre, que no se toca.
+
+def _celda(fila: list, i):
+    """El valor de una columna, o None si la fila se queda corta.
+
+    Los pegados traen filas de largo desigual —el portal recorta las columnas
+    vacías del final—, así que indexar a secas revienta."""
+    if i is None or i >= len(fila):
+        return None
+    return fila[i]
+
+
+def _celdas(filas: list) -> list[str]:
+    """Todas las celdas del pegado, normalizadas y sin las vacías."""
+    return [_norm(v) for f in filas for v in f if _norm(v)]
+
+
+def _marca_bancoppel(filas: list) -> bool:
+    celdas = _celdas(filas)
+    return "cuenta:" in celdas and "saldo:" in celdas
+
+
+def _leer_bancoppel_pegado(filas: list) -> list[LineaSaldo]:
+    """Bancoppel copia una línea de etiquetas y valores, no una tabla.
+
+        Cuenta:  22000004794  l  CLABE:  137180220000047940    Saldo:  $170,350.43
+
+    Se lee por ETIQUETA —el valor es lo que sigue a cada rótulo— y no por
+    posición: entre «Cuenta:» y «CLABE:» el portal mete una celda suelta con una
+    'l', y contar columnas se rompería con ella."""
+    salida = []
+    for fila in filas:
+        valores = [str(v or "").strip() for v in fila]
+        etiquetas = {}
+        for i, celda in enumerate(valores):
+            clave = _norm(celda).rstrip(":")
+            if clave in ("cuenta", "clabe", "saldo") and _norm(celda).endswith(":"):
+                # El valor es la siguiente celda con contenido.
+                for siguiente in valores[i + 1:]:
+                    if siguiente.strip():
+                        etiquetas[clave] = siguiente.strip()
+                        break
+        cuenta = _digitos(etiquetas.get("cuenta", ""))
+        saldo = _a_float(etiquetas.get("saldo"))
+        if not cuenta or saldo is None:
+            continue
+        salida.append(LineaSaldo(
+            banco="BanCoppel", cuenta=cuenta,
+            clabe=_digitos(etiquetas.get("clabe", "")), titular="",
+            saldo=saldo, moneda="MXN"))
+    return salida
+
+
+def _marca_intercam(filas: list) -> bool:
+    celdas = _celdas(filas)
+    return "cta anterior" in celdas and any(c.startswith("saldo sobregiro")
+                                            for c in celdas)
+
+
+def _leer_intercam_pegado(filas: list) -> list[LineaSaldo]:
+    """Intercam: tabla con «Cta Anterior · Cuenta · Moneda · Alias · Saldo…».
+
+    Su número viene ENMASCARADO (`***-***94-001-1`) y así está también en el
+    formato, que guarda el mismo texto. Los dígitos que quedan a la vista bastan
+    para casarlo, que es como se casa cualquier cuenta enmascarada.
+
+    Ojo con el alias: el portal lo rotula «CUENTA ENLACE KAPITAL», y por eso
+    tesorería llama Kapital a este pegado; la pestaña del formato es INTERCAM."""
+    alias = {"cuenta": ("cuenta",), "moneda": ("moneda",),
+             "titular": ("alias",), "saldo": ("saldo disponible",)}
+    n, idx = _buscar_encabezado(filas, alias, ("cuenta", "saldo"))
+    if n is None:
+        raise ErrorLector("No se encontraron los encabezados de INTERCAM.")
+    salida = []
+    for fila in filas[n + 1:]:
+        cuenta = _digitos(_celda(fila, idx.get("cuenta")))
+        saldo = _a_float(_celda(fila, idx.get("saldo")))
+        if not cuenta or saldo is None:
+            continue
+        salida.append(LineaSaldo(
+            banco="Intercam Banco", cuenta=cuenta, clabe="",
+            titular=str(_celda(fila, idx.get("titular")) or "").strip(),
+            saldo=saldo,
+            moneda=_moneda(_celda(fila, idx.get("moneda")))))
+    return salida
+
+
+def _marca_hsbc_pegado(filas: list) -> bool:
+    celdas = _celdas(filas)
+    return ("actual disponible" in celdas
+            and any(c.startswith("disponible en libros") for c in celdas))
+
+
+def _leer_hsbc_pegado(filas: list) -> list[LineaSaldo]:
+    """El consolidado de HSBC copiado: el encabezado NO manda.
+
+    Sus cuatro títulos («Actual disponible», «Disponible en libros»…) no se
+    corresponden con las columnas de los renglones, que llegan así:
+
+        (vacío)   4056511132   OPERADORA DE REC HUM   76,089.13
+
+    Así que se lee por FORMA, no por columna: la celda que es puro número largo
+    es la cuenta, la última que parece importe es el saldo y lo de en medio el
+    titular. La divisa sale de la línea de sección —«Mexico HBMI (MXN - …)»— que
+    encabeza cada bloque, y los renglones de subtotal se descartan: repiten un
+    importe que ya está contado."""
+    divisa = "MXN"
+    salida = []
+    for fila in filas:
+        valores = [str(v or "").strip() for v in fila]
+        crudo = " ".join(valores)
+        seccion = re.search(r"\(([A-Za-z]{3})\s*-", crudo)
+        if seccion and not any(_ES_CUENTA_HSBC.fullmatch(v) for v in valores):
+            divisa = _moneda(seccion.group(1))
+            continue
+        primera = next((v for v in valores if v.strip()), "")
+        if _norm(primera).startswith(("subtotal", "total")):
+            continue
+        cuenta = next((v for v in valores if _ES_CUENTA_HSBC.fullmatch(v)), "")
+        if not cuenta:
+            continue
+        importes = [v for v in valores
+                    if v is not cuenta and _a_float(v) is not None
+                    and not _ES_CUENTA_HSBC.fullmatch(v)]
+        if not importes:
+            continue
+        titular = next((v for v in valores
+                        if v.strip() and v is not cuenta and v not in importes
+                        and _a_float(v) is None), "")
+        salida.append(LineaSaldo(
+            banco="HSBC", cuenta=_digitos(cuenta), clabe="",
+            titular=titular.strip(), saldo=_a_float(importes[-1]) or 0.0,
+            moneda=divisa))
+    return salida
+
+
+# Una cuenta de HSBC en el pegado: solo dígitos y de 8 en adelante. Sirve para
+# distinguirla del importe, que siempre trae separadores o decimales.
+_ES_CUENTA_HSBC = re.compile(r"\d{8,}")
+
+# (nombre de la pestaña, reconoce, lee). El nombre es el de la HOJA del formato,
+# que es lo que espera el resto del sistema.
+_RECETAS_PEGADO = (
+    ("BANCOPPEL", _marca_bancoppel, _leer_bancoppel_pegado),
+    ("INTERCAM", _marca_intercam, _leer_intercam_pegado),
+    ("HSBC", _marca_hsbc_pegado, _leer_hsbc_pegado),
+)
+_POR_RECETA = {n: f for n, _m, f in _RECETAS_PEGADO}
+
+
+def _receta_de(filas: list) -> str | None:
+    """Nombre de la receta de pegado que reconoce estas filas, si alguna."""
+    for nombre, reconoce, _leer in _RECETAS_PEGADO:
+        try:
+            if reconoce(filas):
+                return nombre
+        except Exception:  # noqa: BLE001 — una receta rota no tumba las demás
+            continue
+    return None
 
 # Lectores que aceptan las filas ya separadas. Se listan aparte de `_POR_NOMBRE`
 # —que los tiene todos— porque las firmas no son iguales: Scotiabank recibe el
@@ -903,6 +1078,15 @@ def detectar_pegado(filas: list) -> str | None:
     tampoco hay nombre del que sacar pistas—. Cuando dos firmas casan gana la más
     específica, igual que ahí; el resto lo decide el usuario en pantalla, que por
     eso ve el banco detectado y puede corregirlo."""
+    # Las recetas van PRIMERO. No es una preferencia estética: la regla de los
+    # archivos llega a reclamar pegados que no son suyos —el de Intercam lo
+    # tomaba por BANORTE— y ahí el saldo acaba en otra pestaña sin que nadie lo
+    # note. Las recetas exigen marcas muy específicas, así que solo se llevan lo
+    # que de verdad reconocen; el resto sigue cayendo en la regla de siempre.
+    receta = _receta_de(filas or [])
+    if receta:
+        return receta
+
     huella = _norm(" ".join(str(v) for f in (filas or [])[:15] for v in f
                             if v is not None))
     if not huella:
@@ -943,8 +1127,15 @@ def _por_encabezado(filas: list) -> str | None:
 
 
 def bancos_pegables() -> list[str]:
-    """Bancos cuyo reporte se puede pegar, para ofrecerlos en pantalla."""
-    return sorted(list(_PEGABLES_POR_FILAS) + ["SCOTIABANK"])
+    """Pestañas del formato cuyo saldo se puede pegar, para ofrecerlas en
+    pantalla.
+
+    Incluye las de receta propia (Bancoppel, Intercam) y las que leen texto
+    (Scotiabank, Monex), no solo las que casan por encabezado. Faltaban justo
+    esas y por eso no había forma de cargarlas a mano cuando la detección
+    fallaba."""
+    return sorted(set(_PEGABLES_POR_FILAS) | set(_POR_RECETA)
+                  | {"SCOTIABANK", "MONEX"})
 
 
 def leer_pegado(texto: str, banco: str = None) -> tuple[list[LineaSaldo], str]:
@@ -965,10 +1156,17 @@ def leer_pegado(texto: str, banco: str = None) -> tuple[list[LineaSaldo], str]:
             "{} solo se puede cargar como archivo: su reporte es un PDF y al "
             "pegarlo se pierde la disposición que el lector necesita.".format(
                 nombre))
-    # Scotiabank interpreta el TEXTO tal cual (su reporte es de ancho fijo); los
-    # demás trabajan sobre las filas ya separadas.
+    # Si hay receta para ese banco, manda: es la que sabe leer lo COPIADO, que
+    # no tiene la forma del archivo descargado.
+    if nombre in _POR_RECETA:
+        return _POR_RECETA[nombre](filas), nombre
+    # Scotiabank y Monex interpretan el TEXTO tal cual —ancho fijo el uno,
+    # expresiones regulares sobre el PDF el otro—; los demás trabajan sobre las
+    # filas ya separadas.
     if nombre == "SCOTIABANK":
         return leer_scotiabank("", texto=texto), nombre
+    if nombre == "MONEX":
+        return leer_monex("", texto=texto), nombre
     lector = _PEGABLES_POR_FILAS.get(nombre)
     if lector is None:
         raise ErrorLector("No hay lector de pegado para {}.".format(nombre))
