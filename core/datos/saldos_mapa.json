@@ -345,10 +345,14 @@
     },
     "16": {
      "region": 0,
+     "cuenta": "2790297",
+     "cuenta_norm": "2790297",
      "titular": "PETRO SMART",
      "moneda": "MXN",
      "estaticos": {
       "titular": "PETRO SMART",
+      "sucursal": "7013",
+      "cuenta": "2790297",
       "moneda": "MXN"
      }
     },
@@ -2873,7 +2877,7 @@
    "regiones": [
     {
      "fila_ini": 3,
-     "fila_fin": 8,
+     "fila_fin": 12,
      "paso": 1,
      "cols": {
       "alias": "A",
@@ -2941,6 +2945,34 @@
      "por_puente": true,
      "estaticos": {
       "alias": "PSC 0014"
+     }
+    },
+    "9": {
+     "region": 0,
+     "alias": "ASAMAZ 1400",
+     "estaticos": {
+      "alias": "ASAMAZ 1400"
+     }
+    },
+    "10": {
+     "region": 0,
+     "alias": "ELYON 1236",
+     "estaticos": {
+      "alias": "ELYON 1236"
+     }
+    },
+    "11": {
+     "region": 0,
+     "alias": "ASKE 1715",
+     "estaticos": {
+      "alias": "ASKE 1715"
+     }
+    },
+    "12": {
+     "region": 0,
+     "alias": "PETROPLAZAS 1699",
+     "estaticos": {
+      "alias": "PETROPLAZAS 1699"
      }
     }
    }
@@ -3119,7 +3151,7 @@
      "estaticos": {
       "cuenta": 50000321327,
       "titular": "PETRO SMART COMBUSTIBLES SA DE CV       ",
-      "hora": 0.41458333333333336,
+      "hora": 0.4145833333333334,
       "moneda": "MXN"
      }
     },
@@ -3355,6 +3387,7 @@
    "I45",
    "I46",
    "I47",
+   "I48",
    "I55",
    "I56",
    "I57",
@@ -3376,6 +3409,7 @@
    "I121",
    "I122",
    "I123",
+   "I124",
    "I98",
    "I99",
    "I100",
@@ -3386,6 +3420,7 @@
    "I111",
    "I112",
    "I113",
+   "I114",
    "I83",
    "I84",
    "I85",
@@ -3401,6 +3436,7 @@
    "O90",
    "O91",
    "O92",
+   "O93",
    "O96",
    "O97",
    "O103",
@@ -3536,6 +3572,7 @@
    "I45",
    "I46",
    "I47",
+   "I48",
    "I55",
    "I56",
    "I57",
@@ -3553,6 +3590,7 @@
    "I121",
    "I122",
    "I123",
+   "I124",
    "I98",
    "I99",
    "I100",
@@ -3563,6 +3601,7 @@
    "I111",
    "I112",
    "I113",
+   "I114",
    "I83",
    "I84",
    "I85",
@@ -3584,6 +3623,7 @@
    "O90",
    "O91",
    "O92",
+   "O93",
    "O96",
    "O97",
    "O103",
@@ -4063,7 +4103,7 @@
    "hoja_col": "C",
    "cuenta": "7003732302",
    "titular": "ABASTECEDORA DE COMBUSTIBLES DEL PA",
-   "reparado": true
+   "reparado": false
   },
   {
    "banda": "A-I",
@@ -4221,6 +4261,20 @@
   },
   {
    "banda": "A-I",
+   "fila": 48,
+   "bloque": "PETROPLAZAS",
+   "banco": "Monex",
+   "cta4": "1699",
+   "marca": "",
+   "hoja": "MONEX",
+   "hoja_fila": 12,
+   "hoja_col": "F",
+   "cuenta": null,
+   "titular": "PETROPLAZAS 1699",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
    "fila": 50,
    "bloque": "PETROPLAZAS",
    "banco": "BBVA",
@@ -4245,7 +4299,7 @@
    "hoja_col": "C",
    "cuenta": "7003670544",
    "titular": "PETROPLAZAS,S.A.DE C.V",
-   "reparado": true
+   "reparado": false
   },
   {
    "banda": "A-I",
@@ -4271,7 +4325,7 @@
    "hoja": "BANAMEX",
    "hoja_fila": 16,
    "hoja_col": "E",
-   "cuenta": null,
+   "cuenta": "2790297",
    "titular": "PETRO SMART",
    "reparado": false
   },
@@ -4441,7 +4495,7 @@
    "hoja_col": "C",
    "cuenta": "7003732328",
    "titular": "PETRO SMART COMBUSTIBLES SA DE CV",
-   "reparado": true
+   "reparado": false
   },
   {
    "banda": "A-I",
@@ -4623,7 +4677,7 @@
    "hoja_col": "C",
    "cuenta": "7003712197",
    "titular": "ACP COMBUSTIBLES, S.A. DE C.V.",
-   "reparado": true
+   "reparado": false
   },
   {
    "banda": "A-I",
@@ -4795,6 +4849,20 @@
   },
   {
    "banda": "A-I",
+   "fila": 114,
+   "bloque": "TRANSPORTES y EQUIPOS  ASAMAZ",
+   "banco": "Monex",
+   "cta4": "1400",
+   "marca": "",
+   "hoja": "MONEX",
+   "hoja_fila": 9,
+   "hoja_col": "F",
+   "cuenta": null,
+   "titular": "ASAMAZ 1400",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
    "fila": 116,
    "bloque": "TRANSPORTES y EQUIPOS  ASAMAZ",
    "banco": "BBVA",
@@ -4875,6 +4943,20 @@
    "hoja_col": "E",
    "cuenta": "000000000120901962",
    "titular": "ELYON TDE",
+   "reparado": false
+  },
+  {
+   "banda": "A-I",
+   "fila": 124,
+   "bloque": "ELYON  LOGISTICS",
+   "banco": "Monex",
+   "cta4": "1236",
+   "marca": "",
+   "hoja": "MONEX",
+   "hoja_fila": 10,
+   "hoja_col": "F",
+   "cuenta": null,
+   "titular": "ELYON 1236",
    "reparado": false
   },
   {
@@ -5071,6 +5153,20 @@
    "hoja_col": "E",
    "cuenta": null,
    "titular": "ASKE",
+   "reparado": false
+  },
+  {
+   "banda": "K-O",
+   "fila": 93,
+   "bloque": "ADMINISTRACION ASKE",
+   "banco": "Monex",
+   "cta4": "1715",
+   "marca": "",
+   "hoja": "MONEX",
+   "hoja_fila": 11,
+   "hoja_col": "F",
+   "cuenta": null,
+   "titular": "ASKE 1715",
    "reparado": false
   },
   {
@@ -5365,7 +5461,7 @@
    "hoja_col": "C",
    "cuenta": "7003670528",
    "titular": "ATUNES Y SARDINAS DE MEXICO SA DE C",
-   "reparado": true
+   "reparado": false
   },
   {
    "banda": "K-O",
@@ -5939,7 +6035,7 @@
    "hoja_col": "C",
    "cuenta": "7003732310",
    "titular": "PETROIL MARINE SA DE CV",
-   "reparado": true
+   "reparado": false
   },
   {
    "banda": "Q-U",
@@ -6684,78 +6780,5 @@
    "reparado": false
   }
  ],
- "desfases_corregidos": [
-  {
-   "banda": "A-I",
-   "fila": 33,
-   "bloque": "ABASTECEDORA",
-   "banco": "HSBC",
-   "cta4": "2302",
-   "ref_mala": "HSBC!C18",
-   "ref_buena": "HSBC!C19",
-   "cuenta_que_leia": "7003712197",
-   "cuenta_correcta": "7003732302",
-   "ref_fila_buena": 19
-  },
-  {
-   "banda": "A-I",
-   "fila": 51,
-   "bloque": "PETROPLAZAS",
-   "banco": "HSBC",
-   "cta4": "0544",
-   "ref_mala": "HSBC!C16",
-   "ref_buena": "HSBC!C17",
-   "cuenta_que_leia": "7003670528",
-   "cuenta_correcta": "7003670544",
-   "ref_fila_buena": 17
-  },
-  {
-   "banda": "A-I",
-   "fila": 70,
-   "bloque": "PETRO SMART COMBUSTIBLES",
-   "banco": "HSBC",
-   "cta4": "2328",
-   "ref_mala": "HSBC!C20",
-   "ref_buena": "HSBC!C21",
-   "cuenta_que_leia": "7003732310",
-   "cuenta_correcta": "7003732328",
-   "ref_fila_buena": 21
-  },
-  {
-   "banda": "A-I",
-   "fila": 93,
-   "bloque": "ACP COMBUSTIBLES",
-   "banco": "HSBC",
-   "cta4": "2197",
-   "ref_mala": "HSBC!C17",
-   "ref_buena": "HSBC!C18",
-   "cuenta_que_leia": "7003670544",
-   "cuenta_correcta": "7003712197",
-   "ref_fila_buena": 18
-  },
-  {
-   "banda": "K-O",
-   "fila": 134,
-   "bloque": "ATUNES Y SARDINAS DE MEXICO",
-   "banco": "HSBC",
-   "cta4": "0528",
-   "ref_mala": "HSBC!C15",
-   "ref_buena": "HSBC!C16",
-   "cuenta_que_leia": "7003670494",
-   "cuenta_correcta": "7003670528",
-   "ref_fila_buena": 16
-  },
-  {
-   "banda": "Q-U",
-   "fila": 53,
-   "bloque": "PETROIL MARINE",
-   "banco": "HSBC",
-   "cta4": "2310",
-   "ref_mala": "HSBC!C19",
-   "ref_buena": "HSBC!C20",
-   "cuenta_que_leia": "7003732302",
-   "cuenta_correcta": "7003732310",
-   "ref_fila_buena": 20
-  }
- ]
+ "desfases_corregidos": []
 }
