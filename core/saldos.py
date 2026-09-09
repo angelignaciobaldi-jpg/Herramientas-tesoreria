@@ -42,7 +42,7 @@ descarga COMPLETA del portal y la hoja SALDOS solo desglosa parte de ella. Banam
 manda 16 cuentas y el reporte muestra 7; Banorte manda 24 y muestra 21. Las demás
 son cuentas reales —tarjetas, cuentas en ceros— que sí van pegadas en su pestaña
 aunque el reporte no las liste. Por eso el casado va contra TODAS las filas de las
-pestañas (`plantilla.destinos`) y no contra los 209 renglones de SALDOS.
+pestañas (`plantilla.destinos`) y no contra los 213 renglones de SALDOS.
 
 Lo que no casa con ninguna fila no se pierde ni se cuela: va a `nuevas`, y el
 exportador la lista en su propia pestaña. Es la única forma de enterarse de que

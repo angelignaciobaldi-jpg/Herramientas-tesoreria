@@ -163,9 +163,17 @@ REGIONES = {
     # Monex identifica por alias ('ABACOM 0875'), no por número. Además el
     # formato desglosa MN / DLLS / FORWARDS y el PDF del portal trae un solo
     # total, así que hay más filas que archivos.
+    #
+    # Las filas 9-12 son las cuatro cuentas que tesorería dio de alta en
+    # septiembre de 2026 —ASAMAZ 1400, ELYON 1236, ASKE 1715 y PETROPLAZAS
+    # 1699—. En SALDOS cada una ocupa la fila donde estaba el 'Total:' de su
+    # bloque y el total bajó una fila, a la que servía de separador: así el
+    # libro conserva el mismo número de filas y no se mueve ninguna referencia
+    # de más abajo. Ninguna trae número en el formato, así que se casan por
+    # (banco, últimos 4) contra el contrato que viene en el PDF del portal.
     "MONEX": [
-        Region(3, 8, {"alias": "A", "efectivo": "B", "otras_divisas": "C",
-                      "derivados": "D", "inversion": "E", "saldo": "F"}),
+        Region(3, 12, {"alias": "A", "efectivo": "B", "otras_divisas": "C",
+                       "derivados": "D", "inversion": "E", "saldo": "F"}),
     ],
     "MULTIVA": [
         Region(2, 2, {"titular": "A", "cuenta": "B", "alias": "C",
@@ -435,7 +443,7 @@ def leer_totales_cabecera(libro, renglones):
 
     Las fórmulas del formato van en dos pisos: `Q3` suma totales de bloque
     (`I30`), y cada total de bloque suma sus renglones (`=SUM(I10:I29)`). Aquí se
-    aplanan hasta las celdas hoja —las 209 que llevan un saldo— resolviendo los
+    aplanan hasta las celdas hoja —las 213 que llevan un saldo— resolviendo los
     `SUM` intermedios contra el propio formato.
 
     Se hace UNA vez, aquí, y no al generar: así la app solo tiene que sumar los

@@ -198,7 +198,7 @@ class Destino:
 
 
 class Plantilla:
-    """Los 209 renglones del formato, con sus índices de casado."""
+    """Los 213 renglones del formato, con sus índices de casado."""
 
     def __init__(self, mapa: dict, ruta_base: str = RUTA_BASE):
         self.ruta_base = ruta_base
@@ -229,7 +229,7 @@ class Plantilla:
         """Arma los destinos —TODAS las filas de las pestañas— y sus índices.
 
         Se recorre el inventario de pestañas, no la lista de renglones: el
-        reporte lee 209 filas pero las pestañas tienen 225, y las 16 restantes
+        reporte lee 213 filas pero las pestañas tienen 237, y las 24 restantes
         también hay que pegarlas para que la pestaña quede como la que arma
         tesorería a mano.
 
