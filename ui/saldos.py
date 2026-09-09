@@ -86,6 +86,13 @@ _BANCOS_POCOS = 3
 # Ancho máximo del contenido de la pantalla. Más allá, las filas se estiran y
 # separan el titular de su importe hasta perder la lectura.
 _ANCHO_CONTENIDO = 1180
+
+# Cómo se nombra en pantalla una pestaña que el portal rotula distinto. La clave
+# sigue siendo la del formato —es lo que espera el resto del sistema—, pero
+# buscarla por el nombre que usa tesorería evita el «no aparece en la lista»: el
+# portal de Intercam titula la cuenta «CUENTA ENLACE KAPITAL», así que para ellas
+# ese pegado es de Kapital.
+_ETIQUETA_BANCO = {"INTERCAM": "INTERCAM · Kapital"}
 # Ancho útil de la vista previa y de la caja del diálogo. La tabla se reparte
 # dentro de ese ancho, así que nunca hay que desplazarse en horizontal.
 _ANCHO_DIALOGO_PEGADO = 860
@@ -540,7 +547,8 @@ class SeccionSaldos:
         # ancho el selector va dentro de un Row, donde `expand` es horizontal.
         selector = ft.Dropdown(
             label="Banco", value=detectado, expand=True,
-            options=[ft.dropdown.Option(key=b, text=b) for b in bancos])
+            options=[ft.dropdown.Option(key=b, text=_ETIQUETA_BANCO.get(b, b))
+                     for b in bancos])
 
         def elegir(_ev=None):
             boton.disabled = not selector.value
