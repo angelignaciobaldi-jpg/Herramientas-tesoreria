@@ -300,12 +300,37 @@ def _escribir_vencimientos(hoja, info, filas):
     return escritas
 
 
+def _liberar_merges(hoja, fila_ini, fila_fin, col_ini, col_fin):
+    """Deshace las celdas combinadas que caigan dentro del rango que se va a escribir.
+
+    En CRÉDITOS el formato trae títulos de sección combinados en medio de la
+    rejilla de datos —'TRASNPORTES Y EQUIPOS ASAMAZ' ocupa D103:F103—, y openpyxl
+    no deja escribir en una `MergedCell`: su `.value` es de solo lectura. Un solo
+    título así abortaba el reporte COMPLETO con un AttributeError, después de que
+    el usuario ya había subido veintinueve archivos.
+
+    Se sueltan antes de escribir, no se esquivan: la combinación pertenece al
+    contenido viejo del formato, que es justo lo que se está reemplazando por la
+    captura de tesorería. Respetarla sería conservar la decoración de un dato que
+    ya no está."""
+    for rango in list(hoja.merged_cells.ranges):
+        if (rango.min_row <= fila_fin and rango.max_row >= fila_ini
+                and rango.min_col <= col_fin and rango.max_col >= col_ini):
+            hoja.unmerge_cells(str(rango))
+
+
 def _copiar_rangos(hoja, datos):
     """Copia bloques de celdas a sus mismas coordenadas (caso CRÉDITOS)."""
     total = 0
     for rango in datos.get("rangos", ()):
         col_ini = column_index_from_string(rango["col_ini"])
-        for i, valores in enumerate(rango["celdas"]):
+        celdas = rango["celdas"]
+        if not celdas:
+            continue
+        _liberar_merges(hoja, rango["fila_ini"],
+                        rango["fila_ini"] + len(celdas) - 1,
+                        col_ini, col_ini + max(len(v) for v in celdas) - 1)
+        for i, valores in enumerate(celdas):
             fila = rango["fila_ini"] + i
             for j, valor in enumerate(valores):
                 if valor is None:

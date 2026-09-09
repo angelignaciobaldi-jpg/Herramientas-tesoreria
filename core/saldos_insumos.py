@@ -500,10 +500,21 @@ def _copiar_rangos(hoja, datos) -> int:
     if not datos:
         return 0
     from openpyxl.utils import column_index_from_string
+
+    from .saldos_export import _liberar_merges
+
     total = 0
     for rango in datos.get("rangos", ()):
         col_ini = column_index_from_string(rango["col_ini"])
-        for i, valores in enumerate(rango["celdas"]):
+        celdas = rango["celdas"]
+        if not celdas:
+            continue
+        # Los títulos de sección de CRÉDITOS vienen combinados y openpyxl no deja
+        # escribir en ellos; ver `_liberar_merges`.
+        _liberar_merges(hoja, rango["fila_ini"],
+                        rango["fila_ini"] + len(celdas) - 1,
+                        col_ini, col_ini + max(len(v) for v in celdas) - 1)
+        for i, valores in enumerate(celdas):
             fila = rango["fila_ini"] + i
             for j, valor in enumerate(valores):
                 if valor is None:
