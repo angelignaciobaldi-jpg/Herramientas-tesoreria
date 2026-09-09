@@ -657,8 +657,78 @@ _SCOTIA = re.compile(
     r"(?P<saldo>\d{6,}\.\d{2})(?P<pais>[A-Za-z]+?)(?P<estatus>Activa|No existe.*)?\s*$")
 
 
+# El comprobante «SEL - Scotia en Línea», que es un PDF y no el txt de ancho
+# fijo. Se reconoce por su título, que ningún otro reporte lleva.
+_ES_SEL = "comprobante de consulta de saldos"
+# La cuenta va pegada a la plaza al final del token: 'MAZATLAN,-11700512613'.
+_SEL_CUENTA = re.compile(r"[^\d](\d{8,})\s*$")
+_SEL_MONEDA = re.compile(r"^[A-Z]{3}$")
+# Cuántas líneas se admiten entre la cuenta y su moneda. El titular puede partirse
+# en dos ('…DEL PACIFICO' / 'SA') y a veces no viene; más allá de eso es que el
+# renglón no era una cuenta y hay que soltarlo en vez de tragarse media página.
+_SEL_MAX_TITULAR = 5
+
+
+def _leer_scotia_sel(texto: str) -> list[LineaSaldo]:
+    """El comprobante de Scotia en Línea, cuyo PDF sale un dato por renglón:
+
+        MEXICO / CHQ-MXN- / MAZATLAN,-11700512613 / ABASTECEDORA … / SA
+        / MXN / 498,827.01 / ACTIVA
+
+    Se ancla en la CUENTA —el número largo al final del token de la plaza— y de
+    ahí se avanza hasta la moneda; lo que queda en medio es el titular, que puede
+    venir partido en dos renglones o no venir (una de las cuentas del comprobante
+    real no tiene nombre). El importe es el renglón siguiente a la moneda.
+
+    No se lee por posición ni por columnas: el PDF no las conserva."""
+    lineas = [l.strip() for l in texto.splitlines() if l.strip()]
+    salida = []
+    i = 0
+    while i < len(lineas):
+        m = _SEL_CUENTA.search(lineas[i])
+        # 'Total por Producto: 1,442,932.90' también acaba en dígitos: se descarta
+        # por el rótulo, no por la forma.
+        if not m or _norm(lineas[i]).startswith(("total", "folio")):
+            i += 1
+            continue
+        cuenta = m.group(1)
+        titular, j = [], i + 1
+        while (j < len(lineas) and j - i <= _SEL_MAX_TITULAR
+               and not _SEL_MONEDA.match(lineas[j])):
+            titular.append(lineas[j])
+            j += 1
+        if j >= len(lineas) or not _SEL_MONEDA.match(lineas[j]):
+            i += 1
+            continue
+        saldo = _a_float(lineas[j + 1]) if j + 1 < len(lineas) else None
+        if saldo is None:
+            i += 1
+            continue
+        estatus = lineas[j + 2] if j + 2 < len(lineas) else ""
+        salida.append(LineaSaldo(
+            banco="Scotiabank", cuenta=cuenta, clabe="",
+            titular=" ".join(titular).strip(), saldo=saldo,
+            moneda=_moneda(lineas[j]),
+            extra={"estatus": estatus.strip()}))
+        i = j + 2
+    if not salida:
+        raise ErrorLector(
+            "El comprobante de Scotia en Línea no trae ninguna cuenta legible.")
+    return salida
+
+
 def leer_scotiabank(ruta: str, texto: str = None) -> list[LineaSaldo]:
-    texto = texto if texto is not None else _texto_plano(ruta, limite=1_000_000)
+    """Scotiabank entrega DOS formatos distintos y aquí se reparten.
+
+    El de siempre es un txt de ancho fijo; el nuevo es el comprobante «Scotia en
+    Línea» en PDF, que no tiene columnas que respetar. Se distinguen por el
+    título del comprobante, así que un archivo no puede confundirse con el
+    otro."""
+    if texto is None:
+        texto = (_texto_pdf(ruta) if ruta.lower().endswith(".pdf")
+                 else _texto_plano(ruta, limite=1_000_000))
+    if _ES_SEL in _norm(texto):
+        return _leer_scotia_sel(texto)
     out = []
     for linea in texto.splitlines():
         if not linea.strip():
@@ -772,7 +842,7 @@ _LECTORES = (
      leer_multiva),
     ("BANCOMER", (".xls", ".xlsx"), ("cuenta", "alias", "divisa", "disponible"),
      leer_bancomer),
-    ("SCOTIABANK", (".txt",), ("chq",), leer_scotiabank),
+    ("SCOTIABANK", (".txt", ".pdf"), ("chq",), leer_scotiabank),
     ("MONEX", (".pdf",), ("contrato", "clabe"), leer_monex),
     ("SABADELL", (".pdf",), ("posicion global", "saldo disponible"), leer_sabadell),
 )
