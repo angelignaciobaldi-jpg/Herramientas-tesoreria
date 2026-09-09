@@ -42,7 +42,7 @@ descarga COMPLETA del portal y la hoja SALDOS solo desglosa parte de ella. Banam
 manda 16 cuentas y el reporte muestra 7; Banorte manda 24 y muestra 21. Las demás
 son cuentas reales —tarjetas, cuentas en ceros— que sí van pegadas en su pestaña
 aunque el reporte no las liste. Por eso el casado va contra TODAS las filas de las
-pestañas (`plantilla.destinos`) y no contra los 209 renglones de SALDOS.
+pestañas (`plantilla.destinos`) y no contra los 213 renglones de SALDOS.
 
 Lo que no casa con ninguna fila no se pierde ni se cuela: va a `nuevas`, y el
 exportador la lista en su propia pestaña. Es la única forma de enterarse de que
@@ -316,6 +316,37 @@ def colas_excluidas(plantilla: Plantilla) -> dict:
     return fuera
 
 
+# Renglones que el formato reserva para la OTRA divisa de un mismo contrato.
+# Monex parte dos de sus contratos en dos filas —pesos y dólares— y la de dólares
+# no lleva número propio: comparte contrato con la de pesos, así que ninguna
+# regla por número puede separarlas. Tampoco sirve la cola: el renglón de
+# «ABACOM FORDWARDS 3487 USD» tiene por cta4 la palabra FORWARDS, sin dígitos.
+#
+# Por eso van declarados aquí, por (pestaña, contrato) -> fila. Es la misma clase
+# de excepción que el resto de rarezas del formato, y se resuelve igual: escrita,
+# no adivinada.
+RENGLONES_DIVISA = {
+    ("MONEX", "2848000"): 6,   # ACP 8000 DLLS
+    ("MONEX", "2793487"): 7,   # ABACOM FORDWARDS 3487 USD
+}
+
+
+def _casar_divisa(linea: LineaSaldo, plantilla: Plantilla):
+    """Fila reservada a la otra divisa de este contrato, si la hay.
+
+    Solo se aplica a las líneas que el lector marcó como tales, así que no puede
+    desviar un saldo normal."""
+    if not (linea.extra or {}).get("renglon_divisa"):
+        return None
+    prefijo = prefijo_banco(linea.banco)
+    hoja = plantilla.hoja_de_prefijo(prefijo)
+    fila = RENGLONES_DIVISA.get((hoja, _digitos(linea.cuenta)))
+    if fila is None:
+        return None
+    return next((d for d in plantilla.destinos
+                 if d.hoja == hoja and d.fila == fila), None)
+
+
 def _excluida(linea: LineaSaldo, colas: dict = None) -> bool:
     """Si esta línea está en la lista de cuentas que no van al reporte.
 
@@ -345,6 +376,12 @@ def _casar(linea: LineaSaldo, plantilla: Plantilla):
         destino = plantilla.buscar(clabe)
         if destino is not None:
             return destino, "clabe"
+
+    # Antes que nada, el renglón de divisas: su línea comparte contrato con la de
+    # pesos, así que buscar por número la mandaría a la fila equivocada.
+    destino = _casar_divisa(linea, plantilla)
+    if destino is not None:
+        return destino, "divisa"
 
     formas = _formas_cuenta(linea)
     destino = plantilla.buscar(*formas)

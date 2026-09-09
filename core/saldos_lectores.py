@@ -681,7 +681,12 @@ def _leer_scotia_sel(texto: str) -> list[LineaSaldo]:
     real no tiene nombre). El importe es el renglón siguiente a la moneda.
 
     No se lee por posición ni por columnas: el PDF no las conserva."""
-    lineas = [l.strip() for l in texto.splitlines() if l.strip()]
+    # Se trabaja sobre TOKENS, no sobre renglones: del PDF llega un dato por
+    # línea, pero al copiar la MISMA tabla desde el portal llega un renglón por
+    # cuenta con tabuladores. Partiendo también por tabulador, las dos formas
+    # quedan iguales y el recorrido es el mismo.
+    lineas = [t.strip() for l in texto.splitlines() for t in l.split("\t")
+              if t.strip()]
     salida = []
     i = 0
     while i < len(lineas):
@@ -727,8 +732,15 @@ def leer_scotiabank(ruta: str, texto: str = None) -> list[LineaSaldo]:
     if texto is None:
         texto = (_texto_pdf(ruta) if ruta.lower().endswith(".pdf")
                  else _texto_plano(ruta, limite=1_000_000))
+    # Se prueban los DOS y gana el que saque cuentas. Antes mandaba solo el
+    # título del comprobante, y al PEGAR desde el portal ese título no siempre
+    # viaja: el pegado se iba al lector de ancho fijo y moría con «ninguna línea
+    # tiene el formato de SCOTIABANK» aun habiéndose identificado el banco.
     if _ES_SEL in _norm(texto):
-        return _leer_scotia_sel(texto)
+        try:
+            return _leer_scotia_sel(texto)
+        except ErrorLector:
+            pass   # traía el título pero no cuentas: se intenta el ancho fijo
     out = []
     for linea in texto.splitlines():
         if not linea.strip():
@@ -745,22 +757,45 @@ def leer_scotiabank(ruta: str, texto: str = None) -> list[LineaSaldo]:
             saldo=_a_float(m.group("saldo")) or 0.0,
             moneda=_moneda(m.group("moneda")),
             extra={"estatus": (m.group("estatus") or "").strip()}))
-    if not out:
-        raise ErrorLector("Ninguna línea del archivo tiene el formato de SCOTIABANK.")
-    return out
+    if out:
+        return out
+    # El de ancho fijo no reconoció nada: el último intento es el comprobante,
+    # que es como llega cuando se PEGA la tabla del portal —ahí no viene el
+    # título por el que se distinguen—. Si tampoco es, sube su error, que dice
+    # qué se esperaba encontrar.
+    return _leer_scotia_sel(texto)
 
 
 _MONEX_CLIENTE = re.compile(r"Cliente\s*:\s*(.+)")
 _MONEX_CONTRATO = re.compile(r"Contrato\s*:\s*(\d+)")
 _MONEX_CLABE = re.compile(r"Clabe\s*:\s*(\d{18})")
 _MONEX_TOTAL = re.compile(r"Total en pesos\s*\n\s*([\d,.]+)")
+# El efectivo en pesos y el saldo neto en dólares, para los contratos que traen
+# las dos divisas. El comprobante los presenta en bloques separados —«Saldo de
+# efectivo» y «Saldos en divisas»— y el formato les reserva DOS renglones.
+_MONEX_EFECTIVO = re.compile(r"Saldo de efectivo\s*\n\s*([\d,.]+)")
+# El renglón del dólar trae nueve importes seguidos —MD, 24hrs, 48hrs, >48hrs,
+# tránsito, bloqueado, neto, tipo de cambio y valuación en pesos— y el que quiere
+# tesorería es el PRIMERO, «Saldo MD». Por eso la expresión se queda con el
+# primero y no busca 'Saldo neto': hoy coinciden porque las columnas intermedias
+# van en cero, pero en cuanto haya dinero en tránsito dejarían de hacerlo.
+_MONEX_USD = re.compile(r"DOLAR\s*\n?\s*AMERICANO\s*\n?\s*([\d,.]+)")
 
 
 def leer_monex(ruta: str, texto: str = None) -> list[LineaSaldo]:
     """Monex emite un PDF por contrato, no un consolidado.
 
-    Se toma 'Total en pesos', que es el equivalente a la columna 'VALUACIÓN TOTAL'
-    que el formato usa hoy (SALDOS!I22 apunta a MONEX!F3)."""
+    Un contrato con dólares da DOS líneas, porque el formato lo parte en dos
+    renglones: uno de pesos y otro de divisas (SALDOS!H34 y H94 dicen «DLS»).
+    Antes se emitía solo el 'Total en pesos' —que ya incluye la valuación de los
+    dólares—, así que el renglón de divisas quedaba vacío y los dólares se
+    contaban como pesos: de las seis cuentas de Monex solo se llenaban cuatro.
+
+    Al renglón de pesos le toca el SALDO DE EFECTIVO y al de divisas el «Saldo
+    MD» EN DÓLARES, no su valuación en pesos: el reporte lo rotula DLS y en pesos
+    saldría diecisiete veces mayor. En los contratos de una sola divisa
+    'Saldo de efectivo' y 'Total en pesos' coinciden (verificado sobre los cuatro
+    comprobantes), así que ahí no cambia nada."""
     texto = texto if texto is not None else _texto_pdf(ruta)
     contrato = _MONEX_CONTRATO.search(texto)
     clabe = _MONEX_CLABE.search(texto)
@@ -772,13 +807,28 @@ def leer_monex(ruta: str, texto: str = None) -> list[LineaSaldo]:
             f"No se encontró el 'Total en pesos' en "
             f"«{os.path.basename(ruta)}».")
     cliente = _MONEX_CLIENTE.search(texto)
-    return [LineaSaldo(
-        banco="Banco Monex",
-        cuenta=contrato.group(1) if contrato else "",
+    num = contrato.group(1) if contrato else ""
+    nombre = cliente.group(1).strip() if cliente else ""
+
+    usd = _MONEX_USD.search(texto)
+    efectivo = _MONEX_EFECTIVO.search(texto)
+    # Sin bloque de divisas, efectivo y total coinciden: se prefiere el total por
+    # ser el que este lector ha usado siempre.
+    pesos = _a_float((efectivo or total).group(1)) if usd else _a_float(
+        total.group(1))
+
+    salida = [LineaSaldo(
+        banco="Banco Monex", cuenta=num,
         clabe=clabe.group(1) if clabe else "",
-        titular=cliente.group(1).strip() if cliente else "",
-        saldo=_a_float(total.group(1)) or 0.0,
-        moneda="MXN")]
+        titular=nombre, saldo=pesos or 0.0, moneda="MXN")]
+    if usd:
+        salida.append(LineaSaldo(
+            banco="Banco Monex", cuenta=num, clabe="", titular=nombre,
+            saldo=_a_float(usd.group(1)) or 0.0, moneda="USD",
+            # La marca es lo que permite mandarlo a su renglón: comparte contrato
+            # con el de pesos, así que por número no hay forma de separarlos.
+            extra={"renglon_divisa": True}))
+    return salida
 
 
 def leer_sabadell(ruta: str) -> list[LineaSaldo]:
@@ -953,9 +1003,31 @@ def _celdas(filas: list) -> list[str]:
     return [_norm(v) for f in filas for v in f if _norm(v)]
 
 
+def _texto_de(filas: list) -> str:
+    """El pegado como texto plano, para las recetas que no miran celdas."""
+    return "\n".join(" ".join(str(v or "") for v in fila) for fila in filas)
+
+
 def _marca_bancoppel(filas: list) -> bool:
-    celdas = _celdas(filas)
-    return "cuenta:" in celdas and "saldo:" in celdas
+    """Un rótulo «Cuenta» seguido de su número y un «Saldo» seguido de su importe.
+
+    Se mira el TEXTO y no las celdas: el pegado llega con tabuladores o con
+    espacios según de dónde se copie, y exigiendo celdas exactas se perdía la
+    mitad de los casos. Que AMBOS rótulos vengan seguidos de un valor es lo que
+    impide reclamar cualquier tabla con columnas «Cuenta» y «Saldo»: ahí a un
+    rótulo le sigue otro rótulo, no un número."""
+    texto = _texto_de(filas)
+    return bool(_BCP_CUENTA.search(texto) and _BCP_SALDO.search(texto))
+
+
+# Los rótulos de Bancoppel y su valor, en el TEXTO. Se busca así y no por celdas
+# porque el pegado llega de formas distintas según de dónde se copie: a veces los
+# rótulos y los valores caen en la misma fila separados por tabuladores, y a
+# veces el portal los manda en dos renglones —rótulos arriba, valores abajo—. Con
+# una expresión sobre el texto da igual cuál de las dos sea.
+_BCP_CUENTA = re.compile(r"cuenta\s*:?\s*([\d][\d\s-]{6,})", re.I)
+_BCP_CLABE = re.compile(r"clabe\s*:?\s*([\d][\d\s-]{10,})", re.I)
+_BCP_SALDO = re.compile(r"saldo\s*:?\s*\$?\s*([\d][\d.,]*)", re.I)
 
 
 def _leer_bancoppel_pegado(filas: list) -> list[LineaSaldo]:
@@ -963,36 +1035,49 @@ def _leer_bancoppel_pegado(filas: list) -> list[LineaSaldo]:
 
         Cuenta:  22000004794  l  CLABE:  137180220000047940    Saldo:  $170,350.43
 
-    Se lee por ETIQUETA —el valor es lo que sigue a cada rótulo— y no por
-    posición: entre «Cuenta:» y «CLABE:» el portal mete una celda suelta con una
-    'l', y contar columnas se rompería con ella."""
-    salida = []
-    for fila in filas:
-        valores = [str(v or "").strip() for v in fila]
-        etiquetas = {}
-        for i, celda in enumerate(valores):
-            clave = _norm(celda).rstrip(":")
-            if clave in ("cuenta", "clabe", "saldo") and _norm(celda).endswith(":"):
-                # El valor es la siguiente celda con contenido.
-                for siguiente in valores[i + 1:]:
-                    if siguiente.strip():
-                        etiquetas[clave] = siguiente.strip()
-                        break
-        cuenta = _digitos(etiquetas.get("cuenta", ""))
-        saldo = _a_float(etiquetas.get("saldo"))
-        if not cuenta or saldo is None:
-            continue
-        salida.append(LineaSaldo(
-            banco="BanCoppel", cuenta=cuenta,
-            clabe=_digitos(etiquetas.get("clabe", "")), titular="",
-            saldo=saldo, moneda="MXN"))
-    return salida
+    Se lee por ETIQUETA y sobre el TEXTO, no por celdas: entre «Cuenta:» y
+    «CLABE:» el portal mete una celda suelta con una 'l', así que contar columnas
+    se rompe; y según de dónde se copie, los rótulos y sus valores caen en la
+    misma fila o en dos renglones distintos. Buscando el valor que sigue a cada
+    rótulo, da igual cuál de las dos formas llegue."""
+    texto = "\n".join(" ".join(str(v or "") for v in fila) for fila in filas)
+    cuenta = _BCP_CUENTA.search(texto)
+    saldo = _BCP_SALDO.search(texto)
+    if not cuenta or not saldo:
+        raise ErrorLector(
+            "El pegado de BANCOPPEL no trae «Cuenta:» y «Saldo:» con sus "
+            "valores. Copia el renglón completo de la cuenta.")
+    clabe = _BCP_CLABE.search(texto)
+    monto = _a_float(saldo.group(1))
+    if monto is None:
+        raise ErrorLector("No se entendió el saldo del pegado de BANCOPPEL.")
+    return [LineaSaldo(
+        banco="BanCoppel", cuenta=_digitos(cuenta.group(1)),
+        clabe=_digitos(clabe.group(1)) if clabe else "", titular="",
+        saldo=monto, moneda="MXN")]
+
+
+# Una cuenta enmascarada de Intercam: '***-***94-001-1'. Es su rasgo más
+# distintivo y aparece igual en las dos vistas de su portal.
+#
+# El GUION es imprescindible en el patrón: Banamex también enmascara sus cuentas
+# —'**8363'— y sin exigirlo esta receta le reclamaría sus pegados.
+_INTERCAM_CUENTA = re.compile(r"\*{2,}[\d*]*-[\d*\-]*\d")
 
 
 def _marca_intercam(filas: list) -> bool:
-    celdas = _celdas(filas)
-    return "cta anterior" in celdas and any(c.startswith("saldo sobregiro")
-                                            for c in celdas)
+    """Reconoce las DOS vistas del portal, que no traen las mismas columnas.
+
+    Una lista los saldos con «Cta Anterior · Cuenta · Moneda · Alias · Saldo
+    Disponible»; la otra —la que se imprime a PDF— con «Cuenta · Disponible ·
+    Sobregiro · Bloqueado…». Lo común a ambas es la cuenta enmascarada, que
+    ningún otro banco usa, así que basta con exigirla junto a alguna de las dos
+    cabeceras."""
+    # La cuenta enmascarada CON guiones no la produce ningún otro portal, así
+    # que por sí sola alcanza: pedir además una cabecera concreta dejaba fuera
+    # la vista que se copia sin tabuladores, donde los títulos van en una misma
+    # celda y no casan uno a uno.
+    return bool(_INTERCAM_CUENTA.search(_texto_de(filas)))
 
 
 def _leer_intercam_pegado(filas: list) -> list[LineaSaldo]:
@@ -1008,7 +1093,11 @@ def _leer_intercam_pegado(filas: list) -> list[LineaSaldo]:
              "titular": ("alias",), "saldo": ("saldo disponible",)}
     n, idx = _buscar_encabezado(filas, alias, ("cuenta", "saldo"))
     if n is None:
-        raise ErrorLector("No se encontraron los encabezados de INTERCAM.")
+        # La otra vista del portal no tiene columna «Saldo Disponible» sino
+        # «Disponible», y mete la cuenta y su alias en la MISMA celda. Ahí no hay
+        # encabezado que casar: se ancla en la cuenta enmascarada y se toma el
+        # primer importe que le sigue, que es el disponible.
+        return _leer_intercam_por_mascara(filas)
     salida = []
     for fila in filas[n + 1:]:
         cuenta = _digitos(_celda(fila, idx.get("cuenta")))
@@ -1020,6 +1109,41 @@ def _leer_intercam_pegado(filas: list) -> list[LineaSaldo]:
             titular=str(_celda(fila, idx.get("titular")) or "").strip(),
             saldo=saldo,
             moneda=_moneda(_celda(fila, idx.get("moneda")))))
+    return salida
+
+
+def _leer_intercam_por_mascara(filas: list) -> list[LineaSaldo]:
+    """Intercam sin encabezado reconocible: la cuenta enmascarada manda.
+
+    Es la vista que se imprime a PDF, donde la celda de la cuenta trae también su
+    alias («***-***94-001-1 CUENTA ENLACE KAPITAL PESOS») y el disponible es el
+    primer importe del renglón."""
+    salida = []
+    for fila in filas:
+        valores = [str(v or "").strip() for v in fila]
+        crudo = " ".join(valores)
+        m = _INTERCAM_CUENTA.search(crudo)
+        if not m:
+            continue
+        importe = next((_a_float(v) for v in valores
+                        if not _INTERCAM_CUENTA.search(v)
+                        and _a_float(v) is not None), None)
+        if importe is None:
+            # Cuenta y disponible pueden venir en la misma celda.
+            resto = crudo[m.end():]
+            hallado = re.search(r"\$?\s*([\d][\d.,]*)", resto)
+            importe = _a_float(hallado.group(1)) if hallado else None
+        if importe is None:
+            continue
+        titular = crudo[m.end():].strip()
+        salida.append(LineaSaldo(
+            banco="Intercam Banco", cuenta=_digitos(m.group(0)), clabe="",
+            titular=re.sub(r"[\d$.,]+", " ", titular).strip()[:60],
+            saldo=importe, moneda="MXN"))
+    if not salida:
+        raise ErrorLector(
+            "No se encontró la cuenta enmascarada de INTERCAM con su saldo "
+            "disponible.")
     return salida
 
 
@@ -1079,9 +1203,9 @@ _ES_CUENTA_HSBC = re.compile(r"\d{8,}")
 # (nombre de la pestaña, reconoce, lee). El nombre es el de la HOJA del formato,
 # que es lo que espera el resto del sistema.
 _RECETAS_PEGADO = (
-    ("BANCOPPEL", _marca_bancoppel, _leer_bancoppel_pegado),
     ("INTERCAM", _marca_intercam, _leer_intercam_pegado),
     ("HSBC", _marca_hsbc_pegado, _leer_hsbc_pegado),
+    ("BANCOPPEL", _marca_bancoppel, _leer_bancoppel_pegado),
 )
 _POR_RECETA = {n: f for n, _m, f in _RECETAS_PEGADO}
 
@@ -1125,15 +1249,19 @@ def filas_pegadas(texto: str) -> list[list[str]]:
     """Convierte en filas el texto de una tabla copiada.
 
     El tabulador es lo que ponen Excel, los navegadores y el propio Windows al
-    copiar una tabla, así que manda. Si no hay ninguno se prueba el punto y coma
-    y la coma, por si el portal entrega el renglón ya separado como CSV.
+    copiar una tabla, así que manda. Si no hay ninguno se prueba el punto y coma.
+
+    La COMA no se usa nunca como separador, aunque un pegado suelto pueda venir
+    como CSV: los importes la llevan dentro —`$170,350.43`— y partir por ella
+    convertía ese saldo en 170. Un separador de más rompe la cifra en silencio;
+    uno de menos solo deja el renglón en una columna, que las recetas manejan.
 
     Las líneas en blanco se descartan: al seleccionar con el mouse suelen colarse
     al principio y al final, y correrían el índice del encabezado."""
     lineas = [l for l in (texto or "").splitlines() if l.strip()]
     if not lineas:
         return []
-    for sep in ("\t", ";", ","):
+    for sep in ("\t", ";"):
         if any(sep in l for l in lineas):
             return [l.split(sep) for l in lineas]
     # Una sola columna: sigue siendo válido para los lectores que trabajan sobre
