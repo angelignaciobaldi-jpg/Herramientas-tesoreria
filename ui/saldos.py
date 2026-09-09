@@ -741,6 +741,7 @@ class SeccionSaldos:
         for nuevo in insumos:
             self.insumos = [x for x in self.insumos if x["tipo"] != nuevo["tipo"]]
             self.insumos.append(nuevo)
+        sin_guardar = None
         if insumos:
             # Antes de fundir hay que tener lo de días anteriores: si la lectura
             # diferida siguiera en curso, se guardaría encima de un diccionario
@@ -748,14 +749,28 @@ class SeccionSaldos:
             diagnostico.registrar("saldos._cargar: esperando estado")
             await self._asegurar_estado()
             diagnostico.registrar("saldos._cargar: guardando insumos")
-            await asyncio.to_thread(self._guardar_insumos, insumos)
+            try:
+                await asyncio.to_thread(self._guardar_insumos, insumos)
+            except BaseException as exc:  # noqa: BLE001 — se avisa más abajo
+                # No se aborta: `self.guardados` ya tiene lo subido, así que el
+                # reporte de HOY sale completo. Lo que no puede pasar es que el
+                # usuario se entere mañana, al abrir la pantalla y no encontrar
+                # nada. Por eso el aviso sustituye al resumen de siempre.
+                diagnostico.registrar("saldos._cargar: no se guardaron",
+                                      str(exc)[:200])
+                self._registrar_error(exc, saldos_estado.RUTA_INSUMOS)
+                sin_guardar = exc
 
         diagnostico.registrar("saldos._cargar: identificando")
         self._reidentificar()
         self._ocupado(False)
         diagnostico.registrar("saldos._cargar: pintando")
         self._pintar()
-        self.app.avisar(*self._resumen_carga(bancarios, insumos, repetidos))
+        if sin_guardar is not None:
+            self.app.avisar(str(sin_guardar), ROJO,
+                            duracion=ft.Duration(seconds=20))
+        else:
+            self.app.avisar(*self._resumen_carga(bancarios, insumos, repetidos))
         diagnostico.registrar("saldos._cargar: listo")
 
     @staticmethod

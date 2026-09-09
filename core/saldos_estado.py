@@ -209,19 +209,30 @@ def guardar_insumos(datos: dict) -> dict:
     «vaciar» varias veces porque el botón no daba señales, y dos rewrites del
     mismo libro de 1.6 MB se entrelazaron y lo dejaron ilegible. Con `os.replace`
     —atómico dentro del mismo volumen— lo peor que puede pasar es que quede el
-    archivo anterior intacto."""
+    archivo anterior intacto.
+
+    Si no se puede escribir, LANZA `ErrorEstado`. Antes se devolvía `{}` y se
+    seguía como si nada, con el argumento de que no poder recordar no impide
+    reportar hoy —cierto—, pero el usuario no se enteraba: los insumos se veían
+    bien toda la sesión, porque quien llama ya los tiene en memoria, y al día
+    siguiente no había nada. Un título combinado de CRÉDITOS bastó para que las
+    cinco secciones se perdieran así, en silencio, durante días. Reportar hoy
+    sigue sin depender de esto: quien llama avisa y continúa."""
     from . import saldos_insumos
     temporal = RUTA_INSUMOS + ".tmp"
     try:
         escritas = saldos_insumos.escribir_plantilla(temporal, datos)
         os.replace(temporal, RUTA_INSUMOS)
         return escritas
-    except Exception:  # noqa: BLE001 — no poder recordar no impide reportar hoy
+    except Exception as exc:  # noqa: BLE001 — se traduce a un error propio
         try:
             os.remove(temporal)
         except OSError:
             pass
-        return {}
+        raise ErrorEstado(
+            "no se pudo guardar el archivo de insumos ({}). Lo que subiste "
+            "sirve para el reporte de hoy, pero no va a estar mañana."
+            .format(exc)) from exc
 
 
 def fusionar_insumos(guardados: dict, nuevos: dict) -> dict:
