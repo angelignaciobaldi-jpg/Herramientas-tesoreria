@@ -132,6 +132,24 @@ class Renglon:
 # es un último recurso dudoso, es el único identificador que da la fuente.
 HOJAS_ENMASCARADAS = frozenset({"BANAMEX"})
 
+# Renglones del formato que ya no se reportan, por (banco, cta4). Tesorería dejó
+# de tomar en cuenta las cuentas de Bx+ (Ve por Más) —las de Scotiabank, que
+# comparten la pestaña «BX+ SCO», siguen igual—.
+#
+# Se apagan AQUÍ y no en `CUENTAS_EXCLUIDAS`, que descarta líneas que llegan: a
+# estas no las llena ningún archivo, nunca las hubo. Lo que sobraba era el
+# renglón, que salía cada día como pendiente y bajaba la cobertura sin que
+# hubiera nada que hacer al respecto.
+#
+# Quitarlo de `renglones` basta para que todo lo demás cuadre solo: la cobertura,
+# los renglones vacíos, el tablero de bancos y los totales de la cabecera se
+# calculan a partir de esta lista. La FILA del formato sigue existiendo y se le
+# escribe su identidad; simplemente ya no se espera un saldo para ella.
+RENGLONES_IGNORADOS = frozenset({
+    ("Bx+", "9180"),   # ABASTECEDORA · BX+ SCO!8
+    ("Bx+", "2436"),   # PETROSMART   · BX+ SCO!9
+})
+
 
 @dataclass(frozen=True)
 class Destino:
@@ -194,7 +212,8 @@ class Plantilla:
         self.espejo_totales = mapa.get("espejo_totales", {})
         self.celda_fecha_anterior = mapa.get("celda_fecha_anterior", "L5")
         self.celda_hora_anterior = mapa.get("celda_hora_anterior", "L6")
-        self.renglones = [Renglon(**r) for r in mapa["renglones"]]
+        self.renglones = [r for r in (Renglon(**x) for x in mapa["renglones"])
+                          if (r.banco, str(r.cta4)) not in RENGLONES_IGNORADOS]
 
         self.destinos: list = []
         self.por_cuenta: dict[str, Destino] = {}
