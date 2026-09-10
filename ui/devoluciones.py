@@ -47,14 +47,15 @@ from ui.tabla_responsiva import DER, IZQ, ColumnaTabla, FilaDatos, TablaResponsi
 _COLS = [
     ("", 3, CENTRO, 44),
     ("Folio", 8, CENTRO, 90),
-    ("Empresa solicitante", 12, CENTRO, 150),
-    ("Cliente / Beneficiario", 14, IZQ, 150),
-    ("CLABE Beneficiario", 12, CENTRO, 150),
+    ("Empresa solicitante", 11, CENTRO, 150),
+    ("Cliente / Beneficiario", 13, IZQ, 150),
+    ("CLABE Beneficiario", 11, CENTRO, 150),
     ("Banco destino", 8, CENTRO, 90),
     ("Monto", 8, DER, 90),
-    ("Concepto", 10, IZQ, 130),
+    ("Concepto", 9, IZQ, 120),
     ("Cuenta origen de pago", 11, CENTRO, 150),
-    ("Comprobante", 8, CENTRO, 110),
+    # Lleva texto Y botón: con menos ancho el botón no se alcanza a pulsar.
+    ("Comprobante", 12, CENTRO, 160),
     ("Acciones", 6, CENTRO, 90),
 ]
 
@@ -179,28 +180,33 @@ class FilaSolicitud:
 
         # Celda de la columna 'Comprobante': un icono que resume el estado y
         # cuyo tooltip trae el detalle (archivo y referencia que se escribira).
+        # Sin comprobante NO se pinta icono de estado: el botón de vincular ya
+        # es un clip, y dos clips juntos solo quitaban espacio al botón.
         self.icono_comprobante = ft.Icon(
-            ft.Icons.ATTACH_FILE, size=18, color=GRIS)
-        self.txt_comprobante = ft.Text("— sin comprobante —", size=11,
-                                       color=GRIS, no_wrap=True)
+            ft.Icons.CHECK_CIRCLE, size=16, color=ft.Colors.GREEN_700,
+            visible=False)
+        self.txt_comprobante = ft.Text("", size=11, color=GRIS, no_wrap=True,
+                                       expand=True,
+                                       overflow=ft.TextOverflow.ELLIPSIS)
         # Acciones por fila: vincular a mano cuando no hay, quitarlo cuando la
         # vinculación automática se equivocó. Solo se ve la que aplica.
         self.btn_vincular_comprobante = ft.IconButton(
             icon=ft.Icons.ATTACH_FILE, tooltip="Vincular un comprobante a mano",
-            icon_color=ft.Colors.BLUE_700, icon_size=16,
-            width=30, height=30, style=ft.ButtonStyle(padding=0),
+            icon_color=ft.Colors.BLUE_700, icon_size=18,
+            width=36, height=36, style=ft.ButtonStyle(padding=0),
             on_click=lambda e: self.seccion.vincular_manual(self),
         )
         self.btn_quitar_comprobante = ft.IconButton(
             icon=ft.Icons.CLOSE, tooltip="Quitar el comprobante de este registro",
-            icon_color=ROJO, icon_size=16,
-            width=30, height=30, style=ft.ButtonStyle(padding=0), visible=False,
+            icon_color=ROJO, icon_size=18,
+            width=36, height=36, style=ft.ButtonStyle(padding=0), visible=False,
             on_click=lambda e: self.seccion.quitar_comprobante(self),
         )
         self.celda_comprobante = ft.Row(
             [self.icono_comprobante, self.txt_comprobante,
              self.btn_vincular_comprobante, self.btn_quitar_comprobante],
-            spacing=2, alignment=ft.MainAxisAlignment.CENTER, tight=True,
+            spacing=2, alignment=ft.MainAxisAlignment.CENTER,
+            vertical_alignment=ft.CrossAxisAlignment.CENTER,
         )
 
         self.acciones = ft.Row(
@@ -418,18 +424,17 @@ class FilaSolicitud:
         tooltip lleva el archivo y la referencia que se escribira en el SIPP, que
         es lo que conviene revisar antes de subir."""
         if not self.comprobante:
-            self.icono_comprobante.name = ft.Icons.ATTACH_FILE
-            self.icono_comprobante.color = GRIS
-            self.txt_comprobante.value = "— sin comprobante —"
+            self.icono_comprobante.visible = False
+            self.txt_comprobante.value = ""
             self.txt_comprobante.color = GRIS
-            self.celda_comprobante.tooltip = None
+            self.celda_comprobante.tooltip = "Sin comprobante vinculado"
             self.btn_vincular_comprobante.visible = True
             self.btn_quitar_comprobante.visible = False
             return
         nombre = os.path.basename(self.comprobante)
-        self.icono_comprobante.name = ft.Icons.CHECK_CIRCLE
-        self.icono_comprobante.color = ft.Colors.GREEN_700
-        self.txt_comprobante.value = nombre[:12] + ("…" if len(nombre) > 12 else "")
+        self.icono_comprobante.visible = True
+        # El nombre completo va en el tooltip; aquí solo lo que quepa.
+        self.txt_comprobante.value = nombre[:16] + ("…" if len(nombre) > 16 else "")
         self.txt_comprobante.color = None
         detalle = f"Comprobante: {nombre}"
         ref = lector_comprobantes.referencia_aaaammdd(self.lectura_comprobante or {})
