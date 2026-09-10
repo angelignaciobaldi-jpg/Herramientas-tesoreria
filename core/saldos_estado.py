@@ -30,6 +30,10 @@ import os
 from . import rutas
 
 RUTA_INSUMOS = os.path.join(rutas.DATOS, "saldos_insumos.xlsx")
+# Lo que tesorería teclea en el calendario de flujo del reporte (pagos e
+# importes). Va aparte de los totales porque tiene otra vida: se conserva por
+# SEMANA, no por día, y no se compara contra nada — solo se repone.
+RUTA_SEMANA = os.path.join(rutas.DATOS, "saldos_semana.json")
 RUTA_TOTALES = os.path.join(rutas.DATOS, "saldos_totales.json")
 
 # Cuántas corridas se conservan. No hace falta un archivo histórico: lo único que
@@ -44,15 +48,29 @@ def _hoy() -> str:
 
 # ---------------------------------------------------------------- totales
 
-def _leer_totales() -> dict:
-    if not os.path.exists(RUTA_TOTALES):
+def _leer_json(ruta: str) -> dict:
+    """Un diccionario guardado en JSON, o vacío si no está o está corrupto."""
+    if not os.path.exists(ruta):
         return {}
     try:
-        with open(RUTA_TOTALES, encoding="utf-8") as f:
+        with open(ruta, encoding="utf-8") as f:
             datos = json.load(f)
         return datos if isinstance(datos, dict) else {}
     except Exception:  # noqa: BLE001 — un archivo corrupto no debe tumbar nada
         return {}
+
+
+def _escribir_json(ruta: str, datos: dict) -> None:
+    """Guarda un diccionario. Best-effort: no poder recordar no impide reportar."""
+    try:
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(datos, f, ensure_ascii=False, indent=1, sort_keys=True)
+    except Exception:  # noqa: BLE001 — no poder recordar no impide reportar hoy
+        pass
+
+
+def _leer_totales() -> dict:
+    return _leer_json(RUTA_TOTALES)
 
 
 def guardar_totales(totales: dict, fecha: datetime.datetime = None) -> None:
@@ -69,11 +87,7 @@ def guardar_totales(totales: dict, fecha: datetime.datetime = None) -> None:
     # Se poda por fecha, no por orden de escritura.
     for sobra in sorted(historico)[:-_MAX_HISTORICO]:
         historico.pop(sobra, None)
-    try:
-        with open(RUTA_TOTALES, "w", encoding="utf-8") as f:
-            json.dump(historico, f, ensure_ascii=False, indent=1, sort_keys=True)
-    except Exception:  # noqa: BLE001 — no poder recordar no impide reportar hoy
-        pass
+    _escribir_json(RUTA_TOTALES, historico)
 
 
 def totales_dia_anterior(fecha: datetime.datetime = None) -> tuple:
@@ -93,6 +107,46 @@ def totales_dia_anterior(fecha: datetime.datetime = None) -> tuple:
     return dia, registro.get("hora", ""), registro.get("totales", {})
 
 
+# ------------------------------------------------- capturas de la semana
+
+def _clave_semana(lunes) -> str:
+    return lunes.strftime("%Y-%m-%d") if hasattr(lunes, "strftime") else str(lunes)
+
+
+def manuales_semana(lunes) -> dict:
+    """Lo capturado a mano en el reporte de ESTA semana, {celda: valor}.
+
+    Se guarda por semana porque es lo que dura: el lunes se empieza de cero, y
+    conservar lo de la semana pasada metería pagos viejos en el calendario
+    nuevo."""
+    datos = _leer_json(RUTA_SEMANA)
+    return dict(datos.get(_clave_semana(lunes)) or {})
+
+
+def guardar_manuales(lunes, celdas: dict) -> None:
+    """Guarda lo capturado, y deja SOLO la semana en curso.
+
+    No se acumula histórico: estas celdas no se comparan contra nada, solo se
+    reponen. Quedarse con las anteriores sería basura que crece sola."""
+    if not celdas:
+        return
+    _escribir_json(RUTA_SEMANA, {_clave_semana(lunes): dict(celdas)})
+
+
+def ultimo_reporte() -> str:
+    """Ruta del último reporte generado, para poder releer lo capturado en él."""
+    from . import preferencias
+    return str(preferencias.cargar_valor("saldos_ultimo_reporte", "") or "")
+
+
+def guardar_ultimo_reporte(ruta: str) -> None:
+    from . import preferencias
+    try:
+        preferencias.guardar_valor("saldos_ultimo_reporte", str(ruta or ""))
+    except Exception:  # noqa: BLE001 — recordarlo no es crítico
+        pass
+
+
 def olvidar_totales() -> None:
     """Borra el histórico de comparativas."""
     try:
@@ -107,16 +161,40 @@ def hay_insumos() -> bool:
     return os.path.exists(RUTA_INSUMOS)
 
 
+class ErrorEstado(Exception):
+    """No se pudo leer o escribir lo que la app tenía guardado."""
+
+
 def cargar_insumos() -> dict:
-    """Los insumos guardados, {sección: datos}. Vacío si no hay nada."""
+    """Los insumos guardados, {sección: datos}. Vacío si no hay nada.
+
+    Un archivo ILEGIBLE no se trata como «no hay nada»: se aparta con otro
+    nombre y se avisa. Tragárselo dejaba al usuario viendo todas las secciones
+    «sin capturar», sin forma de saber si nunca las subió o si se le rompió el
+    archivo —y con el siguiente guardado encima, borrando la evidencia—."""
     if not hay_insumos():
         return {}
     from . import saldos_insumos
     try:
         tipo, datos = saldos_insumos.leer(RUTA_INSUMOS)
-    except Exception:  # noqa: BLE001 — archivo dañado: se arranca sin él
-        return {}
+    except Exception as exc:  # noqa: BLE001 — se traduce a un error propio
+        apartado = _apartar(RUTA_INSUMOS)
+        raise ErrorEstado(
+            "el archivo de insumos guardado no se pudo leer ({}). Se apartó "
+            "como «{}» y se empieza de cero; vuelve a subir tus archivos.".format(
+                exc, os.path.basename(apartado) if apartado else "?")) from exc
     return datos if tipo == "COMBINADO" else {tipo: datos}
+
+
+def _apartar(ruta: str) -> str:
+    """Renombra un archivo ilegible en vez de dejarlo estorbando. Devuelve la
+    ruta nueva, o "" si tampoco se pudo mover."""
+    destino = "{}.dañado{}".format(*os.path.splitext(ruta))
+    try:
+        os.replace(ruta, destino)
+        return destino
+    except OSError:
+        return ""
 
 
 def guardar_insumos(datos: dict) -> dict:
@@ -124,11 +202,25 @@ def guardar_insumos(datos: dict) -> dict:
 
     Es el MISMO archivo que se ofrece para descargar: no hay una copia interna
     distinta de la que ve el usuario, así que lo que descargue es exactamente lo
-    que la app va a usar mañana."""
+    que la app va a usar mañana.
+
+    Se escribe a un TEMPORAL y se reemplaza al final, nunca encima del bueno.
+    Escribir en sitio es lo que destruyó un archivo real: el usuario pulsó
+    «vaciar» varias veces porque el botón no daba señales, y dos rewrites del
+    mismo libro de 1.6 MB se entrelazaron y lo dejaron ilegible. Con `os.replace`
+    —atómico dentro del mismo volumen— lo peor que puede pasar es que quede el
+    archivo anterior intacto."""
     from . import saldos_insumos
+    temporal = RUTA_INSUMOS + ".tmp"
     try:
-        return saldos_insumos.escribir_plantilla(RUTA_INSUMOS, datos)
+        escritas = saldos_insumos.escribir_plantilla(temporal, datos)
+        os.replace(temporal, RUTA_INSUMOS)
+        return escritas
     except Exception:  # noqa: BLE001 — no poder recordar no impide reportar hoy
+        try:
+            os.remove(temporal)
+        except OSError:
+            pass
         return {}
 
 

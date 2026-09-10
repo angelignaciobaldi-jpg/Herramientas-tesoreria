@@ -126,6 +126,31 @@ class Renglon:
             self.hoja, self.hoja_col, self.hoja_fila)
 
 
+# Pestañas cuyo portal ENMASCARA el número de cuenta. Banamex nunca lo manda
+# completo: su reporte trae la sucursal en una columna y la cuenta como «**3101»,
+# o sea los últimos cuatro dígitos y nada más. Para estas hojas la terminación no
+# es un último recurso dudoso, es el único identificador que da la fuente.
+HOJAS_ENMASCARADAS = frozenset({"BANAMEX"})
+
+# Renglones del formato que ya no se reportan, por (banco, cta4). Tesorería dejó
+# de tomar en cuenta las cuentas de Bx+ (Ve por Más) —las de Scotiabank, que
+# comparten la pestaña «BX+ SCO», siguen igual—.
+#
+# Se apagan AQUÍ y no en `CUENTAS_EXCLUIDAS`, que descarta líneas que llegan: a
+# estas no las llena ningún archivo, nunca las hubo. Lo que sobraba era el
+# renglón, que salía cada día como pendiente y bajaba la cobertura sin que
+# hubiera nada que hacer al respecto.
+#
+# Quitarlo de `renglones` basta para que todo lo demás cuadre solo: la cobertura,
+# los renglones vacíos, el tablero de bancos y los totales de la cabecera se
+# calculan a partir de esta lista. La FILA del formato sigue existiendo y se le
+# escribe su identidad; simplemente ya no se espera un saldo para ella.
+RENGLONES_IGNORADOS = frozenset({
+    ("Bx+", "9180"),   # ABASTECEDORA · BX+ SCO!8
+    ("Bx+", "2436"),   # PETROSMART   · BX+ SCO!9
+})
+
+
 @dataclass(frozen=True)
 class Destino:
     """Una fila de una pestaña de descarga: dónde se pega el saldo de una cuenta.
@@ -145,6 +170,10 @@ class Destino:
     cuenta: str = None
     titular: str = None
     moneda: str = None
+    # Solo BANAMEX: su portal reporta sucursal y cuenta en columnas separadas y el
+    # formato guarda las dos. Hace falta para casar la forma corta que manda el
+    # portal (ver `por_sucursal` en Plantilla).
+    sucursal: str = ""
     renglon: Renglon = None   # el renglón de SALDOS que lo lee, si alguno
     # Otras filas de la MISMA pestaña que llevan esta misma cuenta. Banregio, por
     # ejemplo, repite AEROSERVICIOS en su bloque de "cuentas nuevas" (C18 y C47) y
@@ -169,7 +198,7 @@ class Destino:
 
 
 class Plantilla:
-    """Los 209 renglones del formato, con sus índices de casado."""
+    """Los 213 renglones del formato, con sus índices de casado."""
 
     def __init__(self, mapa: dict, ruta_base: str = RUTA_BASE):
         self.ruta_base = ruta_base
@@ -183,11 +212,14 @@ class Plantilla:
         self.espejo_totales = mapa.get("espejo_totales", {})
         self.celda_fecha_anterior = mapa.get("celda_fecha_anterior", "L5")
         self.celda_hora_anterior = mapa.get("celda_hora_anterior", "L6")
-        self.renglones = [Renglon(**r) for r in mapa["renglones"]]
+        self.renglones = [r for r in (Renglon(**x) for x in mapa["renglones"])
+                          if (r.banco, str(r.cta4)) not in RENGLONES_IGNORADOS]
 
         self.destinos: list = []
         self.por_cuenta: dict[str, Destino] = {}
         self.por_cola: dict[tuple, Destino] = {}
+        self.por_sucursal: dict[tuple, Destino] = {}
+        self.por_cola_enmascarada: dict[tuple, Destino] = {}
         self._colas_ambiguas: set = set()
         self._indexar()
 
@@ -197,7 +229,7 @@ class Plantilla:
         """Arma los destinos —TODAS las filas de las pestañas— y sus índices.
 
         Se recorre el inventario de pestañas, no la lista de renglones: el
-        reporte lee 209 filas pero las pestañas tienen 225, y las 16 restantes
+        reporte lee 213 filas pero las pestañas tienen 237, y las 24 restantes
         también hay que pegarlas para que la pestaña quede como la que arma
         tesorería a mano.
 
@@ -209,11 +241,13 @@ class Plantilla:
         for nombre, info in self.hojas.items():
             for fila, entrada in info["filas"].items():
                 fila = int(fila)
+                estaticos = entrada.get("estaticos") or {}
                 self.destinos.append(Destino(
                     hoja=nombre, fila=fila,
                     cuenta=entrada.get("cuenta"),
                     titular=entrada.get("titular") or entrada.get("alias"),
                     moneda=entrada.get("moneda"),
+                    sucursal=digitos(estaticos.get("sucursal")),
                     renglon=por_celda.get((nombre, fila))))
 
         # Agrupa por cuenta. Que una cuenta caiga en varias filas es legítimo
@@ -245,6 +279,50 @@ class Plantilla:
                 "{} cuenta(s) alimentan más de un renglón de SALDOS: {}".format(
                     len(conflictos), detalle))
 
+        # Índice sucursal + últimos 4. Banamex identifica una cuenta por la
+        # sucursal y la terminación, no por el número completo: en el reporte que
+        # manda el portal, la cuenta 7713101 de la sucursal 237 puede venir como
+        # «2373101». No es una cola suelta —eso sería ambiguo—, es sucursal Y
+        # terminación juntas, que en esta pestaña identifican una sola fila.
+        #
+        # Se concatena la sucursal tal cual y no se supone que mida tres dígitos:
+        # en el formato conviven sucursales de tres (237, 394, 114) y de cuatro
+        # (7001, 7004, 7006), y partir por posición fija casaría mal la mitad.
+        #
+        # Va acotado a la pestaña y solo si resuelve único, igual que la cola:
+        # meter un saldo en la empresa equivocada es peor que dejar el renglón
+        # vacío, porque el hueco se ve y el error no.
+        ambiguas: set = set()
+        for d in self.destinos:
+            if not d.sucursal or not d.cuenta_norm:
+                continue
+            clave = (d.hoja, d.sucursal + d.cuenta_norm[-4:])
+            if clave in self.por_sucursal:
+                ambiguas.add(clave)
+                continue
+            self.por_sucursal[clave] = d
+        for clave in ambiguas:
+            self.por_sucursal.pop(clave, None)
+
+        # Cola dentro de una pestaña ENMASCARADA. Es la misma idea que la regla
+        # general de la cola, pero aquí se ofrece también a las filas que SÍ
+        # tienen número, porque en esas hojas el portal no manda otra cosa: si no
+        # se usara la terminación, un reporte de Banamex sin sucursal no casaría
+        # con nada. Sigue exigiéndose que sea única dentro de la pestaña; si dos
+        # cuentas compartieran final, ninguna casa y ambas salen como nuevas —el
+        # hueco se ve, el saldo en la empresa equivocada no—.
+        ambiguas = set()
+        for d in self.destinos:
+            if d.hoja not in HOJAS_ENMASCARADAS or not d.cuenta_norm:
+                continue
+            clave = (d.hoja, d.cuenta_norm[-4:])
+            if clave in self.por_cola_enmascarada:
+                ambiguas.add(clave)
+                continue
+            self.por_cola_enmascarada[clave] = d
+        for clave in ambiguas:
+            self.por_cola_enmascarada.pop(clave, None)
+
         # La regla de la cola solo se ofrece a los destinos que no tienen número
         # —y solo los tiene el renglón de SALDOS que los lee—, y solo si es única
         # dentro de su pestaña.
@@ -275,18 +353,43 @@ class Plantilla:
                 return d
         return None
 
-    def buscar_por_cola(self, hoja: str, *formas) -> Destino:
-        """Último recurso: (pestaña, últimos 4) sobre las filas sin número."""
+    def buscar_por_sucursal(self, hoja: str, *formas) -> Destino:
+        """Fila que casa con «sucursal + últimos 4» dentro de esa pestaña.
+
+        Es la forma en que Banamex nombra sus cuentas. Se consulta DESPUÉS del
+        número completo, para que un número de verdad siempre gane."""
         if not hoja:
             return None
+        for forma in formas:
+            d = self.por_sucursal.get((hoja, digitos(forma)))
+            if d is not None:
+                return d
+        return None
+
+    def buscar_por_cola(self, hoja: str, *formas) -> Destino:
+        """Último recurso: (pestaña, últimos 4) sobre las filas sin número.
+
+        En las pestañas enmascaradas se consultan además las filas que sí tienen
+        número, porque ahí la terminación es todo lo que manda el portal."""
+        if not hoja:
+            return None
+        indices = [self.por_cola]
+        if hoja in HOJAS_ENMASCARADAS:
+            indices.append(self.por_cola_enmascarada)
         for forma in formas:
             cola = digitos(forma)[-4:]
             if len(cola) < 4:
                 continue
-            d = self.por_cola.get((hoja, cola))
-            if d is not None:
-                return d
+            for indice in indices:
+                d = indice.get((hoja, cola))
+                if d is not None:
+                    return d
         return None
+
+    def colas_de(self, hoja: str) -> set:
+        """Terminaciones de las cuentas que la plantilla tiene en esa pestaña."""
+        return {d.cuenta_norm[-4:] for d in self.destinos
+                if d.hoja == hoja and d.cuenta_norm}
 
     def columnas(self, hoja: str, fila: int) -> dict:
         """Roles -> letra de columna para escribir en esa fila.
