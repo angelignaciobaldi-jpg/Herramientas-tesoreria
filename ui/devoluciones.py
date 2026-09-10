@@ -194,7 +194,12 @@ class FilaSolicitud:
             icon=ft.Icons.ATTACH_FILE, tooltip="Vincular un comprobante a mano",
             icon_color=ft.Colors.BLUE_700, icon_size=18,
             width=36, height=36, style=ft.ButtonStyle(padding=0),
-            on_click=lambda e: self.seccion.vincular_manual(self),
+            # vincular_manual es ASÍNCRONA: un lambda normal solo crearía la
+            # corrutina y la tiraría (el explorador de archivos no llegaba a
+            # abrirse). page.run_task la agenda de verdad, como en el resto
+            # de la app.
+            on_click=lambda e: self.seccion.page.run_task(
+                self.seccion.vincular_manual, self),
         )
         self.btn_quitar_comprobante = ft.IconButton(
             icon=ft.Icons.CLOSE, tooltip="Quitar el comprobante de este registro",
