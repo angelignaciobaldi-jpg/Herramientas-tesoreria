@@ -47,6 +47,8 @@ from urllib.parse import unquote
 # diagnósticos del RPA se guardan aquí para tenerlos siempre a mano en desarrollo.
 _PROYECTO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
+from core import entorno
+
 from playwright.async_api import (
     Browser,
     BrowserContext,
@@ -522,16 +524,32 @@ class SesionSipp:
     # --- URLs ---
     # Sistema productivo: nuestras actividades (consultar/descargar anexos) no
     # alteran registros reales, así que se opera directo sobre producción.
-    # BASE_URL = "https://test.sipp.petroil.dev"
-    BASE_URL = "https://sipp.petroil.com.mx"
+    #
+    # El ambiente NO se cambia editando este archivo. Intercambiar dos líneas
+    # aquí fue lo que publicó la release 0.6.15 apuntando a pruebas para todos
+    # los usuarios, así que para probar contra otro ambiente se define la
+    # variable QUETZALTIC_SIPP_BASE_URL (en el .env del proyecto, que no se
+    # versiona, o en el sistema). Sin ella —el caso de cualquier instalación—
+    # la app apunta al productivo, y el candado de CI
+    # (scripts/verificar_produccion.py) comprueba justamente eso.
+    BASE_URL_PRODUCTIVO = "https://sipp.petroil.com.mx"
+    BASE_URL = entorno.sipp_base_url() or BASE_URL_PRODUCTIVO
     URL_LOGIN = BASE_URL + "/login.html"
     URL_CONFIG_SESION = BASE_URL + "/index.cfm#/configuracionsession"
     URL_DASHBOARD_TESOR = BASE_URL + "/#/DashboardTesor"
     URL_REPORTE_CUENTAS = BASE_URL + "/index.cfm#/ProveedoresCuentasBancariasReporte"
+    URL_DEVOLUCIONES = BASE_URL + "/index.cfm#/DevolucionesSaldosClientes"
 
     # --- Tiempos de espera (ms) ---
     TIMEOUT_NAV = 60_000        # navegación / carga de página
     TIMEOUT_ELEMENTO = 20_000   # aparición de un elemento
+    # Cierre de un modal: es instantáneo o no ocurre. Esperar el timeout
+    # normal aquí solo alarga cada solicitud del lote sin ganar nada.
+    TIMEOUT_MODAL_CIERRE = 5_000
+    # El grid del modal se llena por AJAX. Se sondea hasta este plazo antes de
+    # dar por vacío el listado: leerlo a destiempo marcaba solicitudes
+    # pendientes como ya registradas.
+    TIMEOUT_GRID_MODAL = 15_000
     # Espera de la RESPUESTA de una consulta al backend (buscar solicitudes,
     # listar cuentas, guardar la dispersión). Es aparte de TIMEOUT_NAV y mucho
     # más larga a propósito.
@@ -2588,6 +2606,310 @@ class SesionSipp:
         except (TypeError, ValueError):
             return None
 
+    # ===================================== Devoluciones de saldos de clientes
+    # Selectores verificados contra el portal de pruebas. Los pares de ids se
+    # parecen pero NO siguen la misma regla: en la referencia el escribible es el
+    # que lleva sufijo (_Devolucion) y en la fecha es al revés, así que elegir por
+    # el sufijo lleva a escribir en un campo de solo lectura.
+    SEL_DEV_AGREGAR = '[ng-click="agregar_SolicitudDevolucion()"]'
+    SEL_DEV_MODAL_AUTORIZADAS = '[ng-click="abrirModal_ListadoAutorizado()"]'
+    SEL_DEV_ELEGIR_FILA = '[ng-click*="check_SolicitudDevolucion"]'
+    SEL_DEV_COMPROBANTE = "#ar_Comprobante"
+    SEL_DEV_REFERENCIA = "#de_Referencia_Devolucion"
+    SEL_DEV_FECHA = "#fh_Devolucion"
+    SEL_DEV_GUARDAR = '[ng-click="guardarDevolucion(sn_verDetalle)"]'
+    SEL_DEV_REGRESAR = '[ng-click="regresar(true)"]'
+    # Contenedor del modal de solicitudes autorizadas. Se vigila POR EL
+    # CONTENEDOR y no por su botón: mientras siga montado, su overlay
+    # (z-index 999, pointer-events auto) tapa toda la pantalla.
+    SEL_DEV_MODAL_BLOQUEO = "#divBloqueo_modalAyudaSolicitudesAutorizadas"
+
+    async def ir_a_devoluciones(self) -> None:
+        """Navega a 'Devoluciones de Saldos de Clientes' y deja la pantalla lista.
+
+        Además de navegar hace dos cosas sin las cuales todo clic posterior falla:
+        cierra el aviso "No hay información con los filtros seleccionados" que el
+        portal lanza al entrar, y oculta los elementos flotantes —la navbar se
+        monta encima de los filtros y se come los clics—."""
+        page = self._exigir_pagina()
+        await self._ir_a_ruta_spa(
+            self.URL_DEVOLUCIONES,
+            page.locator(self.SEL_DEV_AGREGAR).first,
+            "No se cargó la pantalla 'Devoluciones de Saldos de Clientes'. Se "
+            "guardó un diagnóstico (captura + HTML) en la carpeta "
+            "'_diagnostico_rpa' del proyecto.",
+            "devoluciones",
+        )
+        await self._maximizar_pagina()
+        await self._ocultar_flotantes()
+        await self._confirmar_aviso_si_hay(timeout=6_000)
+        await page.wait_for_timeout(800)
+
+    async def abrir_solicitud_autorizada(self, folio: str) -> str:
+        """Abre el formulario de captura de la solicitud `folio`.
+
+        Camino: el botón '+' abre el formulario EN BLANCO (no un modal); dentro,
+        'Ayuda de Solicitudes Autorizadas' lista las solicitudes capturables; y la
+        flecha de la fila carga la elegida.
+
+        Devuelve:
+          'abierta'     : el formulario quedó listo para llenarse.
+          'no_listada'  : el listado SÍ trajo solicitudes pero esta no está entre
+                          ellas, o sea que ya se registró. Es la guarda de
+                          idempotencia, y por eso no se trata como error.
+          'sin_listado' : el listado llegó VACÍO. No se puede concluir nada: puede
+                          que no haya autorizadas pendientes o que el grid no
+                          alcanzara a cargar. Confundir esto con 'no_listada'
+                          hacía que una solicitud pendiente quedara marcada como
+                          registrada sin haberse subido.
+        """
+        page = self._exigir_pagina()
+        await self._click_seguro(page.locator(self.SEL_DEV_AGREGAR).first)
+        await page.wait_for_timeout(2_500)
+        await self._click_seguro(
+            page.locator(self.SEL_DEV_MODAL_AUTORIZADAS).first)
+
+        filas = await self._esperar_filas_autorizadas()
+        if not filas:
+            await self._cerrar_modal_autorizadas()
+            return "sin_listado"
+        if not await self._elegir_fila_autorizada(str(folio)):
+            await self._cerrar_modal_autorizadas()
+            return "no_listada"
+        try:
+            await page.locator(self.SEL_DEV_COMPROBANTE).wait_for(
+                state="visible", timeout=self.TIMEOUT_ELEMENTO)
+        except PlaywrightTimeoutError:
+            await self._capturar_diagnostico("devolucion_sin_formulario")
+            return "sin_listado"
+        return "abierta"
+
+    async def _esperar_filas_autorizadas(self) -> int:
+        """Espera a que el grid del modal se pueble y devuelve cuántas filas trajo.
+
+        El grid se llena por AJAX después de abrir el modal. Con una espera fija
+        se leía a veces vacío y la solicitud se daba por "ya registrada" sin
+        estarlo. Se sondea hasta que aparezca la primera fila; si no aparece
+        ninguna en el plazo, se devuelve 0 y quien llama decide (no se asume que
+        no existan: puede que el portal fuera lento).
+        """
+        page = self._exigir_pagina()
+        filas = page.locator(self.SEL_DEV_ELEGIR_FILA)
+        limite = asyncio.get_event_loop().time() + self.TIMEOUT_GRID_MODAL / 1000
+        while True:
+            n = await filas.count()
+            if n:
+                # Deja que el grid termine de pintar el resto antes de leerlo.
+                await page.wait_for_timeout(1_200)
+                return await filas.count()
+            if asyncio.get_event_loop().time() >= limite:
+                return 0
+            await asyncio.sleep(0.5)
+    async def _elegir_fila_autorizada(self, folio: str) -> bool:
+        """Pulsa la flecha de la fila cuyo número de solicitud es `folio`.
+
+        Se compara el folio como CELDA COMPLETA y no como subcadena: el texto de la
+        fila trae más números (cuenta de cliente, fechas, importe) y un '16' suelto
+        casaría con '2016' o con un importe, abriendo la solicitud equivocada."""
+        page = self._exigir_pagina()
+        botones = page.locator(self.SEL_DEV_ELEGIR_FILA)
+        total = await botones.count()
+        for i in range(total):
+            boton = botones.nth(i)
+            celdas = await boton.evaluate(
+                """(el) => {
+                    const fila = el.closest('.ngRow') || el.closest('tr');
+                    if (!fila) return [];
+                    return [...fila.querySelectorAll('.ngCellText, td')]
+                        .map(c => (c.innerText || '').trim());
+                }"""
+            )
+            if any(c == folio for c in celdas):
+                await self._click_seguro(boton)
+                await page.wait_for_timeout(2_500)
+                return True
+        return False
+
+    async def _cerrar_modal_autorizadas(self) -> None:
+        """Cierra el modal de solicitudes autorizadas y vuelve al listado.
+
+        Su botón de cerrar NO pasa la prueba de visibilidad de Playwright (el
+        widget lo dibuja fuera del flujo), así que se dispara su ng-click a nivel
+        DOM. Hacerlo bien importa más de lo que parece: si el modal se queda
+        montado, su overlay tapa la pantalla completa y TODOS los clics
+        posteriores se interceptan. No fallan —`_click_seguro` cae al clic por
+        DOM— pero cada uno paga el timeout entero antes de rendirse, y eso
+        convertía cada solicitud del lote en ~68 s en vez de ~8 s.
+
+        Se comprueba que el contenedor quede oculto de verdad; solo si persiste
+        se recurre a "Regresar", que devuelve al listado desde cero.
+        """
+        page = self._exigir_pagina()
+        try:
+            await page.evaluate(
+                """(sel) => {
+                    const b = document.querySelector(sel);
+                    if (b) b.click();
+                }""",
+                '[ng-click="modalClose()"]',
+            )
+        except Exception:  # noqa: BLE001 — se comprueba abajo si funcionó
+            pass
+        try:
+            await page.locator(self.SEL_DEV_MODAL_BLOQUEO).wait_for(
+                state="hidden", timeout=self.TIMEOUT_MODAL_CIERRE)
+            return
+        except PlaywrightTimeoutError:
+            pass
+        # Respaldo: volver al listado, que remonta la vista desde cero y deja la
+        # pantalla utilizable. Se hace por DOM porque, si el modal sigue montado,
+        # su overlay se comería un clic normal.
+        #
+        # NO se intenta ocultar el overlay a mano (display:none sobre el
+        # contenedor): se probó y deja al portal con un estado interno
+        # inconsistente —el botón de agregar desaparece y el lote se detiene—.
+        # Es preferible pagar la espera que quedarse sin pantalla.
+        try:
+            await page.evaluate(
+                """(sel) => {
+                    const b = document.querySelector(sel);
+                    if (b) b.click();
+                }""",
+                self.SEL_DEV_REGRESAR,
+            )
+            await page.wait_for_timeout(1_200)
+        except Exception:  # noqa: BLE001 — cerrar es best-effort
+            pass
+
+    async def llenar_devolucion(self, ruta_pdf: str, referencia: str,
+                                fecha: str = "") -> None:
+        """Adjunta el comprobante y escribe la referencia en el formulario abierto.
+
+        El archivo se fija en el <input type=file> directamente (set_input_files),
+        sin pasar por el diálogo nativo: es más fiable que interceptar el file
+        chooser y no depende de que la ventana tenga el foco.
+
+        La referencia se escribe con un evento de Angular explícito porque el
+        ng-model no se entera de un cambio hecho solo sobre el value del DOM.
+        `fecha` (DD/MM/AAAA) es la de aplicación del comprobante. El portal
+        prellena ese campo con el día en que se captura, así que sin fijarlo una
+        devolución subida días después del pago quedaría con la fecha equivocada.
+        Vacía deja lo que el portal haya puesto.
+
+        Los demás campos (banco, cuenta, importe) vienen precargados y de solo
+        lectura: no se tocan."""
+        page = self._exigir_pagina()
+        await page.locator(self.SEL_DEV_COMPROBANTE).set_input_files(
+            ruta_pdf, timeout=self.TIMEOUT_ELEMENTO)
+        await page.wait_for_timeout(1_500)
+        await page.locator(self.SEL_DEV_REFERENCIA).fill(
+            referencia, timeout=self.TIMEOUT_ELEMENTO)
+        await page.evaluate(
+            """(sel) => {
+                const el = document.querySelector(sel);
+                if (!el) return;
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+                if (window.angular) {
+                    const s = angular.element(el).scope();
+                    if (s) { s.$apply(); }
+                }
+            }""",
+            self.SEL_DEV_REFERENCIA,
+        )
+        if fecha:
+            await self._escribir_campo_angular(self.SEL_DEV_FECHA, fecha)
+        await page.wait_for_timeout(500)
+
+    async def _escribir_campo_angular(self, selector: str, valor: str) -> None:
+        """Escribe `valor` en un campo y le avisa a Angular.
+
+        Los campos de fecha del portal llevan máscara y no siempre reaccionan a
+        `fill()`; fijar el value y disparar input/change + $apply es lo que sí
+        actualiza el ng-model, que es de donde el portal lee al guardar."""
+        await self._exigir_pagina().evaluate(
+            """([sel, val]) => {
+                const el = document.querySelector(sel);
+                if (!el) return;
+                el.value = val;
+                el.dispatchEvent(new Event('input', {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+                if (window.angular) {
+                    const s = angular.element(el).scope();
+                    const m = el.getAttribute('ng-model');
+                    if (s && m) { s[m] = val; }
+                    if (s) { s.$apply(); }
+                }
+            }""",
+            [selector, valor],
+        )
+
+    async def guardar_devolucion(self) -> bool:
+        """Pulsa 'Guardar Devolución' y espera a que el portal lo acepte.
+
+        True si se guardó. Se considera guardado cuando el formulario deja de
+        estar disponible (el portal vuelve al listado), que es la señal que da el
+        propio SIPP; si el botón sigue ahí tras el intento, algo lo rechazó y se
+        guarda diagnóstico para poder revisarlo."""
+        page = self._exigir_pagina()
+        boton = page.locator(self.SEL_DEV_GUARDAR).first
+        if not await boton.count():
+            await self._capturar_diagnostico("devolucion_sin_boton_guardar")
+            return False
+        try:
+            async with page.expect_response(
+                lambda r: "cfproxy" in r.url.lower(), timeout=self.TIMEOUT_NAV,
+            ) as resp:
+                await self._click_seguro(boton)
+            await resp.value
+        except PlaywrightTimeoutError:
+            pass
+        await self._confirmar_aviso_si_hay(timeout=4_000)
+        await page.wait_for_timeout(1_500)
+        try:
+            await page.locator(self.SEL_DEV_COMPROBANTE).wait_for(
+                state="hidden", timeout=self.TIMEOUT_ELEMENTO)
+        except PlaywrightTimeoutError:
+            await self._capturar_diagnostico("devolucion_no_guardo")
+            return False
+        return True
+
+    async def registrar_devolucion(
+        self, folio: str, ruta_pdf: str, referencia: str, fecha: str = "",
+    ) -> str:
+        """Registra UNA devolución completa. Devuelve por qué terminó:
+
+          'guardada'   : se adjuntó el comprobante, se escribió la referencia y
+                         el SIPP la acepto.
+          'ya_estaba'  : el listado trajo solicitudes y esta no estaba, o sea que
+                         ya se registró antes. NO es un error: es lo que evita
+                         duplicar el trabajo si el proceso se corre dos veces.
+          'sin_listado': el listado llegó vacío y no se puede concluir nada. Se
+                         reporta aparte para poder reintentarla: darla por
+                         registrada dejaba pendientes sin subir.
+          'error'      : se abrió pero no se pudo guardar (queda diagnóstico).
+
+        Cada solicitud arranca RENAVEGANDO al listado. No es cosmético: el portal
+        va dejando estado entre operaciones —modales montados, la vista a medio
+        rehacer— y encadenando sin volver al principio el grid de autorizadas
+        llegaba vacío a partir de la segunda, que es lo que hacía dar por
+        registradas solicitudes que seguían pendientes."""
+        await self.ir_a_devoluciones()
+        apertura = await self.abrir_solicitud_autorizada(folio)
+        if apertura == "no_listada":
+            return "ya_estaba"
+        if apertura != "abierta":
+            # Listado vacío: NO se concluye que ya estuviera registrada.
+            return "sin_listado"
+        try:
+            await self.llenar_devolucion(ruta_pdf, referencia, fecha)
+            guardada = await self.guardar_devolucion()
+        except PlaywrightTimeoutError:
+            await self._capturar_diagnostico("devolucion_llenado")
+            guardada = False
+        if not guardada:
+            await self._cerrar_modal_autorizadas()
+        return "guardada" if guardada else "error"
     async def _confirmar_aviso_si_hay(self, timeout: int = 2_000) -> bool:
         """Si aparece (dentro de `timeout`) un aviso con botón 'Aceptar', lo pulsa.
         Devuelve True si lo hizo. No lanza si no aparece (best-effort)."""

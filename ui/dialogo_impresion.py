@@ -21,7 +21,7 @@ from __future__ import annotations
 import flet as ft
 
 from core import impresion, preferencias
-from ui.comun import ROJO, VERDE
+from ui.comun import ROJO, VERDE, cerrar_dialogo
 
 _ANCHO = 400
 
@@ -84,7 +84,8 @@ class DialogoImpresion:
         self.page.show_dialog(self.dialogo)
 
     def _cerrar(self, _e=None) -> None:
-        self.page.pop_dialog()
+        """Cierra el diálogo de impresión (ver ui.comun.cerrar_dialogo)."""
+        cerrar_dialogo(self.page, self.dialogo)
 
     def _imprimir(self, _e=None) -> None:
         nombre = self.dd_impresora.value
