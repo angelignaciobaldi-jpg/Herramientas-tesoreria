@@ -183,9 +183,24 @@ class FilaSolicitud:
             ft.Icons.ATTACH_FILE, size=18, color=GRIS)
         self.txt_comprobante = ft.Text("— sin comprobante —", size=11,
                                        color=GRIS, no_wrap=True)
+        # Acciones por fila: vincular a mano cuando no hay, quitarlo cuando la
+        # vinculación automática se equivocó. Solo se ve la que aplica.
+        self.btn_vincular_comprobante = ft.IconButton(
+            icon=ft.Icons.ATTACH_FILE, tooltip="Vincular un comprobante a mano",
+            icon_color=ft.Colors.BLUE_700, icon_size=16,
+            width=30, height=30, style=ft.ButtonStyle(padding=0),
+            on_click=lambda e: self.seccion.vincular_manual(self),
+        )
+        self.btn_quitar_comprobante = ft.IconButton(
+            icon=ft.Icons.CLOSE, tooltip="Quitar el comprobante de este registro",
+            icon_color=ROJO, icon_size=16,
+            width=30, height=30, style=ft.ButtonStyle(padding=0), visible=False,
+            on_click=lambda e: self.seccion.quitar_comprobante(self),
+        )
         self.celda_comprobante = ft.Row(
-            [self.icono_comprobante, self.txt_comprobante],
-            spacing=4, alignment=ft.MainAxisAlignment.CENTER, tight=True,
+            [self.icono_comprobante, self.txt_comprobante,
+             self.btn_vincular_comprobante, self.btn_quitar_comprobante],
+            spacing=2, alignment=ft.MainAxisAlignment.CENTER, tight=True,
         )
 
         self.acciones = ft.Row(
@@ -408,11 +423,13 @@ class FilaSolicitud:
             self.txt_comprobante.value = "— sin comprobante —"
             self.txt_comprobante.color = GRIS
             self.celda_comprobante.tooltip = None
+            self.btn_vincular_comprobante.visible = True
+            self.btn_quitar_comprobante.visible = False
             return
         nombre = os.path.basename(self.comprobante)
         self.icono_comprobante.name = ft.Icons.CHECK_CIRCLE
         self.icono_comprobante.color = ft.Colors.GREEN_700
-        self.txt_comprobante.value = nombre[:18] + ("…" if len(nombre) > 18 else "")
+        self.txt_comprobante.value = nombre[:12] + ("…" if len(nombre) > 12 else "")
         self.txt_comprobante.color = None
         detalle = f"Comprobante: {nombre}"
         ref = lector_comprobantes.referencia_aaaammdd(self.lectura_comprobante or {})
@@ -422,6 +439,8 @@ class FilaSolicitud:
             detalle += ("\nSIN fecha de aplicacion: habra que capturar la "
                         "referencia a mano.")
         self.celda_comprobante.tooltip = detalle
+        self.btn_vincular_comprobante.visible = False
+        self.btn_quitar_comprobante.visible = True
 
     def vincular_comprobante(self, ruta: str, lectura: dict | None = None) -> None:
         self.comprobante = ruta
@@ -1419,6 +1438,153 @@ class SeccionDevoluciones:
             color = VERDE
         self.app.avisar("Comprobantes: " + "; ".join(partes) + ".", color)
 
+    # --------------------------------------- comprobantes a mano
+    def quitar_comprobante(self, fila) -> None:
+        """Desvincula el comprobante de una fila.
+
+        Sirve para corregir una vinculación automática equivocada. Solo suelta el
+        vínculo en la herramienta: si esa devolución YA se registró en el SIPP,
+        quitarlo aquí no la deshace allá.
+        """
+        if not fila.comprobante:
+            return
+        nombre = os.path.basename(fila.comprobante)
+        fila.quitar_comprobante()
+        self._refrescar()
+        self.app.avisar(f"Comprobante «{nombre}» desvinculado.", NARANJA)
+
+    async def vincular_manual(self, fila) -> None:
+        """Vincula a mano un comprobante a ESTA fila.
+
+        Se lee igual que en la carga automática —y si el PDF trae varias páginas,
+        se separa y se elige la que corresponde a esta fila—, pero la decisión es
+        del usuario: si no casa por las 3 reglas se pide confirmación en vez de
+        rechazarlo, porque para eso está la carga manual.
+        """
+        archivos = await self.app.picker.pick_files(
+            dialog_title="Selecciona el comprobante de este registro (PDF)",
+            allowed_extensions=["pdf"], allow_multiple=False)
+        if not archivos or not archivos[0].path:
+            return
+        try:
+            rutas, _info = await asyncio.to_thread(
+                self._separar_pdfs, [archivos[0].path])
+            lecturas, errores = await asyncio.to_thread(
+                lector_comprobantes.leer_varios, rutas)
+        except Exception as exc:  # noqa: BLE001 — se reporta al usuario
+            self.app.avisar(f"No se pudo leer el comprobante: {exc}", ROJO)
+            return
+        if not lecturas:
+            detalle = f" ({errores[0][1]})" if errores else ""
+            self.app.avisar(
+                f"No se encontraron datos de pago en el PDF{detalle}", ROJO)
+            return
+
+        objetivo = fila.objetivo_comprobante()
+        por_archivo, _ = _comprobantes.repartir_lecturas(lecturas, rutas)
+        # Con un PDF de varias páginas se prefiere LA que casa con esta fila:
+        # adjuntar el documento entero subiría al SIPP comprobantes de otros.
+        elegida = None
+        if objetivo is not None:
+            for ruta in rutas:
+                for lect in por_archivo.get(ruta) or []:
+                    if _comprobantes.evaluar_coincidencia(
+                            lect, objetivo)["coincide"]:
+                        elegida = (ruta, lect)
+                        break
+                if elegida:
+                    break
+        if elegida:
+            self._aplicar_manual(fila, *elegida, casa=True)
+            return
+        # Ninguna casa (o la fila aún no se puede casar): se confirma.
+        ruta = rutas[0]
+        lect = (por_archivo.get(ruta) or lecturas)[0]
+        self._confirmar_manual_sin_casar(fila, ruta, lect, objetivo)
+
+    def _aplicar_manual(self, fila, ruta: str, lectura: dict,
+                        casa: bool) -> None:
+        """Deja el vínculo hecho y dice si fue por coincidencia o forzado."""
+        fila.vincular_comprobante(ruta, lectura)
+        self._refrescar()
+        partes = [f"Comprobante «{os.path.basename(ruta)}» vinculado",
+                  " (coincide)." if casa else " SIN coincidir con el registro."]
+        # Sin fecha de aplicación no hay referencia que escribir, y el RPA lo
+        # reportaría como error a media subida: mejor decirlo ahora.
+        if not lector_comprobantes.referencia_aaaammdd(lectura):
+            partes.append(" Ojo: no trae fecha de aplicación, así que no habrá "
+                          )
+            partes.append("referencia que escribir en el SIPP.")
+        self.app.avisar("".join(partes), VERDE if casa else NARANJA)
+
+    def _detalle_no_coincide(self, fila, lectura: dict, objetivo) -> list:
+        """En QUÉ no coincide el comprobante, regla por regla.
+
+        Se detalla porque casi siempre revela el error real: una CLABE mal
+        capturada o el comprobante de otro movimiento. Se muestran las dos colas
+        —la del comprobante y la del registro— para poder compararlas de un
+        vistazo.
+        """
+        clabe, monto, _cliente, _c, _e = fila.valores()
+        if objetivo is None:
+            return ["• A este registro le falta CLABE, monto o cuenta origen "
+                    "asignada, así que no hay contra qué comprobarlo."]
+        cola = _comprobantes.ultimos_digitos
+        r = _comprobantes.evaluar_coincidencia(lectura, objetivo)
+        detalle = []
+        if not r["origen"]:
+            esperadas = ", ".join(sorted(
+                {c for o in objetivo.origenes
+                 for c in _comprobantes.claves_cuenta(o)})) or "—"
+            detalle.append(
+                f"• Cuenta origen: el comprobante termina en "
+                f"…{cola(lectura.get('cuenta_origen')) or '—'} y la cuenta "
+                f"asignada en …{esperadas}")
+        if not r["beneficiario"]:
+            detalle.append(
+                f"• Cuenta destino: el comprobante termina en "
+                f"…{cola(lectura.get('cuenta_destino')) or '—'} y la CLABE del "
+                f"registro en …{cola(clabe) or '—'}")
+        if not r["total"]:
+            detalle.append(
+                f"• Importe: el comprobante dice {lectura.get('importe')} y el "
+                f"registro {monto or '—'}")
+        return detalle
+
+    def _confirmar_manual_sin_casar(self, fila, ruta: str, lectura: dict,
+                                    objetivo) -> None:
+        """Avisa en qué no coincide antes de forzar el vínculo.
+
+        Se permite continuar: la carga manual existe justo para los casos que la
+        automática no resuelve.
+        """
+        cliente = fila.valores()[2]
+        detalle = self._detalle_no_coincide(fila, lectura, objetivo)
+        def continuar(_ev=None):
+            self.page.pop_dialog()
+            self._aplicar_manual(fila, ruta, lectura, casa=False)
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("El comprobante no coincide"),
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text(
+                        f"«{os.path.basename(ruta)}» no coincide con el registro de "
+                        f"{cliente or '(sin nombre)'}:", size=13),
+                    ft.Column([ft.Text(d, size=12, color=GRIS) for d in detalle],
+                              tight=True, spacing=3),
+                    ft.Text("Puedes vincularlo de todos modos si sabes que es el "
+                            "correcto.", size=12, color=GRIS),
+                ], tight=True, spacing=10),
+                width=620),
+            actions=[
+                ft.TextButton("Cancelar",
+                              on_click=lambda e: self.page.pop_dialog()),
+                ft.FilledButton("Vincular de todos modos", on_click=continuar),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        ))
     # ------------------------------------------- subida al SIPP (RPA)
     def _filas_a_subir(self) -> list:
         """Filas con comprobante vinculado, folio y que no se hayan registrado ya
