@@ -1574,16 +1574,30 @@ class SeccionDevoluciones:
             self.page.pop_dialog()
             self._aplicar_manual(fila, ruta, lectura, casa=False)
 
+        # Las diferencias van en ROJO y sobre fondo tintado: son LO que hay que
+        # leer antes de decidir, y en gris se perdían entre el texto de apoyo.
+        bloque_detalle = ft.Container(
+            content=ft.Column(
+                [ft.Text(d, size=12, color=ROJO,
+                         weight=ft.FontWeight.W_500) for d in detalle],
+                tight=True, spacing=5),
+            bgcolor=ft.Colors.with_opacity(0.08, ft.Colors.RED),
+            border=ft.Border.all(1, ft.Colors.with_opacity(0.35, ft.Colors.RED)),
+            border_radius=6, padding=12,
+        )
         self.page.show_dialog(ft.AlertDialog(
             modal=True,
-            title=ft.Text("El comprobante no coincide"),
+            title=ft.Row([
+                ft.Icon(ft.Icons.WARNING_AMBER_ROUNDED, color=ROJO, size=22),
+                ft.Text("El comprobante no coincide",
+                        weight=ft.FontWeight.BOLD),
+            ], spacing=8, tight=True),
             content=ft.Container(
                 content=ft.Column([
                     ft.Text(
                         f"«{os.path.basename(ruta)}» no coincide con el registro de "
                         f"{cliente or '(sin nombre)'}:", size=13),
-                    ft.Column([ft.Text(d, size=12, color=GRIS) for d in detalle],
-                              tight=True, spacing=3),
+                    bloque_detalle,
                     ft.Text("Puedes vincularlo de todos modos si sabes que es el "
                             "correcto.", size=12, color=GRIS),
                 ], tight=True, spacing=10),
