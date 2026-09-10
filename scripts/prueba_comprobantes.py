@@ -22,6 +22,7 @@ if _RAIZ not in sys.path:
 from core import comprobantes as c  # noqa: E402
 from core import lector_comprobantes as lc  # noqa: E402
 from core import catalogo_bancos as cb  # noqa: E402
+from core import solicitudes_devolucion as sd  # noqa: E402
 
 # Lecturas equivalentes a las de los dos comprobantes reales del lote GC MOTORS.
 MISMO_BANCO = {
@@ -508,11 +509,42 @@ def prueba_banregio() -> None:
     import shutil
     shutil.rmtree(tmp, ignore_errors=True)
 
+def prueba_nombre_beneficiario() -> None:
+    """El nombre del beneficiario sale de nb_ClienteDevolucion, campo que la API
+    agrego el 2026-09-09. Es COMPLEMENTARIO de la razon social, no alternativo:
+    cuando uno trae el nombre real el otro viene vacio."""
+    print("\nnombre del beneficiario (nb_ClienteDevolucion)")
+    generico = {"nb_ClienteDevolucion": "HECTOR ALONSO MIRANDA RUBIO",
+                "de_Cliente_RazonSocial": "CLIENTES PUBLICO EN GENERAL",
+                "nb_Solicitante": "DIANA KARINA LEYVA LOPEZ"}
+    check(sd._mapear(generico, "X").cliente == "HECTOR ALONSO MIRANDA RUBIO",
+          "con cuenta generica se usa el nombre real, no el generico")
+
+    propio = {"nb_ClienteDevolucion": "",
+              "de_Cliente_RazonSocial": "GILBERTO LOAIZA RAMOS",
+              "nb_Solicitante": "AIME ROCIO GALINDO WILSON"}
+    check(sd._mapear(propio, "X").cliente == "GILBERTO LOAIZA RAMOS",
+          "con cuenta de cliente propia se usa la razon social")
+
+    print("\n  respaldos")
+    solo_sol = {"nb_ClienteDevolucion": "", "de_Cliente_RazonSocial": "",
+                "nb_Solicitante": "DIANA KARINA LEYVA LOPEZ"}
+    check(sd._mapear(solo_sol, "X").cliente == "DIANA KARINA LEYVA LOPEZ",
+          "sin ninguno de los dos, queda el solicitante (fila identificable)")
+    check(sd._mapear({}, "X").cliente == "",
+          "sin nada, cadena vacia (no revienta)")
+    check(sd._mapear({"nb_ClienteDevolucion": None,
+                      "de_Cliente_RazonSocial": "RAZON"}, "X").cliente == "RAZON",
+          "un None se trata como ausente")
+    check(sd._mapear({"nb_ClienteDevolucion": "  ESPACIOS  "}, "X").cliente
+          == "ESPACIOS", "se recortan los espacios")
+
 def main() -> int:
     for prueba in (prueba_ultimos_digitos, prueba_claves_cuenta, prueba_nombres, prueba_resolucion_rutas,
                    prueba_reparto, prueba_coincidencia, prueba_lector,
                    prueba_vinculacion, prueba_banco_clabe,
-                   prueba_banregio):
+                   prueba_banregio,
+                   prueba_nombre_beneficiario):
         prueba()
     print()
     if _fallos:

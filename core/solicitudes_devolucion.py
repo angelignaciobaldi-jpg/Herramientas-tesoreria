@@ -59,12 +59,19 @@ def _mapear(registro: dict, empresa: str) -> SolicitudDevolucion:
     return SolicitudDevolucion(
         folio=_texto(registro.get("id_Solicitud")),
         empresa=empresa,
-        # El beneficiario es el 'Nombre Cliente' de la solicitud (nb_Cliente): la
-        # persona a la que se le paga (p. ej. 'EUSEVIO ORTIZ GONZALEZ'). Se prefiere
-        # sobre 'de_Cliente_RazonSocial', que es la razón social de la CUENTA de
-        # cliente y suele ser genérica ('CLIENTES PUBLICO EN GENERAL'). Si nb_Cliente
-        # viniera vacío, se cae a la razón social y, por último, al solicitante.
-        cliente=_texto(registro.get("nb_Cliente")
+        # El beneficiario es el 'Nombre cliente' que el SIPP muestra en el detalle
+        # de la solicitud: la persona a la que se le paga. Viaja en
+        # 'nb_ClienteDevolucion', campo que el equipo de la API agregó a este
+        # endpoint el 2026-09-09 a petición nuestra.
+        #
+        # Los dos campos son COMPLEMENTARIOS, no alternativos: cuando el cobro se
+        # registró contra una cuenta de cliente propia, la razón social YA es el
+        # nombre real y 'nb_ClienteDevolucion' llega vacío; cuando se registró
+        # contra la cuenta genérica ('CLIENTES PUBLICO EN GENERAL'), es al revés.
+        # Por eso se prefiere el nuevo y se cae a la razón social, no al contrario.
+        # Último recurso: el solicitante (el empleado que la capturó), que no es el
+        # beneficiario pero deja la fila identificable en vez de vacía.
+        cliente=_texto(registro.get("nb_ClienteDevolucion")
                        or registro.get("de_Cliente_RazonSocial")
                        or registro.get("nb_Solicitante")),
         clabe=re.sub(r"\D", "", _texto(registro.get("nu_CuentaBancaria")))[:18],
