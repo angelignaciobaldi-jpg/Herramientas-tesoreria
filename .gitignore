@@ -56,6 +56,8 @@ Documentos de pruebas conciliación/
 PAGINAS HTML/
 # Archivos TXT de ejemplo (contienen CLABE/nombres reales)
 Archivos TXT/
+# Comprobantes de pago de muestra: llevan CLABE, nombres y montos reales
+Comprobantes de devolución/
 # TXT sueltos en la raíz que se dejan al probar el alta de cuentas y la
 # dispersión (CLABE/nombres/montos reales de clientes y proveedores)
 /Cuentas *.txt
