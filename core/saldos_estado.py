@@ -5,6 +5,12 @@ facturas de MGC, Pemex y tesoro se capturan por semana, los movimientos de
 créditos cada tanto, y la nómina y los impuestos según toque. Pedirle a la
 usuaria que vuelva a subir todo eso cada mañana sería trabajo inventado.
 
+Con todo, esa captura SÍ caduca: los insumos de flujo son de la semana en que
+se subieron, y en cuanto empieza una semana nueva `cargar_insumos()` los
+descarta solos, sin que nadie los vacíe a mano. Es la promesa que ya hacía la
+ayuda de la pantalla (`_AYUDA`, `ui/saldos.py`) desde antes de que el código
+la cumpliera.
+
 Aquí se guardan dos cosas, en la carpeta de datos de la app:
 
   saldos_insumos.xlsx   las seis secciones, una por pestaña. Es el MISMO archivo
@@ -35,6 +41,10 @@ RUTA_INSUMOS = os.path.join(rutas.DATOS, "saldos_insumos.xlsx")
 # SEMANA, no por día, y no se compara contra nada — solo se repone.
 RUTA_SEMANA = os.path.join(rutas.DATOS, "saldos_semana.json")
 RUTA_TOTALES = os.path.join(rutas.DATOS, "saldos_totales.json")
+
+# A qué semana pertenecen los insumos guardados ahora mismo, en preferencias
+# (no en el propio Excel): ver `_semana_vigente` y `cargar_insumos`.
+_CLAVE_SEMANA_INSUMOS = "saldos_insumos_semana"
 
 # Cuántas corridas se conservan. No hace falta un archivo histórico: lo único que
 # se consulta es el día anterior, y unas semanas alcanzan de sobra para cubrir
@@ -113,6 +123,17 @@ def _clave_semana(lunes) -> str:
     return lunes.strftime("%Y-%m-%d") if hasattr(lunes, "strftime") else str(lunes)
 
 
+def _semana_vigente() -> str:
+    """La clave (lunes ISO) de la semana que corre ahora mismo.
+
+    Mismo cálculo que usa el calendario de flujo (`saldos_export._lunes_de`):
+    así «esta semana» significa lo mismo en los dos sitios. Import local
+    porque `saldos_export` es el módulo pesado del paquete y esto solo hace
+    falta al cargar o guardar insumos, no en cada arranque."""
+    from .saldos_export import _lunes_de
+    return _clave_semana(_lunes_de(datetime.datetime.now()))
+
+
 def manuales_semana(lunes) -> dict:
     """Lo capturado a mano en el reporte de ESTA semana, {celda: valor}.
 
@@ -168,10 +189,42 @@ class ErrorEstado(Exception):
 def cargar_insumos() -> dict:
     """Los insumos guardados, {sección: datos}. Vacío si no hay nada.
 
+    Antes de leer, se descarta lo que sea de una semana ANTERIOR a la de hoy:
+    es el reinicio automático de los lunes que promete la ayuda de la
+    pantalla (`_AYUDA`, `ui/saldos.py`). No hay una clave por semana como en
+    `saldos_semana.json` —los insumos son un solo Excel que se fusiona
+    sección por sección—, así que la semana a la que pertenece lo guardado se
+    lleva aparte, en `preferencias`, y se compara activamente contra la de
+    hoy. Corre aquí y no en `guardar_insumos` porque este es el único punto
+    por el que pasan los insumos antes de llegar a la pantalla: toda la UI
+    —descargar el formato, vaciar una sección, vaciar todo— espera primero a
+    esta misma carga (`_asegurar_estado`), así que cuando algo se guarda ya
+    quedó marcada la semana correcta.
+
     Un archivo ILEGIBLE no se trata como «no hay nada»: se aparta con otro
     nombre y se avisa. Tragárselo dejaba al usuario viendo todas las secciones
     «sin capturar», sin forma de saber si nunca las subió o si se le rompió el
     archivo —y con el siguiente guardado encima, borrando la evidencia—."""
+    from . import preferencias
+    semana_actual = _semana_vigente()
+    semana_guardada = str(preferencias.cargar_valor(_CLAVE_SEMANA_INSUMOS, "")
+                          or "")
+    if semana_guardada and semana_guardada != semana_actual:
+        # Lo guardado es de una semana anterior: se descarta ANTES de leer,
+        # igual que un lunes deja de consultarse el calendario de pagos
+        # capturados de la semana pasada.
+        from . import diagnostico
+        diagnostico.registrar(
+            "saldos_estado.cargar_insumos: semana vencida, se reinicia",
+            "{} -> {}".format(semana_guardada, semana_actual))
+        olvidar_insumos()
+        semana_guardada = ""
+    if not semana_guardada:
+        # Primera vez que se ve este marcador —instalación nueva, o un
+        # archivo guardado antes de que esto existiera—: se adopta la semana
+        # de hoy sin borrar nada, porque no hay forma de saber a cuál
+        # pertenecía lo que ya estaba en disco.
+        preferencias.guardar_valor(_CLAVE_SEMANA_INSUMOS, semana_actual)
     if not hay_insumos():
         return {}
     from . import saldos_insumos
