@@ -102,6 +102,23 @@ def _digitos(valor) -> str:
     return re.sub(r"\D", "", str(valor or ""))
 
 
+def _celda(fila: list, i):
+    """El valor de una columna, o None si la fila no llega hasta ahí.
+
+    Sirve tanto cuando el encabezado nunca apareció —`idx.get(rol)` da None—
+    como cuando la fila se quedó corta. Lo segundo es lo normal al PEGAR: el
+    portal recorta las columnas vacías del final, así que un renglón sin divisa
+    llega con dos celdas menos que el encabezado. Indexar a secas lanzaba un
+    IndexError que tumbaba la carga COMPLETA por un solo renglón corto; así ese
+    renglón entra con el dato que falte en blanco.
+
+    Todos los conversores de aquí (`_digitos`, `_a_float`, `_norm`, `_moneda`)
+    tratan None como vacío, de modo que el valor se pasa tal cual."""
+    if i is None or i >= len(fila):
+        return None
+    return fila[i]
+
+
 def _a_float(valor) -> float | None:
     """Monto a float. Devuelve None si no hay número (celda vacía, guion, texto).
 
@@ -388,16 +405,16 @@ def leer_banorte(ruta: str, filas: list = None) -> list[LineaSaldo]:
         raise ErrorLector("No se encontraron los encabezados de BANORTE.")
     out = []
     for fila in filas[n + 1:]:
-        cuenta = _digitos(fila[idx["cuenta"]]) if idx["cuenta"] < len(fila) else ""
+        cuenta = _digitos(_celda(fila, idx.get("cuenta")))
         if not cuenta:
             continue
-        clabe = _digitos(fila[idx["clabe"]]) if "clabe" in idx else ""
-        saldo = _a_float(fila[idx["saldo"]])
+        clabe = _digitos(_celda(fila, idx.get("clabe")))
+        saldo = _a_float(_celda(fila, idx.get("saldo")))
         out.append(LineaSaldo(
             banco="Banorte", cuenta=cuenta, clabe=clabe,
-            titular=str(fila[idx["titular"]] if "titular" in idx else "").strip(),
+            titular=str(_celda(fila, idx.get("titular")) or "").strip(),
             saldo=saldo or 0.0,
-            moneda=_moneda(fila[idx["moneda"]] if "moneda" in idx else "")))
+            moneda=_moneda(_celda(fila, idx.get("moneda")) or "")))
     return out
 
 
@@ -415,13 +432,13 @@ def leer_santander(ruta: str, filas: list = None) -> list[LineaSaldo]:
         raise ErrorLector("No se encontraron los encabezados de SANTANDER.")
     out = []
     for fila in filas[n + 1:]:
-        cuenta = _digitos(fila[idx["cuenta"]]) if idx["cuenta"] < len(fila) else ""
+        cuenta = _digitos(_celda(fila, idx.get("cuenta")))
         if not cuenta:
             continue
         out.append(LineaSaldo(
             banco="Santander", cuenta=cuenta, clabe="",
-            titular=str(fila[idx["titular"]] if "titular" in idx else "").strip(),
-            saldo=_a_float(fila[idx["saldo"]]) or 0.0,
+            titular=str(_celda(fila, idx.get("titular")) or "").strip(),
+            saldo=_a_float(_celda(fila, idx.get("saldo"))) or 0.0,
             moneda="MXN"))  # el consolidado de cheques no trae columna de moneda
     return out
 
@@ -442,21 +459,18 @@ def leer_banamex(ruta: str, filas: list = None) -> list[LineaSaldo]:
         raise ErrorLector("No se encontraron los encabezados de BANAMEX.")
     out = []
     for fila in filas[n + 1:]:
-        if idx["cuenta"] >= len(fila):
-            continue
-        cuenta = _digitos(fila[idx["cuenta"]])
+        cuenta = _digitos(_celda(fila, idx.get("cuenta")))
         if not cuenta:
             continue
         # El número completo es sucursal + cuenta: así es como está en el catálogo
         # (p. ej. sucursal 394 + cuenta 7680454 -> 3947680454).
-        sucursal = _digitos(fila[idx["sucursal"]]) if "sucursal" in idx else ""
+        sucursal = _digitos(_celda(fila, idx.get("sucursal")))
         out.append(LineaSaldo(
             banco="Banamex", cuenta=sucursal + cuenta, clabe="", titular="",
-            saldo=_a_float(fila[idx["saldo"]]) or 0.0,
-            moneda=_moneda(fila[idx["moneda"]] if "moneda" in idx else ""),
+            saldo=_a_float(_celda(fila, idx.get("saldo"))) or 0.0,
+            moneda=_moneda(_celda(fila, idx.get("moneda")) or ""),
             extra={"cuenta_corta": cuenta, "sucursal": sucursal,
-                   "aviso": str(fila[idx["error"]]).strip()
-                   if "error" in idx and idx["error"] < len(fila) else ""}))
+                   "aviso": str(_celda(fila, idx.get("error")) or "").strip()}))
     return out
 
 
@@ -475,20 +489,17 @@ def leer_banregio(ruta: str, filas: list = None) -> list[LineaSaldo]:
         raise ErrorLector("No se encontraron los encabezados de BANREGIO.")
     out = []
     for fila in filas[n + 1:]:
-        if idx["cuenta"] >= len(fila):
-            continue
-        cuenta = _digitos(fila[idx["cuenta"]])
+        cuenta = _digitos(_celda(fila, idx.get("cuenta")))
         if not cuenta:
             continue
         out.append(LineaSaldo(
             banco="Banregio", cuenta=cuenta, clabe="",
-            titular=str(fila[idx["titular"]] or "").strip() if "titular" in idx else "",
-            saldo=_a_float(fila[idx["saldo"]]) or 0.0,
+            titular=str(_celda(fila, idx.get("titular")) or "").strip(),
+            saldo=_a_float(_celda(fila, idx.get("saldo"))) or 0.0,
             # El reporte no trae divisa; el catálogo distingue las cuentas en
             # dólares, así que la moneda se resuelve al casar, no aquí.
             moneda="MXN",
-            extra={"alias": str(fila[idx["alias"]] or "").strip()
-                   if "alias" in idx and idx["alias"] < len(fila) else ""}))
+            extra={"alias": str(_celda(fila, idx.get("alias")) or "").strip()}))
     return out
 
 
@@ -508,16 +519,14 @@ def leer_multiva(ruta: str, filas: list = None) -> list[LineaSaldo]:
         raise ErrorLector("No se encontraron los encabezados de MULTIVA.")
     out = []
     for fila in filas[n + 1:]:
-        if idx["cuenta"] >= len(fila):
-            continue
-        cuenta = _digitos(fila[idx["cuenta"]])
+        cuenta = _digitos(_celda(fila, idx.get("cuenta")))
         if not cuenta:
             continue
         out.append(LineaSaldo(
             banco="Multiva Banco", cuenta=cuenta, clabe="",
-            titular=str(fila[idx["titular"]] or "").strip() if "titular" in idx else "",
-            saldo=_a_float(fila[idx["saldo"]]) or 0.0,
-            moneda=_moneda(fila[idx["moneda"]] if "moneda" in idx else "")))
+            titular=str(_celda(fila, idx.get("titular")) or "").strip(),
+            saldo=_a_float(_celda(fila, idx.get("saldo"))) or 0.0,
+            moneda=_moneda(_celda(fila, idx.get("moneda")) or "")))
     return out
 
 
@@ -537,22 +546,20 @@ def leer_bajio(ruta: str, filas: list = None) -> list[LineaSaldo]:
         raise ErrorLector("No se encontraron los encabezados de BAJÍO.")
     out = []
     for fila in filas[n + 1:]:
-        if idx["cuenta"] >= len(fila):
-            continue
         # El mismo reporte mezcla cuentas con líneas de crédito y tarjetas; solo las
         # cuentas son saldo disponible. Sumar una línea de crédito inflaría el
         # reporte con dinero que no existe.
-        producto = _norm(fila[idx["producto"]]) if "producto" in idx else "cuenta"
+        producto = _norm(_celda(fila, idx.get("producto")))
         if producto and not producto.startswith("cuenta"):
             continue
-        cuenta = _digitos(fila[idx["cuenta"]])
+        cuenta = _digitos(_celda(fila, idx.get("cuenta")))
         if not cuenta:
             continue
         out.append(LineaSaldo(
             banco="Banco del Bajío", cuenta=cuenta, clabe="",
-            titular=str(fila[idx["titular"]] or "").strip() if "titular" in idx else "",
-            saldo=_a_float(fila[idx["saldo"]]) or 0.0,
-            moneda=_moneda(fila[idx["moneda"]] if "moneda" in idx else "")))
+            titular=str(_celda(fila, idx.get("titular")) or "").strip(),
+            saldo=_a_float(_celda(fila, idx.get("saldo"))) or 0.0,
+            moneda=_moneda(_celda(fila, idx.get("moneda")) or "")))
     return out
 
 
@@ -571,16 +578,14 @@ def leer_hsbc(ruta: str, filas: list = None) -> list[LineaSaldo]:
         raise ErrorLector("No se encontraron los encabezados de HSBC.")
     out = []
     for fila in filas[n + 1:]:
-        if idx["cuenta"] >= len(fila):
-            continue
-        cuenta = _digitos(fila[idx["cuenta"]])
+        cuenta = _digitos(_celda(fila, idx.get("cuenta")))
         if not cuenta:
             continue
         out.append(LineaSaldo(
             banco="HSBC", cuenta=cuenta, clabe="",
-            titular=str(fila[idx["titular"]] or "").strip() if "titular" in idx else "",
-            saldo=_a_float(fila[idx["saldo"]]) or 0.0,
-            moneda=_moneda(fila[idx["moneda"]] if "moneda" in idx else "")))
+            titular=str(_celda(fila, idx.get("titular")) or "").strip(),
+            saldo=_a_float(_celda(fila, idx.get("saldo"))) or 0.0,
+            moneda=_moneda(_celda(fila, idx.get("moneda")) or "")))
     return out
 
 
@@ -604,18 +609,15 @@ def leer_inbursa(ruta: str, filas: list = None) -> list[LineaSaldo]:
     moneda = "USD" if ("dolar" in portada or "usd" in portada) else "MXN"
     out = []
     for fila in filas[n + 1:]:
-        if idx["cuenta"] >= len(fila):
-            continue
-        cuenta = _digitos(fila[idx["cuenta"]])
+        cuenta = _digitos(_celda(fila, idx.get("cuenta")))
         if not cuenta:
             continue
         out.append(LineaSaldo(
             banco="Inbursa", cuenta=cuenta, clabe="",
-            titular=str(fila[idx["titular"]] or "").strip() if "titular" in idx else "",
-            saldo=_a_float(fila[idx["saldo"]]) or 0.0,
+            titular=str(_celda(fila, idx.get("titular")) or "").strip(),
+            saldo=_a_float(_celda(fila, idx.get("saldo"))) or 0.0,
             moneda=moneda,
-            extra={"producto": str(fila[idx["producto"]] or "").strip()
-                   if "producto" in idx and idx["producto"] < len(fila) else ""}))
+            extra={"producto": str(_celda(fila, idx.get("producto")) or "").strip()}))
     return out
 
 
@@ -634,17 +636,15 @@ def leer_bancomer(ruta: str, filas: list = None) -> list[LineaSaldo]:
         raise ErrorLector("No se encontraron los encabezados de BBVA.")
     out = []
     for fila in filas[n + 1:]:
-        if idx["cuenta"] >= len(fila):
-            continue
-        cuenta = _digitos(fila[idx["cuenta"]])
+        cuenta = _digitos(_celda(fila, idx.get("cuenta")))
         # La última fila suele ser 'Totales'; sin dígitos de cuenta se descarta sola.
         if not cuenta:
             continue
         out.append(LineaSaldo(
             banco="BBVA México", cuenta=cuenta, clabe="",
-            titular=str(fila[idx["alias"]] or "").strip() if "alias" in idx else "",
-            saldo=_a_float(fila[idx["saldo"]]) or 0.0,
-            moneda=_moneda(fila[idx["moneda"]] if "moneda" in idx else "")))
+            titular=str(_celda(fila, idx.get("alias")) or "").strip(),
+            saldo=_a_float(_celda(fila, idx.get("saldo"))) or 0.0,
+            moneda=_moneda(_celda(fila, idx.get("moneda")) or "")))
     return out
 
 
@@ -987,16 +987,6 @@ _SIN_PEGADO = ("SABADELL",)
 # Por eso estas RECETAS van aparte y se prueban ANTES: cada una exige marcas muy
 # suyas, así que solo reclaman lo que es suyo. Lo que ninguna reconozca sigue
 # cayendo en la regla de siempre, que no se toca.
-
-def _celda(fila: list, i):
-    """El valor de una columna, o None si la fila se queda corta.
-
-    Los pegados traen filas de largo desigual —el portal recorta las columnas
-    vacías del final—, así que indexar a secas revienta."""
-    if i is None or i >= len(fila):
-        return None
-    return fila[i]
-
 
 def _celdas(filas: list) -> list[str]:
     """Todas las celdas del pegado, normalizadas y sin las vacías."""
