@@ -116,15 +116,17 @@ _NOMBRES_INSUMO = {
 
 # Instrucciones de la pantalla. Viven en el tooltip del ícono de ayuda que va
 # junto al título, no en un párrafo del cuerpo: solo hacen falta la primera vez.
-_AYUDA = """Carga los archivos que se usarán para realizar el reporte de saldos.
-
-Los formatos aceptados son los siguientes:
-    - Excel (xlsx,xls)
-    - CSV
-    - Texto (txt)
-    - PDF
-
-La relación de facturas de Pemex se toma directo de la información del SIPP."""
+_AYUDA = (
+    "Carga los archivos de saldos o copia los datos para extraer la "
+    "información y generar el reporte de saldos. Se aceptan los "
+    "siguientes formatos: Excel (xlsx, xls), csv, pdf y txt.\n\n"
+    "Sobre los insumos de flujo:\n\n"
+    "Este es un excel en el cual se ingresa la información de créditos y "
+    "facturas de proveedores (pemex, mgc, etc) se debe de subir para "
+    "tener un reporte completo.\n"
+    "Estos insumos se guardan durante la semana de subida del archivo y "
+    "se eliminan automaticamente todos los lunes."
+)
 
 # Umbrales de la barra de cobertura. Debajo del 80 % casi seguro falta un archivo
 # entero, no una cuenta suelta.
@@ -303,9 +305,9 @@ class SeccionSaldos:
         self.btn_formato = ft.TextButton(
             content="Descargar formato de insumos",
             icon=ft.Icons.DOWNLOAD_OUTLINED, on_click=self._descargar_formato,
-            tooltip="Un Excel con una pestaña por sección —créditos, Pemex, MGC, "
-                    "tesoro, nómina e impuestos— con lo que ya está capturado. "
-                    "Se llena y se vuelve a subir junto con los reportes.")
+            tooltip="Genera un formato para su subida en el cual se incluyen "
+                    "las secciones de créditos, proveedores y nóminas. Se "
+                    "reestablece automáticamente cada lunes.")
         self.txt_estado = ft.Text("", size=12, color=GRIS)
         self.anillo = ft.ProgressRing(width=16, height=16, stroke_width=2,
                                       visible=False)
@@ -314,16 +316,20 @@ class SeccionSaldos:
 
         # Las dos acciones en extremos opuestos del mismo renglón: el grupo de la
         # izquierda se expande y empuja el botón verde al borde derecho.
-        # A la izquierda SOLO lo de todos los días —traer archivos—; a la
-        # derecha el resultado. Antes convivían ahí cuatro acciones con el mismo
-        # peso: «Descargar formato de insumos», que es una tarea semanal, y
-        # «Quitar todo», que es destructiva, entre las dos de cargar. La primera
-        # se movió a la pestaña de Insumos, que es su contexto; la segunda queda
-        # apartada del grupo por un separador.
+        # A la izquierda lo de todos los días —traer archivos— más «Descargar
+        # formato de insumos». Este último vivió antes en la pestaña de
+        # Insumos, que es su contexto natural, pero esa pestaña —y las otras
+        # dos— solo aparecen cuando ya hay algo cargado (`self.pestanas.visible`
+        # más abajo): la primera vez que alguien abre el módulo no hay insumos
+        # guardados, así que la pestaña no existe y el botón quedaba
+        # inalcanzable justo cuando más hace falta —para arrancar la captura de
+        # cero—. Aquí es visible siempre. «Quitar todo», que sí es destructiva,
+        # queda apartada del grupo por un separador.
         acciones = ft.Row(
             [
-                ft.Row([self.btn_cargar, self.btn_carpeta, self.separador,
-                        self.btn_limpiar, self.anillo, self.txt_estado],
+                ft.Row([self.btn_cargar, self.btn_carpeta, self.btn_formato,
+                        self.separador, self.btn_limpiar, self.anillo,
+                        self.txt_estado],
                        spacing=8, expand=True, wrap=True,
                        vertical_alignment=ft.CrossAxisAlignment.CENTER),
                 self.btn_generar,
@@ -1218,23 +1224,21 @@ class SeccionSaldos:
         Se listan LAS SEIS aunque estén vacías: así se ve de un vistazo qué falta
         capturar, no solo lo que ya está."""
         filas = []
-        acciones = [self.btn_formato]
         # «Vaciar todo» solo aparece si hay algo que borrar: quien viene a
-        # empezar de cero no tiene que ir borrando de uno en uno.
+        # empezar de cero no tiene que ir borrando de uno en uno. «Descargar
+        # formato de insumos» ya NO vive aquí —se movió a la barra de acciones
+        # diarias, junto a «Cargar carpeta»—, así que este renglón puede quedar
+        # vacío entero, y entonces no se dibuja: un contenedor sin nada dentro
+        # solo deja un hueco en blanco antes de la primera sección.
         if any(self.guardados.values()):
-            acciones.append(ft.TextButton(
-                content="Vaciar todo", icon=ft.Icons.DELETE_SWEEP_OUTLINED,
-                style=ft.ButtonStyle(color=ROJO_BOTON),
-                on_click=self._confirmar_vaciar_todo))
-        # Las dos acciones de los insumos en un solo renglón y en extremos
-        # opuestos: traer el formato a la izquierda, vaciar a la derecha. El
-        # formato se descarga desde AQUÍ —donde se está pensando en los
-        # insumos— y no desde la barra de acciones diarias, que es de todos los
-        # días mientras que esto se hace una vez por semana.
-        filas.insert(0, ft.Container(
-            content=ft.Row(acciones,
-                           alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            padding=ft.Padding.only(bottom=6)))
+            filas.insert(0, ft.Container(
+                content=ft.Row(
+                    [ft.TextButton(
+                        content="Vaciar todo", icon=ft.Icons.DELETE_SWEEP_OUTLINED,
+                        style=ft.ButtonStyle(color=ROJO_BOTON),
+                        on_click=self._confirmar_vaciar_todo)],
+                    alignment=ft.MainAxisAlignment.END),
+                padding=ft.Padding.only(bottom=6)))
         for seccion in saldos_insumos.SECCIONES:
             datos = self.guardados.get(seccion)
             n = _filas_de(datos)
@@ -1266,9 +1270,10 @@ class SeccionSaldos:
                 border=ft.Border(
                     bottom=ft.BorderSide(1, ft.Colors.OUTLINE_VARIANT))))
 
-        nota = ("Estas secciones se conservan entre corridas: solo cambian "
-                "cuando subes un archivo que las traiga o las vacías aquí. "
-                "Los impuestos aún no los lee el reporte; la pestaña existe "
+        nota = ("Estas secciones se conservan durante la semana en que se "
+                "cargaron: solo cambian si subes un archivo que las traiga "
+                "o las vacías aquí, y se reinician solas cada lunes. Los "
+                "impuestos aún no los lee el reporte; la pestaña existe "
                 "para poder irlos capturando.")
         filas.append(ft.Container(
             content=ft.Text(nota, size=11, color=GRIS),
@@ -1363,10 +1368,72 @@ class SeccionSaldos:
         self.app.avisar("Se vaciaron todos los insumos guardados.", NARANJA)
 
     async def _descargar_formato(self, _e=None) -> None:
-        """Entrega el libro de insumos para llenarlo y volverlo a subir.
+        """Punto de entrada del botón: decide si hay que preguntar antes.
 
-        Sale con lo que ya está capturado, no en blanco: quien solo va a
-        actualizar la nómina no tiene que recapturar las 16 000 filas de MGC."""
+        Solo tiene sentido elegir entre «limpio» y «con insumos» cuando existe
+        lo segundo. Si no hay nada guardado —el caso típico de quien abre el
+        módulo por primera vez—, no hay elección que ofrecer y se va derecho al
+        formato en limpio, sin un diálogo que solo confirmaría lo obvio."""
+        # `self.guardados` puede no estar listo todavía —`al_entrar` lo carga
+        # en segundo plano— y hace falta saberlo con certeza ANTES de decidir
+        # si hay algo que preguntar. Normalmente ya está resuelto y este bloque
+        # no hace nada visible; solo se nota si el usuario pulsa el botón en
+        # los primeros segundos tras abrir la pantalla.
+        if not self._estado_cargado:
+            self._abrir_espera(
+                "Recuperando los insumos guardados…",
+                "Hace falta para saber si ya tienes algo capturado. Puede "
+                "tardar unos segundos.")
+            try:
+                await self._asegurar_estado()
+            finally:
+                self._cerrar_espera()
+
+        if any(self.guardados.values()):
+            self._elegir_formato_insumos()
+        else:
+            await self._generar_formato(limpio=True)
+
+    def _elegir_formato_insumos(self) -> None:
+        """Pregunta si el formato debe salir vacío o con lo ya capturado.
+
+        Solo se llama cuando YA se sabe que hay algo guardado; con nada que
+        elegir de por medio, `_descargar_formato` ni abre este diálogo."""
+        def elegir(limpio: bool):
+            def _click(_e=None):
+                self.page.pop_dialog()
+                self.page.run_task(self._generar_formato, limpio)
+            return _click
+
+        self.page.show_dialog(ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Descargar formato de insumos"),
+            content=ft.Text(
+                "Se encontró que actualmente hay información cargada en los "
+                "insumos de flujo. ¿Deseas generar un formato en limpio o "
+                "descargar los insumos ya existentes para modificarlos y "
+                "subir de nuevo?\n\nNota: Generar un formato en limpio no "
+                "elimina los insumos subidos.",
+                size=13, width=380),
+            actions=[
+                ft.TextButton("Cancelar",
+                              on_click=lambda e: self.page.pop_dialog(),
+                              style=ft.ButtonStyle(color=ROJO_BOTON)),
+                ft.TextButton("Formato limpio", on_click=elegir(True)),
+                # El más probable de los dos —quien ya tiene algo capturado
+                # suele volver a por eso, no a empezar de cero— lleva el
+                # énfasis, como el resto de acciones primarias de la pantalla.
+                ft.FilledButton("Formato con insumos", on_click=elegir(False),
+                                style=_estilo_verde()),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END))
+
+    async def _generar_formato(self, limpio: bool) -> None:
+        """Escribe y guarda el libro de insumos, vacío o con lo capturado.
+
+        `limpio=False` sale con lo que ya está capturado, no en blanco: quien
+        solo va a actualizar la nómina no tiene que recapturar las 16 000
+        filas de MGC."""
         ruta = await self.app.picker.save_file(
             dialog_title="Guardar el formato de insumos de flujo",
             file_name="INSUMOS DE FLUJO.xlsx", allowed_extensions=["xlsx"])
@@ -1379,18 +1446,22 @@ class SeccionSaldos:
         # selector del sistema es otra ventana y quedaría detrás del modal.
         #
         # `_asegurar_estado` entra aquí dentro a propósito. Normalmente ya está
-        # resuelto —lo dispara `al_entrar`—, pero si el usuario pulsa el botón
-        # antes de que termine, la lectura de los insumos se lleva sus segundos y
-        # es justo lo que este modal existe para cubrir.
+        # resuelto —lo dispara `al_entrar`—, pero si el usuario llegó aquí por
+        # la rama SIN diálogo de elección (nada guardado todavía) y pulsó el
+        # botón antes de que esa carga terminara, la lectura de los insumos se
+        # lleva sus segundos y es justo lo que este modal existe para cubrir.
         escritas = fallo = None
         self._abrir_espera(
             "Preparando el formato de insumos…",
+            "Se está armando el libro en limpio. Puede tardar unos segundos."
+            if limpio else
             "Se está armando el libro con lo que ya tienes capturado. "
             "Puede tardar unos segundos.")
         try:
             await self._asegurar_estado()
+            datos = None if limpio else self.guardados
             escritas = await asyncio.to_thread(
-                saldos_insumos.escribir_plantilla, ruta, self.guardados)
+                saldos_insumos.escribir_plantilla, ruta, datos)
         except BaseException as exc:  # noqa: BLE001 — se reporta abajo, ya cerrado
             fallo = exc
         finally:
@@ -1415,11 +1486,15 @@ class SeccionSaldos:
                 self.app.avisar(mensaje, ROJO)
             return
 
-        con_datos = sum(1 for n in escritas.values() if n)
+        if limpio:
+            mensaje = "Formato de insumos en limpio generado."
+        else:
+            con_datos = sum(1 for n in escritas.values() if n)
+            mensaje = (
+                "Formato de insumos generado ({} de {} secciones con "
+                "datos).".format(con_datos, len(escritas)))
         self.app.avisar(
-            "Formato de insumos generado ({} de {} secciones con datos).".format(
-                con_datos, len(escritas)),
-            VERDE, accion="Abrir",
+            mensaje, VERDE, accion="Abrir",
             on_accion=lambda _e=None: self.app.abrir_en_sistema(ruta),
             duracion=ft.Duration(seconds=12))
 
