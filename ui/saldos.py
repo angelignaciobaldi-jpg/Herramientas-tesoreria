@@ -31,7 +31,7 @@ reportes bancarios son el caso de todos los días y los insumos la excepción.
 
 ## Sobre el diseño de la pantalla
 
-La cifra que manda es **cuántos de los 213 renglones del formato quedaron
+La cifra que manda es **cuántos de los 215 renglones del formato quedaron
 llenos**, y por eso es lo único grande de la pantalla. Con «cuántas cuentas
 identifiqué» uno cree que todo salió bien; con «201 de 211» se ve el hueco. La
 barra de cobertura cambia de color sola: verde arriba de 95 %, ámbar entre 80 y

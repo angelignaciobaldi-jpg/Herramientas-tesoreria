@@ -890,7 +890,18 @@ _LECTORES = (
      leer_banregio),
     ("MULTIVA", (".xlsx",), ("empresa", "cuenta", "alias", "divisa", "saldo"),
      leer_multiva),
-    ("BANCOMER", (".xls", ".xlsx"), ("cuenta", "alias", "divisa", "disponible"),
+    # El consolidado de BAJÍO también trae, en su propio encabezado, las
+    # cuatro palabras sueltas "cuenta"/"alias"/"divisa"/"disponible" —es un
+    # reporte que junta vistas, inversiones, tarjetas y líneas de crédito, así
+    # que su encabezado es más largo y las contiene todas—. Con esas cuatro
+    # marcas nada más, un archivo de BAJÍO sin "bajio" en el nombre se
+    # detectaba como BANCOMER (el desempate por cantidad de marcas le daba la
+    # victoria a BANCOMER: 4 marcas contra las 2 de BAJÍO). La frase de abajo
+    # sí es exclusiva de BANCOMER —viene pegada, en ese orden, solo en su
+    # encabezado—; verificada contra BAJÍO, BANREGIO, HSBC, INBURSA y MULTIVA.
+    ("BANCOMER", (".xls", ".xlsx"),
+     ("cuenta", "alias", "divisa", "disponible",
+      "credito disponible linea de credito"),
      leer_bancomer),
     ("SCOTIABANK", (".txt", ".pdf"), ("chq",), leer_scotiabank),
     ("MONEX", (".pdf",), ("contrato", "clabe"), leer_monex),
