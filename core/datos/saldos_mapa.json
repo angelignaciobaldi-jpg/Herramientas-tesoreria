@@ -2877,7 +2877,7 @@
    "regiones": [
     {
      "fila_ini": 3,
-     "fila_fin": 12,
+     "fila_fin": 14,
      "paso": 1,
      "cols": {
       "alias": "A",
@@ -2973,6 +2973,20 @@
      "alias": "PETROPLAZAS 1699",
      "estaticos": {
       "alias": "PETROPLAZAS 1699"
+     }
+    },
+    "13": {
+     "region": 0,
+     "alias": "MEXICANA DE CAMIONES 2446",
+     "estaticos": {
+      "alias": "MEXICANA DE CAMIONES 2446"
+     }
+    },
+    "14": {
+     "region": 0,
+     "alias": "MEXICANA DE CAMIONES DLLS 2447",
+     "estaticos": {
+      "alias": "MEXICANA DE CAMIONES DLLS 2447"
      }
     }
    }
@@ -6777,6 +6791,34 @@
    "hoja_col": "E",
    "cuenta": "000000000127867212",
    "titular": "MEXICANA DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 149,
+   "bloque": "MEXICANA DE CAMIONES",
+   "banco": "Monex",
+   "cta4": "2446",
+   "marca": "",
+   "hoja": "MONEX",
+   "hoja_fila": 13,
+   "hoja_col": "F",
+   "cuenta": null,
+   "titular": "MEXICANA DE CAMIONES 2446",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 150,
+   "bloque": "MEXICANA DE CAMIONES",
+   "banco": "Monex",
+   "cta4": "2447",
+   "marca": "",
+   "hoja": "MONEX",
+   "hoja_fila": 14,
+   "hoja_col": "F",
+   "cuenta": null,
+   "titular": "MEXICANA DE CAMIONES DLLS 2447",
    "reparado": false
   }
  ],

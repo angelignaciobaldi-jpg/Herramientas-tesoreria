@@ -171,8 +171,14 @@ REGIONES = {
     # libro conserva el mismo número de filas y no se mueve ninguna referencia
     # de más abajo. Ninguna trae número en el formato, así que se casan por
     # (banco, últimos 4) contra el contrato que viene en el PDF del portal.
+    #
+    # Las filas 13-14 son las dos cuentas de MEXICANA DE CAMIONES dadas de
+    # alta en septiembre de 2026 —MXN y DLLS—, con la misma maniobra: cada
+    # una ocupa la fila donde estaba el 'Total:' de su bloque en SALDOS
+    # (Q-U, filas 149-150) y el total bajó a la fila 151. Tampoco traen
+    # número en el formato: se casan por (banco, últimos 4).
     "MONEX": [
-        Region(3, 12, {"alias": "A", "efectivo": "B", "otras_divisas": "C",
+        Region(3, 14, {"alias": "A", "efectivo": "B", "otras_divisas": "C",
                        "derivados": "D", "inversion": "E", "saldo": "F"}),
     ],
     "MULTIVA": [
@@ -443,7 +449,7 @@ def leer_totales_cabecera(libro, renglones):
 
     Las fórmulas del formato van en dos pisos: `Q3` suma totales de bloque
     (`I30`), y cada total de bloque suma sus renglones (`=SUM(I10:I29)`). Aquí se
-    aplanan hasta las celdas hoja —las 213 que llevan un saldo— resolviendo los
+    aplanan hasta las celdas hoja —las 215 que llevan un saldo— resolviendo los
     `SUM` intermedios contra el propio formato.
 
     Se hace UNA vez, aquí, y no al generar: así la app solo tiene que sumar los
