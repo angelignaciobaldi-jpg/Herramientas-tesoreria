@@ -280,6 +280,29 @@ LEDGERS = {
                             [2, 118, "L", "V", "solo_numeros"]]},
 }
 
+# PAGOS es un insumo nuevo (septiembre de 2026) que reemplaza, solo para
+# SALDOS!M (Pago), la captura a mano que tesorería hacía tecleando directo
+# sobre el reporte ya generado. A diferencia de todo lo demás en `LEDGERS`,
+# NO sale del formato de tesorería —no existe ahí, es un insumo puro—, así
+# que vive FUERA de `LEDGERS`: `vaciar()` recorre `LEDGERS` buscando cada
+# hoja EN EL ARCHIVO DE ORIGEN (`_hoja()`, `KeyError` si no la encuentra), y
+# buscar "PAGOS" ahí reventaría el script con cualquier formato de tesorería.
+# Se agrega al mapa aparte, en `armar_mapa()`, y la hoja se crea aparte en
+# `agregar_hoja_pagos()` — un paso fijo que no depende de qué formato se esté
+# derivando, así que sobrevive a que alguien vuelva a correr este script.
+#
+# Una columna por panel del calendario semanal, en el mismo orden que
+# `_PANELES_MANUALES` de `core/saldos_export.py` (7 filas: lunes a domingo;
+# NÓMINA e IMPUESTOS solo usan las primeras 5 —no tienen fin de semana—, la
+# traducción a SALDOS!M vive en `core/saldos_export.py:_pagos_a_manuales`).
+PAGOS_COLUMNAS = ("PEMEX", "MGC", "TESORO", "ACP", "NOMINA", "IMPUESTOS",
+                  "CREDITOS")
+LEDGER_PAGOS = {
+    "fila_ini": 2, "fila_fin": 8, "col_ini": "B", "col_fin": "H",
+    "cols": {}, "modo": "copia",
+    "rangos": [[2, 8, "B", "H"]],
+}
+
 # Totales de la cabecera de SALDOS. Las filas 3-4 son FÓRMULAS y valen para hoy;
 # las 5-6 son VALORES que tesorería pega a mano con los totales del día hábil
 # anterior. El mapa guarda a qué celda de las filas 5-6 le toca cada total de las
@@ -680,7 +703,7 @@ def armar_mapa(renglones, inventario, desfases, totales_cabecera=None):
              "saldo": b[4], "moneda": b[5]}
             for b in BANDAS
         ],
-        "ledgers": LEDGERS,
+        "ledgers": {**LEDGERS, "PAGOS": LEDGER_PAGOS},
         "hojas": hojas,
         "totales_cabecera": totales_cabecera,
         "espejo_totales": ESPEJO_TOTALES,
@@ -753,6 +776,17 @@ def vaciar(libro):
             modo = rango[4] if len(rango) > 4 else ""
             _limpiar(hoja, fi, ff, column_index_from_string(ci),
                      column_index_from_string(cf), modo)
+
+
+def agregar_hoja_pagos(libro) -> None:
+    """Crea la hoja PAGOS desde cero: no sale del formato de tesorería —no
+    existe ahí, es un insumo puro—, así que no pasa por `vaciar()`. Es un
+    paso FIJO, no derivado del origen, para que sobreviva a que alguien
+    vuelva a correr este script con un formato de tesorería distinto."""
+    hoja = libro.create_sheet("PAGOS")
+    hoja["A1"] = "Fecha"
+    for i, nombre in enumerate(PAGOS_COLUMNAS):
+        hoja.cell(1, 2 + i, nombre)
 
 
 def _hoja(libro, clave):
@@ -852,6 +886,7 @@ def main(argv):
         for d in dudas:
             print("  " + d)
     vaciar(con_formulas)
+    agregar_hoja_pagos(con_formulas)
     ruta_base = os.path.join(DESTINO, "saldos_base.xlsx")
     con_formulas.save(ruta_base)
     print("escrito {} ({:.1f} MB)".format(

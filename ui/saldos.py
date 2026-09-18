@@ -112,6 +112,7 @@ _NOMBRES_INSUMO = {
     "MGC": "MGC",
     "TESORO": "Tesoro",
     "NOMINA": "Nómina",
+    "PAGOS": "Pagos",
 }
 
 # Instrucciones de la pantalla. Viven en el tooltip del ícono de ayuda que va
@@ -1792,7 +1793,7 @@ class SeccionSaldos:
             # ahí, así que se usa `self.guardados`: es lo mismo que el usuario
             # descargaría.
             insumos = dict(self.guardados)
-            anterior = saldos_estado.totales_dia_anterior()
+            anterior = saldos_estado.totales_semana()
             manuales = await asyncio.to_thread(self._capturas_de_la_semana)
             info = await asyncio.to_thread(
                 saldos_export.generar, ruta, self.asignacion, insumos,

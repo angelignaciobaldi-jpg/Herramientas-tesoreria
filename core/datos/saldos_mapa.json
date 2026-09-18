@@ -103,6 +103,22 @@
      "solo_numeros"
     ]
    ]
+  },
+  "PAGOS": {
+   "fila_ini": 2,
+   "fila_fin": 8,
+   "col_ini": "B",
+   "col_fin": "H",
+   "cols": {},
+   "modo": "copia",
+   "rangos": [
+    [
+     2,
+     8,
+     "B",
+     "H"
+    ]
+   ]
   }
  },
  "hojas": {

@@ -94,6 +94,34 @@ CELDAS_MANUALES = CELDAS_PAGOS + CELDAS_IMPORTES
 # Las filas que abarcan, para leerlas de un tirón sin abrir el libro entero.
 _FILAS_MANUALES = frozenset(int(c[1:]) for c in CELDAS_MANUALES)
 
+
+def _pagos_a_manuales(datos_pagos: dict | None) -> dict[str, float]:
+    """Los valores de la hoja PAGOS de insumos, traducidos a celda de `M`.
+
+    PAGOS (septiembre de 2026) reemplaza la captura a mano del Pago —no el
+    Importe: el de ACP/IMPUESTOS sigue viniendo del mecanismo viejo—. Es una
+    cuadrícula de 7 columnas (una por panel, mismo orden que
+    `_PANELES_MANUALES`: PEMEX, MGC, TESORO, ACP, NÓMINA, IMPUESTOS,
+    CRÉDITOS) por 7 filas (lunes a domingo), y el mapeo es por POSICIÓN
+    dentro de la semana, no por la fecha que traiga la hoja —esa fecha es
+    solo una guía visual para quien captura—: fila 1 del rango es el lunes,
+    fila 2 el martes...
+
+    NÓMINA e IMPUESTOS solo tienen 5 filas en SALDOS (lunes a viernes, sin
+    fin de semana) mientras el resto tiene 7 —ver `_PANELES_MANUALES`—, así
+    que se toman solo las filas que ese panel de verdad tiene, nunca las 7
+    completas para los dos cortos."""
+    if not datos_pagos or not datos_pagos.get("rangos"):
+        return {}
+    celdas = datos_pagos["rangos"][0]["celdas"]  # hasta 7 filas x 7 columnas
+    salida: dict[str, float] = {}
+    for col, (ini, fin) in enumerate(_PANELES_MANUALES):
+        for i, fila in enumerate(celdas[:fin - ini + 1]):
+            valor = fila[col] if col < len(fila) else None
+            if valor is not None:
+                salida["M{}".format(ini + i)] = valor
+    return salida
+
 _FMT_FECHA = "dd/mm/yyyy"
 _FMT_HORA = "hh:mm"
 # Dos decimales, negativos en rojo entre paréntesis. El formato original recortaba
@@ -444,12 +472,14 @@ def calcular_totales_cabecera(plantilla, asignacion) -> dict:
 
 
 def _escribir_dia_anterior(libro, plantilla, anterior):
-    """Copia los totales de la corrida anterior a las filas del día hábil previo.
+    """Copia los totales de la comparativa fija de la semana a su fila.
 
-    En el formato manual esas celdas se llenan pegando a mano los totales del
-    reporte de ayer. Aquí se toman del histórico, que guarda una entrada por
-    fecha: se usa la más reciente ANTERIOR a hoy, así regenerar el reporte el
-    mismo día no borra la comparativa contra ayer."""
+    En el formato manual esas celdas se llenan pegando a mano los totales de
+    un reporte anterior. Aquí se toman del histórico, que guarda una entrada
+    por fecha; `anterior` ya viene resuelto por quien llama
+    (`saldos_estado.totales_semana`: el viernes que se fijó este lunes y se
+    mantiene toda la semana), así que esta función solo vuelca lo que le
+    llegue —no decide a qué fecha compara—."""
     if not anterior:
         return 0
     fecha, hora, totales = anterior
@@ -604,7 +634,12 @@ def generar(ruta: str, asignacion, insumos: dict = None,
     _hoja_excepciones(libro, asignacion)
     totales_cabecera = calcular_totales_cabecera(plantilla, asignacion)
     comparativas = _escribir_dia_anterior(libro, plantilla, anterior)
-    capturadas = _escribir_manuales(libro, manuales)
+    # El Pago (M) de los 7 paneles viene ahora del insumo PAGOS, no de la
+    # captura a mano; PAGOS gana si ambos traen algo. El Importe (O) de
+    # ACP/IMPUESTOS sigue viniendo de `manuales` sin tocar.
+    manuales_finales = {**(manuales or {}),
+                        **_pagos_a_manuales((insumos or {}).get("PAGOS"))}
+    capturadas = _escribir_manuales(libro, manuales_finales)
     _sellar(libro, fecha)
     libro.save(ruta)
 
