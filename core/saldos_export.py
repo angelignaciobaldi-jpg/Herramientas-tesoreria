@@ -634,10 +634,17 @@ def generar(ruta: str, asignacion, insumos: dict = None,
     _hoja_excepciones(libro, asignacion)
     totales_cabecera = calcular_totales_cabecera(plantilla, asignacion)
     comparativas = _escribir_dia_anterior(libro, plantilla, anterior)
-    # El Pago (M) de los 7 paneles viene ahora del insumo PAGOS, no de la
-    # captura a mano; PAGOS gana si ambos traen algo. El Importe (O) de
-    # ACP/IMPUESTOS sigue viniendo de `manuales` sin tocar.
-    manuales_finales = {**(manuales or {}),
+    # El Pago (M) de los 7 paneles viene ahora EXCLUSIVAMENTE del insumo
+    # PAGOS: se descarta cualquier `M` que trajera `manuales` —capturas
+    # viejas, de antes de que existiera PAGOS, o de una semana en que solo se
+    # tecleó un panel— antes de fusionar. Si no se hiciera esto, un panel que
+    # PAGOS deja vacío (porque de verdad no hubo pago) resucitaría la última
+    # cifra que alguien haya tecleado ahí, que es justo la «invención de
+    # datos» que PAGOS vino a evitar. El Importe (O) de ACP/IMPUESTOS sigue
+    # viniendo de `manuales` sin tocar: PAGOS no lo cubre.
+    importes_manuales = {c: v for c, v in (manuales or {}).items()
+                         if c in CELDAS_IMPORTES}
+    manuales_finales = {**importes_manuales,
                         **_pagos_a_manuales((insumos or {}).get("PAGOS"))}
     capturadas = _escribir_manuales(libro, manuales_finales)
     _sellar(libro, fecha)
