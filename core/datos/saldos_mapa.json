@@ -103,6 +103,22 @@
      "solo_numeros"
     ]
    ]
+  },
+  "PAGOS": {
+   "fila_ini": 2,
+   "fila_fin": 8,
+   "col_ini": "B",
+   "col_fin": "H",
+   "cols": {},
+   "modo": "copia",
+   "rangos": [
+    [
+     2,
+     8,
+     "B",
+     "H"
+    ]
+   ]
   }
  },
  "hojas": {
@@ -3555,7 +3571,7 @@
    "O164",
    "U143",
    "U147",
-   "U149"
+   "U148"
   ],
   "S3": [
    "I10",
@@ -3740,7 +3756,8 @@
    "U132",
    "U133",
    "U134",
-   "U147"
+   "U147",
+   "U148"
   ],
   "Q4": [
    "I32",
@@ -3770,8 +3787,8 @@
    "U53",
    "I50",
    "I51",
-   "U148",
-   "U150"
+   "U151",
+   "U152"
   ],
   "R4": [
    "I32",
@@ -3803,8 +3820,8 @@
    "I128",
    "U52",
    "U53",
-   "U148",
-   "U150"
+   "U151",
+   "U152"
   ]
  },
  "espejo_totales": {
@@ -6790,20 +6807,6 @@
    "banda": "Q-U",
    "fila": 148,
    "bloque": "MEXICANA DE CAMIONES",
-   "banco": "BBVA",
-   "cta4": "7212",
-   "marca": "",
-   "hoja": "BANCOMER",
-   "hoja_fila": 103,
-   "hoja_col": "E",
-   "cuenta": "000000000127867212",
-   "titular": "MEXICANA DLLS",
-   "reparado": false
-  },
-  {
-   "banda": "Q-U",
-   "fila": 149,
-   "bloque": "MEXICANA DE CAMIONES",
    "banco": "Monex",
    "cta4": "2446",
    "marca": "",
@@ -6816,7 +6819,21 @@
   },
   {
    "banda": "Q-U",
-   "fila": 150,
+   "fila": 151,
+   "bloque": "MEXICANA DE CAMIONES",
+   "banco": "BBVA",
+   "cta4": "7212",
+   "marca": "",
+   "hoja": "BANCOMER",
+   "hoja_fila": 103,
+   "hoja_col": "E",
+   "cuenta": "000000000127867212",
+   "titular": "MEXICANA DLLS",
+   "reparado": false
+  },
+  {
+   "banda": "Q-U",
+   "fila": 152,
    "bloque": "MEXICANA DE CAMIONES",
    "banco": "Monex",
    "cta4": "2447",

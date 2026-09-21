@@ -266,7 +266,15 @@ def _formas_cuenta(linea: LineaSaldo) -> list[str]:
     Un mismo número se escribe distinto según el portal: Banamex reporta sucursal
     y cuenta en columnas separadas y el lector las concatena (394 + 7680454),
     pero el formato guarda solo la corta. Que el lector declare sus variantes deja
-    el caso resuelto por número —la regla fuerte— en vez de depender de la cola."""
+    el caso resuelto por número —la regla fuerte— en vez de depender de la cola.
+
+    Monex es un caso aparte: para las cuentas que solo se identifican por alias
+    (ASAMAZ, ELYON, Mexicana de Camiones…) tesorería captura en SALDOS el cta4
+    de la CLABE completa —sus últimos 4 dígitos tal cual, dígito verificador
+    incluido—, no el número de cuenta embebido en la posición estándar
+    (`clabe[6:17]`). Sin la CLABE completa entre las formas, la cola de esas
+    cuentas nunca coincide y la línea se va a «nuevas» aunque el contrato sea
+    correcto. Se agrega sin quitar nada: solo abre una cola más que probar."""
     formas = [_digitos(linea.cuenta)]
     corta = _digitos((linea.extra or {}).get("cuenta_corta", ""))
     if corta and corta not in formas:
@@ -276,6 +284,8 @@ def _formas_cuenta(linea: LineaSaldo) -> list[str]:
         embebida = clabe[6:17]
         if embebida and embebida not in formas:
             formas.append(embebida)
+        if clabe not in formas:
+            formas.append(clabe)
     return [f for f in formas if f]
 
 
@@ -328,6 +338,7 @@ def colas_excluidas(plantilla: Plantilla) -> dict:
 RENGLONES_DIVISA = {
     ("MONEX", "2848000"): 6,   # ACP 8000 DLLS
     ("MONEX", "2793487"): 7,   # ABACOM FORDWARDS 3487 USD
+    ("MONEX", "3841244"): 14,  # MEXICANA DE CAMIONES DLLS 2447 (MONEX!F14)
 }
 
 

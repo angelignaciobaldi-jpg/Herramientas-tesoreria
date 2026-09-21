@@ -20,11 +20,15 @@ Aquí se guardan dos cosas, en la carpeta de datos de la app:
 
 ## Por qué el histórico va por fecha
 
-El reporte compara contra el DÍA HÁBIL ANTERIOR, y esa comparación no se puede
-atar a «la corrida pasada»: regenerar el reporte un martes en la tarde dejaría la
-comparativa contra el mismo martes, o sea en ceros. Guardando por fecha y
-tomando siempre el registro más reciente ANTERIOR a hoy, regenerar no mueve nada
-y un lunes después de puente toma el viernes sin que nadie configure nada.
+El reporte compara contra un VIERNES FIJO: los lunes se pone el total del
+viernes que acaba de pasar, y esa cifra se queda ahí toda la semana —de martes
+a domingo— hasta que el siguiente lunes la vuelva a fijar. No se puede atar a
+«la corrida pasada»: regenerar el reporte un miércoles en la tarde no puede
+mover la comparativa al martes, tiene que seguir siendo la del viernes de la
+semana anterior. Guardando un registro por fecha de calendario cada vez que se
+genera un reporte, y yendo a buscar el más reciente HASTA ese viernes (no
+exactamente en él), un lunes después de puente toma el jueves —o el que
+haya— sin que nadie configure nada. Ver `totales_semana`.
 """
 
 from __future__ import annotations
@@ -100,16 +104,37 @@ def guardar_totales(totales: dict, fecha: datetime.datetime = None) -> None:
     _escribir_json(RUTA_TOTALES, historico)
 
 
-def totales_dia_anterior(fecha: datetime.datetime = None) -> tuple:
-    """Los totales de la última corrida ANTERIOR a `fecha`.
+def _viernes_referencia(fecha) -> str:
+    """El viernes que rige la comparativa de ESTA semana, en ISO.
+
+    Los lunes se fija el total del viernes recién pasado y se mantiene toda
+    la semana —de martes a domingo— hasta que el siguiente lunes lo vuelva a
+    fijar con el viernes que acaba de pasar. Se ancla al lunes de la semana
+    de `fecha` (vía `_lunes_de`, que ya resuelve fin de semana hacia la
+    semana que está corriendo) y se retrocede 3 días: siempre cae en viernes,
+    sea `fecha` el día que sea de esa semana. Import local por lo mismo que
+    `_semana_vigente`: `saldos_export` es el módulo pesado del paquete."""
+    from .saldos_export import _lunes_de
+    lunes = _lunes_de(fecha)
+    viernes = lunes - datetime.timedelta(days=3)
+    return viernes.date().isoformat()
+
+
+def totales_semana(fecha: datetime.datetime = None) -> tuple:
+    """Los totales de la corrida más reciente HASTA el viernes de esta semana.
 
     Devuelve `(fecha_iso, hora, {celda: valor})`, o `(None, "", {})` si es la
-    primera vez. Estrictamente anterior: regenerar hoy no se compara consigo
-    mismo."""
+    primera vez. "Hasta" y no "exactamente en": si ese viernes cayó en puente
+    y no se generó ningún reporte ese día, se toma el más reciente ANTES de
+    él —el jueves, o el que haya— en vez de dejar la comparativa en blanco
+    toda la semana. `<=` y no `<` a propósito: el viernes de referencia nunca
+    es HOY —siempre cae de 3 a 9 días atrás respecto a cualquier día que
+    gobierna—, así que no hace falta excluirlo como si fuera «hoy compararse
+    consigo mismo»."""
     fecha = fecha or datetime.datetime.now()
-    tope = fecha.date().isoformat()
+    tope = _viernes_referencia(fecha)
     historico = _leer_totales()
-    previas = [d for d in sorted(historico) if d < tope]
+    previas = [d for d in sorted(historico) if d <= tope]
     if not previas:
         return None, "", {}
     dia = previas[-1]

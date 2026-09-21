@@ -22,6 +22,14 @@ de banco —es justo el defecto que este módulo vino a eliminar— pero aquí q
 fija las filas es una persona que las mantiene estables, no el orden en que un
 portal decidió exportar ese día.
 
+La sexta, PAGOS (septiembre de 2026), se copia igual que CRÉDITOS —es otra
+tabla que tesorería llena a mano, siete columnas (una por panel del calendario
+semanal) por siete filas (lunes a domingo)— pero alimenta una columna
+distinta: reemplaza la captura manual de `SALDOS!M` (Pago), que antes se
+tecleaba directo sobre el reporte ya generado. La traduce
+`core/saldos_export.py:_pagos_a_manuales`; el `Importe` (`SALDOS!O`) de ACP e
+IMPUESTOS sigue viniendo del mecanismo viejo, sin tocar.
+
 Todos los insumos son OPCIONALES. Si no se sube el de nómina, su panel queda en
 cero y el reporte de saldos sale completo igual. Nunca bloquean.
 """
@@ -175,6 +183,8 @@ def _detectar_en(filas: list) -> str:
     filas, sesenta segundos."""
     if _parece_creditos(filas):
         return "CREDITOS"
+    if _parece_pagos(filas):
+        return "PAGOS"
     mejor, mejor_n = None, 0
     for nombre, (alias, obligatorias) in _ALIAS.items():
         n, idx = _buscar_encabezado(filas, alias, obligatorias)
@@ -193,6 +203,29 @@ def _parece_creditos(filas: list) -> bool:
             continue
         vistos = {_norm(c) for c in fila if c is not None}
         if len(esperados & vistos) >= 2:
+            return True
+    return False
+
+
+# Los 7 nombres de columna de la hoja PAGOS (ver `SECCIONES`/`_RANGOS_PAGOS`
+# arriba). Duplicado a propósito de `scripts/derivar_plantilla_saldos.py`
+# (que la crea) y de `core/saldos_export.py:_PANELES_MANUALES` (que la
+# traduce a SALDOS!M): son tres archivos con vidas distintas —uno corre a
+# mano, otro es runtime— y forzar un import cruzado por siete nombres fijos
+# complicaría más de lo que ahorraría.
+_PAGOS_COLUMNAS = ("PEMEX", "MGC", "TESORO", "ACP", "NOMINA", "IMPUESTOS",
+                   "CREDITOS")
+
+
+def _parece_pagos(filas: list) -> bool:
+    """PAGOS se reconoce por traer varios de sus 7 encabezados de panel juntos
+    en una misma fila —un archivo suelto, sin el resto de los insumos."""
+    esperados = {_norm(c) for c in _PAGOS_COLUMNAS}
+    for fila in filas[:12]:
+        if not fila:
+            continue
+        vistos = {_norm(c) for c in fila if c is not None}
+        if len(esperados & vistos) >= 4:
             return True
     return False
 
@@ -326,7 +359,59 @@ def _hoja_creditos(libro):
         "«{}» no tiene una hoja de créditos reconocible".format(libro))
 
 
-SECCIONES = ("CREDITOS", "MGC", "PEMEX", "TESORO", "NOMINA", "IMPUESTOS")
+SECCIONES = ("CREDITOS", "MGC", "PEMEX", "TESORO", "NOMINA", "IMPUESTOS",
+            "PAGOS")
+
+# B2:H8: 7 columnas (PEMEX, MGC, TESORO, ACP, NOMINA, IMPUESTOS, CRÉDITOS,
+# mismo orden que `core.saldos_export._PANELES_MANUALES`) x 7 filas (lunes a
+# domingo). La columna A (fecha) no se copia: es solo una guía visual para
+# quien captura, y se vuelve a sellar con la semana corriente cada vez que se
+# genera el formato — ver el paso final de `escribir_plantilla`.
+_RANGOS_PAGOS = (
+    (2, 8, "B", "H"),
+)
+
+
+def leer_pagos(ruta: str, hoja: str = None) -> dict:
+    """Los rangos de PAGOS, tal cual, para copiarlos a las mismas celdas.
+
+    Misma forma que `leer_creditos`: se lee con openpyxl directamente porque
+    hacen falta las coordenadas, no solo los valores."""
+    import openpyxl
+
+    try:
+        libro = openpyxl.load_workbook(ruta, data_only=True)
+    except Exception as exc:  # noqa: BLE001 — se traduce a un error propio
+        raise ErrorInsumo("No se pudo leer «{}»: {}".format(
+            os.path.basename(ruta), exc)) from exc
+    try:
+        return _leer_pagos_hoja(libro[hoja] if hoja else _hoja_pagos(libro))
+    finally:
+        libro.close()
+
+
+def _leer_pagos_hoja(hoja) -> dict:
+    """Los rangos de PAGOS de una hoja ya abierta."""
+    from openpyxl.utils import column_index_from_string
+    rangos = []
+    for fila_ini, fila_fin, col_ini, col_fin in _RANGOS_PAGOS:
+        ci = column_index_from_string(col_ini)
+        cf = column_index_from_string(col_fin)
+        celdas = [[hoja.cell(f, c).value for c in range(ci, cf + 1)]
+                  for f in range(fila_ini, fila_fin + 1)]
+        rangos.append({"fila_ini": fila_ini, "col_ini": col_ini,
+                       "celdas": celdas})
+    return {"rangos": rangos}
+
+
+def _hoja_pagos(libro):
+    """La hoja de pagos: la que se llame así."""
+    for nombre in libro.sheetnames:
+        if _clave(nombre) == "PAGOS":
+            return libro[nombre]
+    raise ErrorInsumo(
+        "«{}» no tiene una hoja de pagos reconocible".format(libro))
+
 
 def leer(ruta: str, nombre: str = None) -> tuple:
     """Lee un archivo de insumos. Devuelve `(nombre, datos)`.
@@ -338,8 +423,11 @@ def leer(ruta: str, nombre: str = None) -> tuple:
 
     `nombre` fuerza el tipo; si no se pasa, se detecta por los encabezados."""
     if nombre:
-        return nombre, (leer_creditos(ruta) if nombre == "CREDITOS"
-                        else leer_ledger(ruta, nombre))
+        if nombre == "CREDITOS":
+            return nombre, leer_creditos(ruta)
+        if nombre == "PAGOS":
+            return nombre, leer_pagos(ruta)
+        return nombre, leer_ledger(ruta, nombre)
 
     hojas = hojas_de(ruta)
     if len(hojas) > 1:
@@ -357,10 +445,13 @@ def leer(ruta: str, nombre: str = None) -> tuple:
                 if tipo is None or tipo in combinado:
                     return
                 try:
-                    combinado[tipo] = (
-                        _leer_creditos_hoja(libro[hoja]) if tipo == "CREDITOS"
-                        else _leer_ledger_en(por_hoja[hoja], tipo,
-                                             os.path.basename(ruta)))
+                    if tipo == "CREDITOS":
+                        combinado[tipo] = _leer_creditos_hoja(libro[hoja])
+                    elif tipo == "PAGOS":
+                        combinado[tipo] = _leer_pagos_hoja(libro[hoja])
+                    else:
+                        combinado[tipo] = _leer_ledger_en(
+                            por_hoja[hoja], tipo, os.path.basename(ruta))
                 except (ErrorInsumo, ErrorLector):
                     # Una pestaña que solo SE PARECE a un insumo y no se deja
                     # leer no invalida las demás. Pero una que se LLAMA como la
@@ -385,7 +476,7 @@ def leer(ruta: str, nombre: str = None) -> tuple:
                 # IMPUESTOS está en SECCIONES pero no tiene lector: el formato
                 # reserva la pestaña y SALDOS todavía no la consulta. Se deja
                 # caer a la segunda pasada, que simplemente no la reconocerá.
-                if clave == "CREDITOS" or clave in _ALIAS:
+                if clave in ("CREDITOS", "PAGOS") or clave in _ALIAS:
                     _tomar(hoja, clave, exigir=True)
                 else:
                     pendientes.append(hoja)
@@ -403,10 +494,12 @@ def leer(ruta: str, nombre: str = None) -> tuple:
     if nombre is None:
         raise ErrorInsumo(
             "«{}» no parece ninguno de los insumos de flujo "
-            "(créditos, Pemex, MGC, tesoro, nómina)".format(
+            "(créditos, Pemex, MGC, tesoro, nómina, pagos)".format(
                 os.path.basename(ruta)))
     if nombre == "CREDITOS":
         return nombre, leer_creditos(ruta)
+    if nombre == "PAGOS":
+        return nombre, leer_pagos(ruta)
     return nombre, leer_ledger(ruta, nombre)
 
 
@@ -448,6 +541,19 @@ def escribir_plantilla(ruta: str, datos: dict = None) -> dict:
             escritas[seccion] = _copiar_rangos(hoja, contenido)
         else:
             escritas[seccion] = _volcar_ledger(hoja, info, contenido)
+
+    if "PAGOS" in quedan:
+        # La columna A (fecha) es solo una guía visual para quien captura, no
+        # se lee de vuelta (ver `_PAGOS_COLUMNAS`/`leer_pagos`): se sella con
+        # la semana CORRIENTE cada vez que se genera el formato, tenga o no
+        # datos la sección —igual que `CELDAS_SEMANA` en el reporte final—,
+        # para que nunca se quede con la fecha de la semana en que se derivó
+        # la plantilla.
+        from .saldos_export import _lunes_de
+        hoja = libro[quedan["PAGOS"]]
+        lunes = _lunes_de(datetime.datetime.now())
+        for i in range(7):
+            hoja.cell(2 + i, 1, lunes + datetime.timedelta(days=i))
 
     libro.save(ruta)
     return escritas
