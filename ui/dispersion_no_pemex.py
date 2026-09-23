@@ -2131,6 +2131,10 @@ class SeccionDispersionNoPemex:
             # operación (y para el botón 'Ver datos' del diálogo).
             self._conc_dispersion = await asyncio.to_thread(
                 conciliacion.conciliar, seleccion, datos_pago)
+            # Conciliación nueva: los folios de una operación anterior ya no aplican
+            # (los de una operación interrumpida de ESTA conciliación sí se conservan
+            # en _ejecutar_dispersion para reanudarla sin repetirlos).
+            self._folios_dispersados = []
             abrir = True
         finally:
             if mostro_cargando:
@@ -2703,7 +2707,10 @@ class SeccionDispersionNoPemex:
         cooperativa (mismo patrón que _arrancar_rpa); el estatus se marshala al loop
         de la UI porque Flet no es thread-safe."""
         self._disp_loop_ui = asyncio.get_running_loop()
-        self._folios_dispersados = []
+        # NO se vacía _folios_dispersados: si la operación anterior se cortó a media
+        # marcha ("Iniciar de nuevo"), esos folios ya están guardados en SIPP y sus
+        # solicitudes ya no están pendientes, así que se conservan (para el resumen y
+        # los TXT) y esas sub-dispersiones se saltan en el flujo.
         self._disp_resultados_txt = []
         self._disp_carpeta_txt = None
         self._pesos_generados = []
@@ -2731,6 +2738,9 @@ class SeccionDispersionNoPemex:
         sesion = self.sesion
         usuario, contrasena = self.app.config.credenciales()
         total = len(validas)
+        ya_dispersadas = {
+            (d.get("clave"), d.get("cuenta_sel") or "")
+            for d in self._folios_dispersados if d.get("clave")}
         # Fechas del filtro por combinación empresa+moneda, resueltas en el hilo de
         # la UI (el flujo corre en otro hilo): las guardadas de la búsqueda o, si no
         # hay, el rango por vencimiento como respaldo.
@@ -2754,6 +2764,8 @@ class SeccionDispersionNoPemex:
                 self.EMPRESA_SESION, self.SUCURSAL_SESION)
             for i, emp in enumerate(validas, start=1):
                 await ctrl.punto_control()  # pausa/detención entre empresas
+                if self._id_sub_dispersion(emp) in ya_dispersadas:
+                    continue   # ya guardada en una corrida previa interrumpida
                 empresa = _nombre_empresa_limpio(emp)
                 detalle = f" · {emp.cuenta}" if emp.empresa in partidos else ""
                 self._disp_estado_seguro(
