@@ -85,10 +85,11 @@ _PANELES_MANUALES = ((20, 26), (30, 36), (40, 46), (50, 56), (60, 64),
 CELDAS_PAGOS = tuple("M{}".format(f)
                      for ini, fin in _PANELES_MANUALES
                      for f in range(ini, fin + 1))
-# El importe solo se teclea en los dos paneles que no lo derivan de un ledger:
-# ACP e IMPUESTOS. En los demás es fórmula y no se toca.
+# El importe solo se teclea en el panel que no lo deriva de un ledger ni de una
+# fórmula: IMPUESTOS. En los demás es fórmula y no se toca —el de ACP (O50:O56)
+# es `=M*-1`, el Pago en negativo—.
 CELDAS_IMPORTES = tuple("O{}".format(f)
-                        for ini, fin in ((50, 56), (68, 72))
+                        for ini, fin in ((68, 72),)
                         for f in range(ini, fin + 1))
 CELDAS_MANUALES = CELDAS_PAGOS + CELDAS_IMPORTES
 # Las filas que abarcan, para leerlas de un tirón sin abrir el libro entero.

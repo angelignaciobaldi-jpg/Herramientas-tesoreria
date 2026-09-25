@@ -1692,7 +1692,7 @@ class SeccionSaldos:
     def _capturas_de_la_semana() -> dict:
         """Lo que tesorería tecleó a mano en el reporte, para volver a ponerlo.
 
-        Los pagos y los importes de ACP e IMPUESTOS no salen de ningún archivo:
+        Los pagos y los importes de IMPUESTOS no salen de ningún archivo:
         se escriben en Excel sobre el reporte ya generado. Como cada corrida
         parte del libro base, salían en blanco y había que recapturarlos.
 
