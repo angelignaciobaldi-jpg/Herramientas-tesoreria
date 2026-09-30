@@ -1765,10 +1765,10 @@ class SeccionSaldos:
 
     async def _generar_ya(self) -> None:
         await self._asegurar_estado()
-        hoy = datetime.date.today().strftime("%d-%m-%Y")
+        hoy = datetime.date.today().strftime("%d.%m.%y")
         ruta = await self.app.picker.save_file(
             dialog_title="Guardar el reporte de saldos",
-            file_name=f"SALDOS {hoy}.xlsx", allowed_extensions=["xlsx"])
+            file_name=f"Saldos Cuentas {hoy}.xlsx", allowed_extensions=["xlsx"])
         if not ruta:
             return
         if not ruta.lower().endswith(".xlsx"):
