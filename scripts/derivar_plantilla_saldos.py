@@ -51,6 +51,8 @@ _RAIZ = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _RAIZ not in sys.path:
     sys.path.insert(0, _RAIZ)
 
+from core.saldos_export import CELDAS_MANUALES  # noqa: E402 — tras el sys.path.insert
+
 DESTINO = os.path.join(_RAIZ, "core", "datos")
 
 
@@ -738,9 +740,20 @@ def _limpiar(hoja, fila_ini, fila_fin, col_ini, col_fin, modo=""):
 def vaciar(libro):
     """Deja el libro como molde: sin datos, con toda su estructura.
 
-    Se vacían las 15 pestañas de descarga y los 6 ledgers. NO se toca SALDOS ni
-    SALDOS HORIZOTAL: ahí todo es fórmula, y es justo lo que queremos conservar.
+    Se vacían las 15 pestañas de descarga y los 6 ledgers. SALDOS y SALDOS
+    HORIZOTAL casi no se tocan —ahí todo es fórmula, y es justo lo que queremos
+    conservar— EXCEPTO las celdas de captura manual (`CELDAS_MANUALES` de
+    `core/saldos_export.py`: el Pago de los 7 paneles y el Importe de
+    IMPUESTOS), que son texto/número tecleado, no fórmula. Si se dejan como
+    venían del formato de origen, un valor de prueba o una captura vieja
+    sobrevive al derivador y aparece en TODO reporte nuevo hasta que el insumo
+    del día las sobrescriba —así se coló la secuencia 0,1,2,3,4,5,6 en el panel
+    de ACP (`M50:M56`) de una sesión de pruebas pasada.
     """
+    hoja_saldos = libro["SALDOS"]
+    for celda in CELDAS_MANUALES:
+        hoja_saldos[celda].value = None
+
     for nombre, regiones in REGIONES.items():
         hoja = libro[nombre]
         for region in regiones:

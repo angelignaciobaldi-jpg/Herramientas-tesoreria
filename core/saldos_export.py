@@ -478,9 +478,10 @@ def _escribir_dia_anterior(libro, plantilla, anterior):
     En el formato manual esas celdas se llenan pegando a mano los totales de
     un reporte anterior. Aquí se toman del histórico, que guarda una entrada
     por fecha; `anterior` ya viene resuelto por quien llama
-    (`saldos_estado.totales_semana`: el viernes que se fijó este lunes y se
-    mantiene toda la semana), así que esta función solo vuelca lo que le
-    llegue —no decide a qué fecha compara—."""
+    (`saldos_estado.totales_semana`: la última corrida de la semana anterior
+    completa —lunes a domingo— que se fijó este lunes y se mantiene toda la
+    semana), así que esta función solo vuelca lo que le llegue —no decide a
+    qué fecha compara—."""
     if not anterior:
         return 0
     fecha, hora, totales = anterior
