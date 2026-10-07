@@ -4012,7 +4012,9 @@ class SeccionDispersionNoPemex:
         masiva); con None se pide con el selector. Un PDF de VARIAS páginas se separa
         primero y se adjunta LA PÁGINA que casa con el movimiento, no el PDF entero
         —adjuntarlo completo subía al SIPP los comprobantes de otros proveedores—.
-        Si ninguna casa, se pide confirmación antes de adjuntar (regla 4)."""
+        Si ninguna casa, o el servicio de lectura falla/no devuelve datos (timeout u
+        otro error), se pide confirmación antes de adjuntar (regla 4, failsafe de la
+        carga INDIVIDUAL — la masiva sigue exigiendo que se haya podido leer)."""
         if ruta is None:
             archivos = await self.app.picker.pick_files(
                 dialog_title="Selecciona el comprobante (PDF)",
@@ -4053,19 +4055,23 @@ class SeccionDispersionNoPemex:
         finally:
             self.page.pop_dialog()  # spinner
         if error:
-            self._avisar(f"No se pudo leer el comprobante: {error}", ROJO)
+            # Failsafe (carga individual): un timeout o cualquier otro error del
+            # servicio de lectura no debe dejar a la usuaria sin poder adjuntar el
+            # archivo — se avisa el motivo y se cae al mismo diálogo de la regla 4,
+            # tratándolo como ilegible (no hay lectura que mostrar de `paginas`).
+            self._avisar(f"No se pudo leer el comprobante: {error}", NARANJA)
+            self._registrar_sueltas(paginas)
+            self._confirmar_comprobante_sin_coincidencia(fila, paginas)
             return
         aviso_sep = self._texto_separacion(info)
         for msg in info.get("errores") or []:
             self._avisar(f"No se pudo separar: {msg}", NARANJA)
-        hay_datos = any(self._lectura_por_archivo.get(p) for p in paginas)
-        if not hay_datos and len(paginas) == 1:
-            self._avisar(
-                aviso_sep + "El comprobante no devolvió datos legibles.", NARANJA)
-            return
-        # Con varias páginas ilegibles NO se corta aquí: se cae al diálogo de la regla
-        # 4, que deja elegir cuál adjuntar. Cortar dejaría al usuario sin salida, con
-        # las páginas ya en disco y ninguna forma de adjudicar una a mano.
+        # Página(s) ilegible(s) NO se corta aquí —ni con una sola página ni con
+        # varias—: se cae al diálogo de la regla 4 (failsafe), que ofrece
+        # adjuntar de todas formas. Cortar dejaría al usuario sin salida, con
+        # el archivo ya en disco y ninguna forma de adjuntarlo a mano. Solo
+        # aplica a la carga INDIVIDUAL (este método); la masiva sigue
+        # exigiendo que el comprobante se haya leído.
         # Se adjunta la PRIMERA página que casa con el movimiento.
         casa = next(
             (p for p in paginas
@@ -4085,9 +4091,10 @@ class SeccionDispersionNoPemex:
         self, fila: dict, paginas: list[str], aviso_sep: str = "",
     ) -> None:
         """Diálogo de la regla 4: ninguna página casó con el movimiento (o ninguna se
-        pudo leer). Con una sola página es un sí/no; con varias se elige cuál adjuntar,
-        mostrando de cada una lo que el extractor leyó (importe y cuenta destino) para
-        que la elección no sea a ciegas."""
+        pudo leer —failsafe de la carga individual, ver `_procesar_comprobante`—).
+        Con una sola página es un sí/no; con varias se elige cuál adjuntar, mostrando
+        de cada una lo que el extractor leyó (importe y cuenta destino) para que la
+        elección no sea a ciegas."""
         ilegibles = not any(self._lectura_por_archivo.get(p) for p in paginas)
 
         def etiqueta(ruta: str) -> str:
@@ -4111,13 +4118,19 @@ class SeccionDispersionNoPemex:
             # _adjuntar_comprobante saca sola la página elegida de las sueltas.
             self._adjuntar_comprobante(fila, elegida, aviso_sep)
 
-        if len(paginas) == 1:
+        if len(paginas) == 1 and ilegibles:
+            titulo = "No se pudo leer el comprobante"
+            encabezado = "No se pudo leer el comprobante."
+        elif len(paginas) == 1:
+            titulo = "Comprobante no coincide"
             encabezado = ("Se detectó que el comprobante no coincide totalmente con "
                           "el movimiento.")
         elif ilegibles:
+            titulo = "Comprobante no coincide"
             encabezado = (f"No se pudieron leer los datos de ninguna de las "
                           f"{len(paginas)} páginas del PDF.")
         else:
+            titulo = "Comprobante no coincide"
             encabezado = (f"Ninguna de las {len(paginas)} páginas del PDF coincide "
                           f"con este movimiento.")
         izq: list[ft.Control] = [ft.Text(encabezado, size=13)]
@@ -4132,7 +4145,7 @@ class SeccionDispersionNoPemex:
             spacing=16, vertical_alignment=ft.CrossAxisAlignment.START)
         self.page.show_dialog(ft.AlertDialog(
             modal=True,
-            title=ft.Text("Comprobante no coincide", weight=ft.FontWeight.BOLD),
+            title=ft.Text(titulo, weight=ft.FontWeight.BOLD),
             content=ft.Container(content=cuerpo,
                                  width=self._PREV_DIALOGO,
                                  height=self._PREV_ALTO + 20),
